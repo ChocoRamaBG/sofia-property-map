@@ -4,6 +4,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useI18n } from '@/lib/i18n';
+import { trackEvent } from '@/lib/analytics';
 import { displayCount, displayDate } from '@/lib/registerUi';
 import { activeFilterCount, invalidFilterDates, normalizePropertyFilters, readPropertyFilters, writePropertyFilters } from '@/lib/propertyFilters';
 import { realEstateApi } from '@/api/realEstateApi';
@@ -34,6 +35,7 @@ function DatasetSummary({ meta }) {
         </div>
       </details>
       {latest && <p className="dataset-loaded">{t('dataset.loaded', { date: displayDate(latest, lang) })}</p>}
+      <nav className="dataset-page-links" aria-label={lang === 'bg' ? 'Информация за сайта' : 'Site information'}><a href="/about.html">{lang === 'bg' ? 'За данните и проверката' : 'About the data'}</a><a href="/privacy.html">{lang === 'bg' ? 'Поверителност' : 'Privacy'}</a></nav>
     </section>
   );
 }
@@ -62,11 +64,13 @@ export default function Home() {
 
   useEffect(() => { let active = true; realEstateApi.meta().then((data) => { if (active) setMeta(data); }).catch(() => {}); return () => { active = false; }; }, []);
   useEffect(() => { writePropertyFilters(filters); }, [filters]);
-  const handleSelect = useCallback((plot) => { setSelected(plot); setSearchOpen(false); }, []);
+  const handleSelect = useCallback((plot) => { trackEvent('property_open', { entry_point: 'map' }); setSelected(plot); setSearchOpen(false); }, []);
   const handleClear = useCallback(() => { searchRequest.current += 1; setQuery(''); setSearchedFor(''); setResults([]); setSearching(false); }, []);
   const handleQueryChange = useCallback((value) => { searchRequest.current += 1; setQuery(value); setSearchedFor(''); setResults([]); setSearching(false); }, []);
   const handleFilterChange = useCallback((value) => {
-    searchRequest.current += 1; setFilters(normalizePropertyFilters(value)); setSearchedFor(''); setResults([]); setSearching(false); setSelected(null);
+    const next = normalizePropertyFilters(value);
+    trackEvent('filter_change', { filter_count: activeFilterCount(next), record_type_count: next.recordTypes.length });
+    searchRequest.current += 1; setFilters(next); setSearchedFor(''); setResults([]); setSearching(false); setSelected(null);
   }, []);
   const clearFilters = useCallback(() => handleFilterChange({}), [handleFilterChange]);
   const editFilters = useCallback(() => {
@@ -77,6 +81,7 @@ export default function Home() {
     const term = query.trim();
     if (!term) return;
     if (invalidFilterDates(filters)) { toast({ title: t('filter.dateRangeError'), variant: 'destructive' }); return; }
+    trackEvent('search_submit');
     const request = ++searchRequest.current;
     setSearching(true);
     try {
@@ -89,6 +94,7 @@ export default function Home() {
     } finally { if (request === searchRequest.current) setSearching(false); }
   }, [query, filters, t, toast]);
   const handleSelectResult = useCallback((result) => {
+    trackEvent('property_open', { entry_point: 'search' });
     setQuery(result.cadastral_id); setSearchedFor(''); setResults([]); setSearchOpen(false); setSelected(result);
     if (map && result.lat != null && result.lng != null) map.flyTo([Number(result.lat), Number(result.lng)], 18);
   }, [map]);
@@ -96,8 +102,9 @@ export default function Home() {
     if (!map || !navigator.geolocation) { toast({ title: t('map.locateError'), variant: 'destructive' }); return; }
     navigator.geolocation.getCurrentPosition((position) => { const point = { lat: position.coords.latitude, lng: position.coords.longitude }; setUserLocation(point); map.flyTo([point.lat, point.lng], 17); }, () => toast({ title: t('map.locateError'), variant: 'destructive' }));
   }, [map, t, toast]);
-  const handleClusterClick = useCallback((center, zoom, clusterBounds) => {
+  const handleClusterClick = useCallback((center, zoom, clusterBounds, plotCount) => {
     if (!map) return;
+    trackEvent('cluster_open', { plot_count: plotCount });
     map.stop();
     const limits = ['south', 'north', 'west', 'east'].map((key) => Number(clusterBounds?.[key]));
     if (clusterBounds && limits.every(Number.isFinite) && limits[0] <= limits[1] && limits[2] <= limits[3]) {

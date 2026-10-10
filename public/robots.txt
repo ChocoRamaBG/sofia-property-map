@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api.php
+Disallow: /private/
+Disallow: /schema.sql
+
+Sitemap: https://sofiapermits.site.je/sitemap.xml

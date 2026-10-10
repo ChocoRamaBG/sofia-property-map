@@ -141,3 +141,21 @@ The Vite output is static HTML/JS/CSS; PHP runs separately on the host for the r
 - GET api.php?action=plot&id=...
 
 No write endpoint or public administrator screen is included.
+
+## Search indexing and optional Analytics
+
+The homepage, about.html and privacy.html have public canonical URLs and are listed in sitemap.xml. robots.txt allows the app assets and public pages while excluding the API, private data and schema. The homepage includes Bulgarian metadata, social metadata, WebSite/WebApplication structured data and a useful noscript fallback. Filter URL variants use the homepage canonical. Individual plot selections do not create separate indexable pages.
+
+The google-site-verification meta tag in index.html belongs to the URL-prefix Search Console property https://sofiapermits.site.je/. Keep it in future builds so Google can maintain ownership verification. Submit sitemap.xml from the property. Verification and sitemap submission do not guarantee that Google will index a page or rank it for a query.
+
+Analytics uses the public GA4 web-stream measurement ID G-ZY40ZKWMKC in src/lib/analyticsConfig.js, belonging to the SofiaPermits website stream in the authorized Google account. It can be overridden at build time with VITE_GA_MEASUREMENT_ID. Set that variable to an empty or invalid value to disable the integration and hide consent controls. Measurement IDs and Google verification tokens are public identifiers; account passwords and FTP credentials must stay out of the source and public output.
+
+The Google tag loads only after the visitor allows analytics. Consent is kept in localStorage, and the Analytics control supports later refusal. Refusal blocks future measurement and clears the accessible _ga cookies. All custom events have allowlisted parameters: search_submit has no search text; property_open has only map/search entry point; filter_change has counts; cluster_open has a size bucket. Page location is the canonical homepage and referrer is empty. Do not add cadastral IDs, addresses, coordinates, query text, filter values or document fields to events.
+
+In the GA4 stream, keep Enhanced Measurement disabled so automatic search, history and outbound-link events do not bypass these limits. Google Signals and advertising personalization remain disabled. See privacy.html for the current visitor-facing explanation. The monthly registry workflow updates register data and does not change analytics or indexing files.
+
+For static publishing, build with the intended measurement ID, set the FTP_HOST, FTP_USER and FTP_PASSWORD process environment variables, then run:
+
+    python scripts/deploy_site_ftps.py --input dist
+
+The publisher allowlists compiled assets, index.html, about.html, privacy.html, robots.txt, sitemap.xml and matching Google verification files. It ignores the PHP API, private files, schema and environment files copied into dist. Every uploaded file is retrieved and checked by size and SHA-256; index.html is switched last. Existing assets are retained.

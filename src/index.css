@@ -447,3 +447,22 @@ button.map-context:hover { background: white; border-color: #a8c7b1; color: #2e7
   .register-field dd { font-size: 12px; }
   .certificate-explanation, .certificate-term p { font-size: 11px; }
 }
+/* The choice stays available without blocking the map. */
+.dataset-page-links { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 14px; font-size: 12px; }
+.dataset-page-links a { color: #176b69; text-decoration: underline; text-underline-offset: 3px; }
+.analytics-consent { position: fixed; z-index: 60; right: 18px; bottom: 18px; max-width: calc(100vw - 36px); }
+.analytics-consent__panel { width: 380px; max-width: 100%; max-height: calc(100dvh - 36px); overflow-y: auto; background: #fff; color: #17324d; border: 1px solid #dae4e9; border-radius: 16px; padding: 20px; box-shadow: 0 8px 36px #17324d26; }
+.analytics-consent__heading { display: flex; gap: 9px; align-items: center; margin-bottom: 12px; color: #176b69; }
+.analytics-consent__heading h2 { margin: 0; flex: 1; color: #17324d; font-size: 15px; font-weight: 700; }
+.analytics-consent__description { font-size: 12px; line-height: 1.65; margin: 8px 0; color: #536975; }
+.analytics-consent__status { font-size: 12px; font-weight: 600; margin-top: 10px; }
+.analytics-consent__links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 11px; }
+.analytics-consent__links a { color: #176b69; text-decoration: underline; text-underline-offset: 3px; }
+.analytics-consent__actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+.analytics-consent__button { border-radius: 9px; border: 1px solid #b7ced0; min-height: 42px; padding: 9px 10px; font-size: 12px; font-weight: 600; }
+.analytics-consent__button--allow { background: #176b69; color: #fff; border-color: #176b69; }
+.analytics-consent__button--decline { background: #fff; color: #176b69; }
+.analytics-consent__settings { display: flex; align-items: center; gap: 6px; min-height: 34px; border: 1px solid #dbe5e8; border-radius: 9px; padding: 7px 11px; font-size: 11px; background: #fff; color: #536975; box-shadow: 0 2px 10px #17324d12; }
+.analytics-consent__close { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 6px; color: #536975; }
+.analytics-consent button:focus-visible, .analytics-consent a:focus-visible, .dataset-page-links a:focus-visible { outline: 3px solid #178a85; outline-offset: 3px; }
+@media (max-width: 767px) { .analytics-consent { bottom: max(16px, env(safe-area-inset-bottom)); right: 12px; max-width: calc(100vw - 24px); } .analytics-consent__panel { width: 380px; padding: 17px; } }
