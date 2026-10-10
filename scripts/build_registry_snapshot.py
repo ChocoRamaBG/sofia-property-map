@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from build_seed import CADASTRAL_ID, CERTIFICATES_DEFAULT, PERMITS_DEFAULT, ROOT, VISAS_DEFAULT, source_documents
 from registry_sources import CORE_CODES, SOURCES, labelled_fields
+from registry_facets import REFERENCE_FORMAT, build_filter_facets
 
 MAX_BYTES = 10 * 1024 * 1024
 MAX_LOCAL_BYTES = 128 * 1024 * 1024
@@ -199,10 +200,11 @@ def write_sharded_snapshot(snapshot: dict, output: Path) -> tuple[dict, int]:
         "version": 2, "snapshot_id": snapshot_id, "generated_at": snapshot["generated_at"],
         "sources": snapshot["sources"], "imports": snapshot.get("imports", []),
         "completion": completion, "document_counts": {source["code"]: 0 for source in snapshot["sources"]},
-        "reference_format": "tuple-v1",
+        "reference_format": REFERENCE_FORMAT,
         "parcels": {},
     }
     source_positions = {source["code"]: position for position, source in enumerate(snapshot["sources"])}
+    index["filter_facets"], facet_positions = build_filter_facets(snapshot["documents"])
     shards: list[tuple[str, bytes, int]] = []
     payload = bytearray()
     records = 0
@@ -227,6 +229,7 @@ def write_sharded_snapshot(snapshot: dict, output: Path) -> tuple[dict, int]:
             # Positions refer to the ordered sources and manifest shard lists.
             index["parcels"].setdefault(parcel, {"documents": []})["documents"].append([
                 source_positions[document["source_code"]], document["document_hash"], shard_position,
+                facet_positions[identity],
             ])
     if payload:
         shards.append((f"documents-{len(shards):03d}.jsonl", bytes(payload), records))

@@ -25,6 +25,7 @@ from build_registry_snapshot import (
     json_bytes, parse_json, timestamp_valid, validate_completion, validate_document,
     validate_imports, validate_snapshot, validate_sources, write_atomic,
 )
+from registry_facets import REFERENCE_FORMAT, build_filter_facets, validate_filter_facets
 
 PRIVATE = "/htdocs/private"
 V1_REMOTE = f"{PRIVATE}/registry-data.json"
@@ -141,20 +142,33 @@ def reconstruct(manifest_payload: bytes, reader, keep_payloads: bool = False) ->
     if not isinstance(parcels, dict) or len(parcels) > MAX_INDEX_PARCELS:
         raise ValueError("Index lacks parcel lookup entries")
     reference_format = index.get("reference_format")
-    if reference_format not in (None, "tuple-v1"):
+    if reference_format not in (None, "tuple-v1", REFERENCE_FORMAT):
         raise ValueError("Unsupported parcel reference format")
+    if reference_format == REFERENCE_FORMAT:
+        validate_filter_facets(index.get("filter_facets"))
+    elif "filter_facets" in index:
+        raise ValueError("Filter metadata requires the compact per-observation reference format")
     shard_files = [descriptor["file"] for descriptor in manifest["documents"]]
     shard_names = set(shard_files)
     expected_refs = {}
+    expected_facets = {}
     for parcel, entry in parcels.items():
         if not isinstance(parcel, str) or CADASTRAL_ID.fullmatch(parcel) is None or not isinstance(entry, dict) or not isinstance(entry.get("documents"), list) or not 1 <= len(entry["documents"]) <= MAX_DOCUMENTS:
             raise ValueError("Malformed parcel lookup entry")
         refs = set()
         for ref in entry["documents"]:
-            if reference_format == "tuple-v1":
-                if not isinstance(ref, list) or len(ref) != 3 or not integer(ref[0], 0, len(codes) - 1) or not matches(HEX64, ref[1]) or not integer(ref[2], 0, len(shard_files) - 1):
+            if reference_format in ("tuple-v1", REFERENCE_FORMAT):
+                expected_length = 4 if reference_format == REFERENCE_FORMAT else 3
+                if not isinstance(ref, list) or len(ref) != expected_length or not integer(ref[0], 0, len(codes) - 1) or not matches(HEX64, ref[1]) or not integer(ref[2], 0, len(shard_files) - 1):
                     raise ValueError("Malformed compact parcel observation reference")
                 code, document_hash, shard = codes[ref[0]], ref[1], shard_files[ref[2]]
+                if reference_format == REFERENCE_FORMAT:
+                    if not integer(ref[3], 0, len(index["filter_facets"]["values"]) - 1):
+                        raise ValueError("Malformed compact observation filter reference")
+                    facet_identity = (code, document_hash)
+                    if facet_identity in expected_facets and expected_facets[facet_identity] != ref[3]:
+                        raise ValueError("A repeated observation points to different filter tuples")
+                    expected_facets[facet_identity] = ref[3]
             else:
                 if not isinstance(ref, dict):
                     raise ValueError("Malformed parcel observation reference")
@@ -193,6 +207,10 @@ def reconstruct(manifest_payload: bytes, reader, keep_payloads: bool = False) ->
             documents.append(document)
     if dict(actual_counts) != counts or actual_refs != expected_refs:
         raise ValueError("Parcel references or source counts disagree with the immutable observations")
+    if reference_format == REFERENCE_FORMAT:
+        actual_facets, actual_facet_refs = build_filter_facets(documents)
+        if index["filter_facets"] != actual_facets or any(actual_facet_refs.get(identity) != position for identity, position in expected_facets.items()):
+            raise ValueError("Compact filter metadata disagrees with original observations")
     snapshot = {"version": 1, "generated_at": manifest["generated_at"], "sources": sources, "documents": documents, "imports": imports, "completion": manifest["completion"]}
     validate_snapshot(snapshot)
     if len(json_bytes(snapshot)) > MAX_LOCAL_BYTES:

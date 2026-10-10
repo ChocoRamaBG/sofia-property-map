@@ -1,3 +1,5 @@
+import { propertyFilterParams } from '@/lib/propertyFilters';
+
 const API_URL = import.meta.env.VITE_API_URL || './api.php';
 
 async function request(action, params = {}) {
@@ -16,7 +18,7 @@ async function request(action, params = {}) {
 
 export const realEstateApi = {
   meta: () => request('meta'),
-  viewport: (bounds, recordType = 'all') => request('viewport', { ...bounds, record_type: recordType }),
-  search: (query, recordType = 'all') => request('search', { q: query, record_type: recordType }),
+  viewport: (bounds, filters = {}) => request('viewport', { ...bounds, ...propertyFilterParams(filters) }),
+  search: (query, filters = {}) => request('search', { q: query, ...propertyFilterParams(filters) }),
   plot: (id) => request('plot', { id }),
 };

@@ -31,27 +31,61 @@ function number_param(string $key, float $min, float $max): float {
     return $number;
 }
 
-function record_type_param(): string {
-    $value = $_GET['record_type'] ?? 'all';
-    if (!is_string($value) || !in_array($value, ['all', 'exploitation_certificates', 'building_permits', 'projecting_visas', 'no_records'], true)) {
-        throw new InvalidArgumentException('Invalid register filter.');
-    }
-    return $value;
+class FilterUnavailableException extends RuntimeException {}
+
+function optional_filter_string(string $key, int $limit): ?string {
+    $value = $_GET[$key] ?? null;
+    if ($value === null) return null;
+    if (!is_string($value) || text_length($value) > $limit) throw new InvalidArgumentException('Invalid map filter.');
+    $value = trim($value);
+    return $value === '' ? null : $value;
 }
 
-function record_filter(string $recordType): string {
-    if ($recordType === 'all') return '';
-    if ($recordType === 'no_records') {
-        return ' AND NOT EXISTS (SELECT 1 FROM parcel_documents filter_pd WHERE filter_pd.parcel_cadastral_id = p.cadastral_id)';
+function map_filter_params(): array {
+    // The legacy singleton parameter remains compatible with previously cached clients.
+    $raw = optional_filter_string(array_key_exists('record_types', $_GET) ? 'record_types' : 'record_type', 200) ?? 'all';
+    $types = array_values(array_unique(array_map('trim', explode(',', $raw))));
+    $allowed = ['all', 'exploitation_certificates', 'building_permits', 'projecting_visas', 'no_records'];
+    foreach ($types as $type) {
+        if (!in_array($type, $allowed, true)) throw new InvalidArgumentException('Invalid register filter.');
     }
-    if ($recordType === 'exploitation_certificates') {
-        return " AND EXISTS (SELECT 1 FROM parcel_documents filter_pd WHERE filter_pd.parcel_cadastral_id = p.cadastral_id AND filter_pd.source_code IN ('exploitation_certificates', 'exploitation_certificates_legacy'))";
+    if ($types === ['all']) $types = [];
+    elseif (in_array('all', $types, true)) throw new InvalidArgumentException('Select all records or specific register types.');
+    $match = optional_filter_string('match', 10) ?? 'any';
+    if (!in_array($match, ['any', 'all'], true)) throw new InvalidArgumentException('Invalid filter matching mode.');
+    $district = optional_filter_string('district', 200);
+    $descriptionTag = optional_filter_string('description_tag', 40);
+    if ($descriptionTag !== null && !in_array($descriptionTag, ['housing', 'business', 'infrastructure', 'public', 'parking'], true)) {
+        throw new InvalidArgumentException('Invalid construction description filter.');
     }
-    return ' AND EXISTS (SELECT 1 FROM parcel_documents filter_pd WHERE filter_pd.parcel_cadastral_id = p.cadastral_id AND filter_pd.source_code = :filter_source)';
+    $dateFrom = optional_filter_string('date_from', 10);
+    $dateTo = optional_filter_string('date_to', 10);
+    if (!snapshot_date_valid($dateFrom) || !snapshot_date_valid($dateTo) || ($dateFrom !== null && $dateTo !== null && $dateFrom > $dateTo)) {
+        throw new InvalidArgumentException('Invalid document date range.');
+    }
+    $address = optional_filter_string('has_address', 5);
+    if ($address !== null && !in_array($address, ['0', '1'], true)) throw new InvalidArgumentException('Invalid address filter.');
+    $advanced = $district !== null || $descriptionTag !== null || $dateFrom !== null || $dateTo !== null || $address === '1';
+    if (in_array('no_records', $types, true) && (count($types) !== 1 || $advanced)) {
+        throw new InvalidArgumentException('Properties without linked records cannot be combined with document filters.');
+    }
+    return ['record_types' => $types, 'match' => $match, 'district' => $district, 'description_tag' => $descriptionTag,
+        'date_from' => $dateFrom, 'date_to' => $dateTo, 'has_address' => $address === '1', 'advanced' => $advanced];
 }
 
-function record_filter_params(string $recordType): array {
-    return in_array($recordType, ['all', 'no_records', 'exploitation_certificates'], true) ? [] : ['filter_source' => $recordType];
+function record_filter(array $filter): string {
+    $types = $filter['record_types'];
+    if ($types === []) return '';
+    if ($types === ['no_records']) return ' AND NOT EXISTS (SELECT 1 FROM parcel_documents filter_pd WHERE filter_pd.parcel_cadastral_id = p.cadastral_id)';
+    $clauses = [];
+    foreach ($types as $type) {
+        // All source literals are selected from the validated fixed enum above.
+        $sourceCondition = $type === 'exploitation_certificates'
+            ? "filter_pd.source_code IN ('exploitation_certificates', 'exploitation_certificates_legacy')"
+            : "filter_pd.source_code = '" . $type . "'";
+        $clauses[] = 'EXISTS (SELECT 1 FROM parcel_documents filter_pd WHERE filter_pd.parcel_cadastral_id = p.cadastral_id AND ' . $sourceCondition . ')';
+    }
+    return ' AND (' . implode($filter['match'] === 'all' ? ' AND ' : ' OR ', $clauses) . ')';
 }
 
 function document_flags_join(): string {
@@ -247,7 +281,76 @@ function validate_registry_file_descriptor($file, string $pattern, int $limit): 
     }
 }
 
-function load_registry_v2(string $activePath): array {
+function validate_filter_facets($facets, int $records): ?array {
+    if ($facets === null) return null;
+    if (!is_array($facets) || ($facets['version'] ?? null) !== 1 || !snapshot_list($facets['districts'] ?? null)
+        || count($facets['districts']) > 2000 || !snapshot_list($facets['values'] ?? null)
+        || count($facets['values']) > REGISTRY_MAX_DOCUMENTS || !snapshot_date_valid($facets['date_min'] ?? null)
+        || !snapshot_date_valid($facets['date_max'] ?? null)) throw new RuntimeException('Registry filter index is invalid.');
+    $districtKeys = [];
+    foreach ($facets['districts'] as $district) {
+        if (!is_array($district) || !snapshot_string($district['key'] ?? null, 200) || $district['key'] === ''
+            || !snapshot_string($district['label'] ?? null, 200) || isset($districtKeys[$district['key']])
+            || (isset($district['document_count']) && (!is_int($district['document_count']) || $district['document_count'] < 0 || $district['document_count'] > $records))) {
+            throw new RuntimeException('Registry district filter is invalid.');
+        }
+        $districtKeys[$district['key']] = true;
+    }
+    foreach ($facets['values'] as $value) {
+        if (!snapshot_list($value) || count($value) !== 4
+            || ($value[0] !== null && (!is_int($value[0]) || !isset($facets['districts'][$value[0]])))
+            || !snapshot_date_valid($value[1]) || !in_array($value[2], [0, 1], true)
+            || !is_int($value[3]) || $value[3] < 0 || $value[3] > 31) throw new RuntimeException('Registry document facet is invalid.');
+    }
+    $tagBits = ['housing' => 1, 'business' => 2, 'infrastructure' => 4, 'public' => 8, 'parking' => 16];
+    if (!snapshot_list($facets['description_tags'] ?? null) || count($facets['description_tags']) !== count($tagBits)) {
+        throw new RuntimeException('Registry description filters are invalid.');
+    }
+    $seenTags = [];
+    foreach ($facets['description_tags'] as $tag) {
+        if (!is_array($tag) || !is_string($tag['key'] ?? null) || !isset($tagBits[$tag['key']]) || isset($seenTags[$tag['key']])
+            || ($tag['bit'] ?? null) !== $tagBits[$tag['key']] || !snapshot_string($tag['label_bg'] ?? null, 200)
+            || !snapshot_string($tag['label_en'] ?? null, 200) || !is_int($tag['document_count'] ?? null)
+            || $tag['document_count'] < 0 || $tag['document_count'] > $records) throw new RuntimeException('Registry description filter is invalid.');
+        $seenTags[$tag['key']] = true;
+    }
+    if (isset($facets['coverage'])) {
+        if (!is_array($facets['coverage'])) throw new RuntimeException('Registry filter coverage is invalid.');
+        foreach ($facets['coverage'] as $count) {
+            if (!is_int($count) || $count < 0 || $count > $records) throw new RuntimeException('Registry filter coverage is invalid.');
+        }
+    }
+    return $facets;
+}
+
+function filter_options(?array $facets): array {
+    if ($facets === null) return ['available' => false, 'districts' => [], 'description_tags' => [], 'date_min' => null, 'date_max' => null, 'coverage' => []];
+    return ['available' => true, 'districts' => $facets['districts'], 'description_tags' => $facets['description_tags'],
+        'date_min' => $facets['date_min'] ?? null, 'date_max' => $facets['date_max'] ?? null, 'coverage' => $facets['coverage'] ?? []];
+}
+
+function filter_facet_matches(array $value, array $facets, array $filter): bool {
+    if ($filter['district'] !== null && ($value[0] === null || $facets['districts'][$value[0]]['key'] !== $filter['district'])) return false;
+    if ($filter['date_from'] !== null && ($value[1] === null || $value[1] < $filter['date_from'])) return false;
+    if ($filter['date_to'] !== null && ($value[1] === null || $value[1] > $filter['date_to'])) return false;
+    if ($filter['has_address'] && $value[2] !== 1) return false;
+    if ($filter['description_tag'] !== null) {
+        $bits = ['housing' => 1, 'business' => 2, 'infrastructure' => 4, 'public' => 8, 'parking' => 16];
+        if (($value[3] & $bits[$filter['description_tag']]) === 0) return false;
+    }
+    return true;
+}
+
+function qualifying_types_match(array $types, array $filter): bool {
+    if ($filter['record_types'] === []) return $types !== [];
+    foreach ($filter['record_types'] as $type) {
+        if ($filter['match'] === 'all' && !isset($types[$type])) return false;
+        if ($filter['match'] === 'any' && isset($types[$type])) return true;
+    }
+    return $filter['match'] === 'all';
+}
+
+function load_registry_v2(string $activePath, ?array $filter = null): array {
     $manifest = bounded_registry_json($activePath, 256 * 1024);
     if (($manifest['version'] ?? null) !== 2 || !is_string($manifest['snapshot_id'] ?? null)
         || !preg_match('/^[a-f0-9]{32}$/', $manifest['snapshot_id']) || !snapshot_timestamp_valid($manifest['generated_at'] ?? null)
@@ -286,7 +389,17 @@ function load_registry_v2(string $activePath): array {
     $sources = validate_registry_sources($index['sources'] ?? null);
     $imports = public_registry_imports($index['imports'] ?? null, $sources);
     $referenceFormat = $index['reference_format'] ?? null;
-    if ($referenceFormat !== null && $referenceFormat !== 'tuple-v1') throw new RuntimeException('Registry reference format is invalid.');
+    if ($referenceFormat !== null && !in_array($referenceFormat, ['tuple-v1', 'tuple-v2-facets'], true)) throw new RuntimeException('Registry reference format is invalid.');
+    $facets = validate_filter_facets($index['filter_facets'] ?? null, $records);
+    if (($referenceFormat === 'tuple-v2-facets') !== ($facets !== null)) throw new RuntimeException('Registry filter references are inconsistent.');
+    $advanced = $filter !== null && $filter['advanced'];
+    if ($advanced && $facets === null) throw new FilterUnavailableException('Advanced map filters are unavailable until the registry filter index has been published.');
+    if ($advanced && $filter['district'] !== null) {
+        $districtKeys = array_column($facets['districts'], 'key');
+        if (!in_array($filter['district'], $districtKeys, true)) throw new InvalidArgumentException('Unknown district filter.');
+        unset($districtKeys);
+    }
+    $qualifiedIds = [];
     $sourceCodes = array_keys($sources);
     $shardNames = array_keys($shards);
     $documentCounts = array_fill_keys(array_keys($sources), 0);
@@ -300,7 +413,8 @@ function load_registry_v2(string $activePath): array {
     $flags = [];
     $sourceIds = array_fill_keys(array_keys($sources), []);
     $certificateIds = [];
-    // Internal references are packed [shard name, newline-delimited exact IDs].
+    // Internal references are packed [shard name, newline-delimited exact IDs,
+    // facet position]. Repeated links must retain the same observation facet.
     $docRefs = [];
     $indexedCounts = array_fill_keys(array_keys($sources), 0);
     $certificateDocuments = [];
@@ -314,13 +428,19 @@ function load_registry_v2(string $activePath): array {
             || !is_array($parcel) || !snapshot_list($parcel['documents'] ?? null) || count($parcel['documents']) < 1
             || count($parcel['documents']) > REGISTRY_MAX_DOCUMENTS) throw new RuntimeException('Registry parcel index is invalid.');
         $flags[$id] = empty_document_flags();
+        $qualifyingTypes = [];
         foreach ($parcel['documents'] as $ref) {
-            if ($referenceFormat === 'tuple-v1') {
-                if (!snapshot_list($ref) || count($ref) !== 3 || !is_int($ref[0]) || !isset($sourceCodes[$ref[0]])
+            $facetPosition = null;
+            if ($referenceFormat === 'tuple-v1' || $referenceFormat === 'tuple-v2-facets') {
+                if (!snapshot_list($ref) || count($ref) !== ($referenceFormat === 'tuple-v2-facets' ? 4 : 3) || !is_int($ref[0]) || !isset($sourceCodes[$ref[0]])
                     || !is_int($ref[2]) || !isset($shardNames[$ref[2]])) throw new RuntimeException('Registry compact reference is invalid.');
                 $code = $sourceCodes[$ref[0]];
                 $documentHash = $ref[1];
                 $shardName = $shardNames[$ref[2]];
+                if ($referenceFormat === 'tuple-v2-facets') {
+                    $facetPosition = $ref[3];
+                    if (!is_int($facetPosition) || !isset($facets['values'][$facetPosition])) throw new RuntimeException('Registry facet reference is invalid.');
+                }
             } else {
                 if (!is_array($ref)) throw new RuntimeException('Registry document reference is invalid.');
                 $code = $ref['source_code'] ?? null;
@@ -331,7 +451,7 @@ function load_registry_v2(string $activePath): array {
                 || !is_string($documentHash) || !preg_match('/^[a-f0-9]{64}$/', $documentHash)
                 || !is_string($shardName) || !isset($shards[$shardName])) throw new RuntimeException('Registry document reference is invalid.');
             $key = $code . ':' . $documentHash;
-            if (isset($byId[$id][$key]) || (isset($docRefs[$key]) && $docRefs[$key][0] !== $shardName)) {
+            if (isset($byId[$id][$key]) || (isset($docRefs[$key]) && ($docRefs[$key][0] !== $shardName || ($docRefs[$key][2] ?? null) !== $facetPosition))) {
                 throw new RuntimeException('Registry document reference is duplicated or inconsistent.');
             }
             $byId[$id][$key] = $shardName;
@@ -339,7 +459,7 @@ function load_registry_v2(string $activePath): array {
             // allocating one nested associative array for every document.
             if (!isset($docRefs[$key])) {
                 $indexedCounts[$code]++;
-                $docRefs[$key] = [$shardName, $id . "\n"];
+                $docRefs[$key] = [$shardName, $id . "\n", $facetPosition];
             } else {
                 $docRefs[$key][1] .= $id . "\n";
             }
@@ -354,25 +474,33 @@ function load_registry_v2(string $activePath): array {
             } elseif ($code === 'projecting_visas') {
                 $flags[$id]['has_projecting_visa'] = true;
             }
+            if ($advanced && filter_facet_matches($facets['values'][$facetPosition], $facets, $filter)) {
+                $qualifyingTypes[source_is_certificate($code) ? 'exploitation_certificates' : $code] = true;
+            }
         }
+        if ($advanced && qualifying_types_match($qualifyingTypes, $filter)) $qualifiedIds[$id] = true;
     }
     if (count($docRefs) > $records) throw new RuntimeException('Registry indexed document total is invalid.');
     foreach ($indexedCounts as $code => $count) {
         if ($count > $documentCounts[$code]) throw new RuntimeException('Registry indexed source total is invalid.');
     }
     $generatedAt = $manifest['generated_at'];
+    $filterOptions = filter_options($facets);
+    unset($facets);
     unset($index, $manifest, $parcelIds, $parcel, $ref);
     return [
         'format' => 2, 'directory' => $directory, 'shards' => $shards, 'doc_refs' => $docRefs,
         'generated_at' => $generatedAt, 'sources' => $sources, 'documents' => [], 'imports' => $imports,
         'by_id' => $byId, 'flags' => $flags, 'source_ids' => $sourceIds, 'document_counts' => $documentCounts,
         'certificate_ids' => $certificateIds, 'linked_certificates' => count($certificateDocuments),
+        'filter_options' => $filterOptions, 'qualified_ids' => $advanced ? $qualifiedIds : null,
     ];
 }
 
-function load_registry_snapshot(): ?array {
+function load_registry_snapshot(?array $filter = null): ?array {
     $activePath = __DIR__ . '/private/registry-active.json';
-    if (file_exists($activePath) || is_link($activePath)) return load_registry_v2($activePath);
+    if (file_exists($activePath) || is_link($activePath)) return load_registry_v2($activePath, $filter);
+    if ($filter !== null && $filter['advanced']) throw new FilterUnavailableException('Advanced map filters are unavailable until the registry filter index has been published.');
     $path = __DIR__ . '/private/registry-data.json';
     if (!file_exists($path) && !is_link($path)) return null;
     $snapshot = bounded_registry_json($path, 10 * 1024 * 1024);
@@ -421,6 +549,7 @@ function load_registry_snapshot(): ?array {
         'format' => 1, 'generated_at' => $snapshot['generated_at'], 'sources' => $sources, 'documents' => $snapshot['documents'], 'imports' => $imports,
         'by_id' => $byId, 'flags' => $flags, 'source_ids' => $sourceIds, 'document_counts' => $documentCounts,
         'certificate_ids' => $certificateIds, 'linked_certificates' => $linkedCertificates,
+        'filter_options' => filter_options(null), 'qualified_ids' => null,
     ];
 }
 
@@ -439,23 +568,40 @@ function coordinate_backed_id_count(PDO $pdo, array $ids): int {
     return $total;
 }
 
-function registry_filter(PDO $pdo, array $registry, string $recordType): string {
-    if ($recordType === 'all') return '';
-    $ids = $recordType === 'no_records' ? array_keys($registry['by_id'])
-        : ($recordType === 'exploitation_certificates' ? array_keys($registry['certificate_ids']) : array_keys($registry['source_ids'][$recordType] ?? []));
-    if ($ids === []) return $recordType === 'no_records' ? '' : ' AND 0 = 1';
-    return ' AND p.cadastral_id ' . ($recordType === 'no_records' ? 'NOT IN' : 'IN') . ' (' . quoted_ids($pdo, $ids) . ')';
+function registry_filter(PDO $pdo, array $registry, array $filter): string {
+    $types = $filter['record_types'];
+    if ($filter['advanced']) {
+        $ids = array_keys($registry['qualified_ids'] ?? []);
+    } elseif ($types === []) {
+        return '';
+    } elseif ($types === ['no_records']) {
+        $ids = array_keys($registry['by_id']);
+    } else {
+        $matching = null;
+        foreach ($types as $type) {
+            $sourceIds = $type === 'exploitation_certificates' ? $registry['certificate_ids'] : ($registry['source_ids'][$type] ?? []);
+            $matching = $matching === null ? $sourceIds : ($filter['match'] === 'all' ? array_intersect_key($matching, $sourceIds) : $matching + $sourceIds);
+        }
+        $ids = array_keys($matching ?? []);
+    }
+    if ($ids === []) return $types === ['no_records'] ? '' : ' AND 0 = 1';
+    return ' AND p.cadastral_id ' . ($types === ['no_records'] ? 'NOT IN' : 'IN') . ' (' . quoted_ids($pdo, $ids) . ')';
 }
 
 function registry_plot(array $row, array $registry): array {
     return serialize_plot(array_merge($row, $registry['flags'][$row['cadastral_id']] ?? empty_document_flags()));
 }
 
-function registry_id_matches_filter(string $id, array $registry, string $recordType): bool {
-    if ($recordType === 'all') return true;
-    if ($recordType === 'no_records') return !isset($registry['by_id'][$id]);
-    if ($recordType === 'exploitation_certificates') return isset($registry['certificate_ids'][$id]);
-    return isset($registry['source_ids'][$recordType][$id]);
+function registry_id_matches_filter(string $id, array $registry, array $filter): bool {
+    if ($filter['advanced']) return isset($registry['qualified_ids'][$id]);
+    $types = $filter['record_types'];
+    if ($types === []) return true;
+    if ($types === ['no_records']) return !isset($registry['by_id'][$id]);
+    $present = [];
+    foreach ($types as $type) {
+        if ($type === 'exploitation_certificates' ? isset($registry['certificate_ids'][$id]) : isset($registry['source_ids'][$type][$id])) $present[$type] = true;
+    }
+    return qualifying_types_match($present, $filter);
 }
 
 function registry_document_iterator(array $registry, ?string $parcelId = null): Generator {
@@ -472,10 +618,6 @@ function registry_document_iterator(array $registry, ?string $parcelId = null): 
         $shardNames = array_fill_keys(array_keys($registry['shards']), true);
     } else {
         foreach ($registry['by_id'][$parcelId] ?? [] as $shardName) $shardNames[$shardName] = true;
-    }
-    $expectedRefs = [];
-    foreach ($registry['doc_refs'] as $key => $ref) {
-        if (isset($shardNames[$ref[0]])) $expectedRefs[$key] = true;
     }
     $seen = [];
     $sourceCounts = array_fill_keys(array_keys($registry['sources']), 0);
@@ -528,7 +670,11 @@ function registry_document_iterator(array $registry, ?string $parcelId = null): 
             fclose($handle);
         }
     }
-    if (array_diff_key($expectedRefs, $seen) !== []) throw new RuntimeException('Registry referenced document is missing.');
+    // Check the existing compact lookup directly instead of allocating another
+    // associative set of every document key during a full-text search.
+    foreach ($registry['doc_refs'] as $key => $ref) {
+        if (isset($shardNames[$ref[0]]) && !isset($seen[$key])) throw new RuntimeException('Registry referenced document is missing.');
+    }
     if ($parcelId === null && $sourceCounts !== $registry['document_counts']) throw new RuntimeException('Registry source document totals are inconsistent.');
 }
 
@@ -536,11 +682,12 @@ function contains_text(string $haystack, string $needle): bool {
     return function_exists('mb_stripos') ? mb_stripos($haystack, $needle, 0, 'UTF-8') !== false : stripos($haystack, $needle) !== false;
 }
 
-function registry_search(PDO $pdo, array $registry, string $term, string $recordType): array {
+function registry_search(PDO $pdo, array $registry, string $term, array $filter): array {
+    if ($filter['advanced'] && ($registry['qualified_ids'] ?? []) === []) return [];
     // Exact parcel lookups use the validated index and the coordinate primary key;
     // address and partial-ID searches continue through the full-text path below.
     if (preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $term)) {
-        if (!registry_id_matches_filter($term, $registry, $recordType)) return [];
+        if (!registry_id_matches_filter($term, $registry, $filter)) return [];
         $stmt = $pdo->prepare('SELECT cadastral_id, latitude AS lat, longitude AS lng FROM parcels WHERE cadastral_id = :id LIMIT 1');
         $stmt->execute(['id' => $term]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -553,13 +700,17 @@ function registry_search(PDO $pdo, array $registry, string $term, string $record
     }
     $candidateIds = [];
     foreach ($registry['by_id'] as $id => $_) {
-        if (registry_id_matches_filter($id, $registry, $recordType) && contains_text($id, $term)) $candidateIds[$id] = true;
+        if (registry_id_matches_filter($id, $registry, $filter) && contains_text($id, $term)) $candidateIds[$id] = true;
     }
-    foreach (registry_document_iterator($registry) as $document) {
-        $text = json_encode($document['raw_fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if ($text === false || !contains_text($text, $term)) continue;
-        foreach ($document['cadastral_ids'] as $id) {
-            if (registry_id_matches_filter($id, $registry, $recordType)) $candidateIds[$id] = true;
+    // A property without linked records cannot match register text. Partial
+    // cadastral-ID matching still uses the coordinate query below.
+    if ($filter['record_types'] !== ['no_records']) {
+        foreach (registry_document_iterator($registry) as $document) {
+            $text = json_encode($document['raw_fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($text === false || !contains_text($text, $term)) continue;
+            foreach ($document['cadastral_ids'] as $id) {
+                if (registry_id_matches_filter($id, $registry, $filter)) $candidateIds[$id] = true;
+            }
         }
     }
     unset($document, $text);
@@ -573,7 +724,7 @@ function registry_search(PDO $pdo, array $registry, string $term, string $record
     $candidateIds = array_fill_keys(array_slice($candidateIdList, 0, 40), true);
     unset($candidateIdList);
     $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $term) . '%';
-    $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng FROM parcels p WHERE p.cadastral_id LIKE :term' . registry_filter($pdo, $registry, $recordType) . ' ORDER BY (p.cadastral_id = :exact_term) DESC, p.cadastral_id LIMIT 40');
+    $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng FROM parcels p WHERE p.cadastral_id LIKE :term' . registry_filter($pdo, $registry, $filter) . ' ORDER BY (p.cadastral_id = :exact_term) DESC, p.cadastral_id LIMIT 40');
     $stmt->execute(['term' => $like, 'exact_term' => $term]);
     $rows = [];
     foreach ($stmt->fetchAll() as $row) $rows[$row['cadastral_id']] = registry_plot($row, $registry);
@@ -610,6 +761,8 @@ function registry_plot_sources(string $id, array $registry): array {
 }
 
 try {
+    $action = $_GET['action'] ?? '';
+    $filter = in_array($action, ['viewport', 'search'], true) ? map_filter_params() : null;
     $configFile = __DIR__ . '/private/config.php';
     if (!is_file($configFile)) {
         respond(['error' => 'Database is not configured. Copy private/config.example.php to private/config.php and enter the hosting database credentials.'], 503);
@@ -621,9 +774,7 @@ try {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
     ]);
-    $registry = load_registry_snapshot();
-
-    $action = $_GET['action'] ?? '';
+    $registry = load_registry_snapshot($filter);
     if ($action === 'meta') {
         $counts = [
             'plots' => (int)$pdo->query('SELECT COUNT(*) FROM parcels WHERE latitude IS NOT NULL AND longitude IS NOT NULL')->fetchColumn(),
@@ -638,7 +789,7 @@ try {
             }
             $counts['plots_with_exploitation_certificate'] = coordinate_backed_id_count($pdo, array_keys($registry['certificate_ids']));
             $counts['linked_exploitation_certificates'] = $registry['linked_certificates'];
-            respond(['counts' => $counts, 'imports' => $registry['imports'], 'registry_generated_at' => $registry['generated_at']]);
+            respond(['counts' => $counts, 'imports' => $registry['imports'], 'registry_generated_at' => $registry['generated_at'], 'filter_options' => $registry['filter_options']]);
         }
         $counts['documents_by_source'] = [];
         $counts['plots_by_source'] = [];
@@ -659,11 +810,10 @@ try {
             unset($row['source_file'], $row['source_snapshot']);
             return $row;
         }, $imports);
-        respond(['counts' => $counts, 'imports' => $imports]);
+        respond(['counts' => $counts, 'imports' => $imports, 'filter_options' => filter_options(null)]);
     }
 
     if ($action === 'viewport') {
-        $recordType = record_type_param();
         $north = number_param('north', -90, 90);
         $south = number_param('south', -90, 90);
         $east = number_param('east', -180, 180);
@@ -674,8 +824,8 @@ try {
         }
 
         $where = 'p.latitude BETWEEN :south AND :north AND p.longitude BETWEEN :west AND :east'
-            . ($registry !== null ? registry_filter($pdo, $registry, $recordType) : record_filter($recordType));
-        $bounds = array_merge(['south' => $south, 'north' => $north, 'west' => $west, 'east' => $east], $registry !== null ? [] : record_filter_params($recordType));
+            . ($registry !== null ? registry_filter($pdo, $registry, $filter) : record_filter($filter));
+        $bounds = ['south' => $south, 'north' => $north, 'west' => $west, 'east' => $east];
         $countStmt = $pdo->prepare('SELECT COUNT(*) FROM parcels p WHERE ' . $where);
         $countStmt->execute($bounds);
         $total = (int)$countStmt->fetchColumn();
@@ -723,12 +873,11 @@ try {
     }
 
     if ($action === 'search') {
-        $recordType = record_type_param();
         $term = trim((string)($_GET['q'] ?? ''));
         if ($term === '' || text_length($term) > 120) {
             respond(['items' => []]);
         }
-        if ($registry !== null) respond(['items' => registry_search($pdo, $registry, $term, $recordType)]);
+        if ($registry !== null) respond(['items' => registry_search($pdo, $registry, $term, $filter)]);
         $like = '%' . str_replace(['%', '_'], ['\%', '\_'], $term) . '%';
         $stmt = $pdo->prepare(
             'SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng, ' . document_flags_select() . '
@@ -738,10 +887,10 @@ try {
                     SELECT 1 FROM parcel_documents pd
                     JOIN source_documents sd ON sd.source_code = pd.source_code AND sd.document_hash = pd.document_hash
                     WHERE pd.parcel_cadastral_id = p.cadastral_id AND sd.raw_fields LIKE :raw_term
-                ))' . record_filter($recordType) . '
+                ))' . record_filter($filter) . '
              ORDER BY (p.cadastral_id = :exact_term) DESC, p.cadastral_id LIMIT 40'
         );
-        $stmt->execute(array_merge(['id_term' => $like, 'raw_term' => $like, 'exact_term' => $term], record_filter_params($recordType)));
+        $stmt->execute(['id_term' => $like, 'raw_term' => $like, 'exact_term' => $term]);
         $items = array_map(static function (array $row): array {
             return array_merge(serialize_plot($row), [
                 'primary' => $row['cadastral_id'],
@@ -807,6 +956,8 @@ try {
     respond(['error' => 'Unknown API action.'], 404);
 } catch (InvalidArgumentException $error) {
     respond(['error' => $error->getMessage()], 400);
+} catch (FilterUnavailableException $error) {
+    respond(['error' => $error->getMessage()], 503);
 } catch (Throwable $error) {
     error_log('Sofia property API error: ' . $error->getMessage());
     respond(['error' => 'The data service is temporarily unavailable.'], 500);

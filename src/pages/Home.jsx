@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, ChevronDown, FileCheck2, MapPin, Search, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { ArrowUpRight, ChevronDown, MapPin, Search, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useI18n } from '@/lib/i18n';
 import { displayCount, displayDate } from '@/lib/registerUi';
+import { activeFilterCount, invalidFilterDates, normalizePropertyFilters, readPropertyFilters, writePropertyFilters } from '@/lib/propertyFilters';
 import { realEstateApi } from '@/api/realEstateApi';
 import AppHeader from '@/components/AppHeader';
 import DataNotice from '@/components/DemoNotice';
@@ -51,33 +52,42 @@ export default function Home() {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [recordType, setRecordType] = useState('all');
+  const [filters, setFilters] = useState(readPropertyFilters);
   const [meta, setMeta] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const searchRequest = useRef(0);
-  const { parcels, isLoading, truncated, total, apiError } = useViewportParcels(bounds, recordType);
+  const filterPanel = useRef(null);
+  const activeCount = activeFilterCount(filters);
+  const { parcels, isLoading, truncated, total, apiError, filterError } = useViewportParcels(bounds, filters);
 
   useEffect(() => { let active = true; realEstateApi.meta().then((data) => { if (active) setMeta(data); }).catch(() => {}); return () => { active = false; }; }, []);
+  useEffect(() => { writePropertyFilters(filters); }, [filters]);
   const handleSelect = useCallback((plot) => { setSelected(plot); setSearchOpen(false); }, []);
   const handleClear = useCallback(() => { searchRequest.current += 1; setQuery(''); setSearchedFor(''); setResults([]); setSearching(false); }, []);
   const handleQueryChange = useCallback((value) => { searchRequest.current += 1; setQuery(value); setSearchedFor(''); setResults([]); setSearching(false); }, []);
   const handleFilterChange = useCallback((value) => {
-    searchRequest.current += 1; setRecordType(value); setSearchedFor(''); setResults([]); setSearching(false); setSelected(null);
+    searchRequest.current += 1; setFilters(normalizePropertyFilters(value)); setSearchedFor(''); setResults([]); setSearching(false); setSelected(null);
   }, []);
+  const clearFilters = useCallback(() => handleFilterChange({}), [handleFilterChange]);
+  const editFilters = useCallback(() => {
+    if (isMobile) setSearchOpen(true);
+    else filterPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [isMobile]);
   const handleSearch = useCallback(async () => {
     const term = query.trim();
     if (!term) return;
+    if (invalidFilterDates(filters)) { toast({ title: t('filter.dateRangeError'), variant: 'destructive' }); return; }
     const request = ++searchRequest.current;
     setSearching(true);
     try {
-      const response = await realEstateApi.search(term, recordType);
+      const response = await realEstateApi.search(term, filters);
       if (request !== searchRequest.current) return;
       setResults((response.items || []).map((item) => ({ ...item, secondary: t('panel.linkedRecords', { n: item.document_count }) })));
       setSearchedFor(term);
     } catch (error) {
       if (request === searchRequest.current) toast({ title: t('error.request'), description: error.message, variant: 'destructive' });
     } finally { if (request === searchRequest.current) setSearching(false); }
-  }, [query, recordType, t, toast]);
+  }, [query, filters, t, toast]);
   const handleSelectResult = useCallback((result) => {
     setQuery(result.cadastral_id); setSearchedFor(''); setResults([]); setSearchOpen(false); setSelected(result);
     if (map && result.lat != null && result.lng != null) map.flyTo([Number(result.lat), Number(result.lng)], 18);
@@ -89,7 +99,7 @@ export default function Home() {
 
   const sidebar = <>
     <SearchPanel query={query} onQueryChange={handleQueryChange} onSubmit={handleSearch} onClear={handleClear} loading={searching} results={results} resultQuery={searchedFor} onSelectResult={handleSelectResult} />
-    <RegisterFilters value={recordType} onChange={handleFilterChange} counts={meta?.counts} />
+    <div ref={filterPanel}><RegisterFilters value={filters} onChange={handleFilterChange} counts={meta?.counts} options={meta?.filter_options} /></div>
     <div className="map-instructions"><span><MapPin size={18} /></span><div><strong>{t('map.howTitle')}</strong><p>{t('map.howHelp')}</p></div></div>
     <DatasetSummary meta={meta} />
   </>;
@@ -101,10 +111,9 @@ export default function Home() {
         {!isMobile && <aside className="workspace-sidebar" aria-label={t('search.title')}>{sidebar}</aside>}
         <div className="map-stage">
           <MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} userLocation={userLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={(center, zoom) => map?.flyTo(center, zoom)} />
-          {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{t('search.mobile')}<SlidersHorizontal size={16} />{recordType !== 'all' && <span className="active-filter-dot" />}</button> : <div className="map-context"><span className="context-dot" />{t('map.city')}<span className="map-context-divider" />{t(`filter.${recordType}`)}</div>}
+          {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{t('search.mobile')}<SlidersHorizontal size={16} />{activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : <button className="map-context" onClick={editFilters} aria-label={t('filter.edit')}><span className="context-dot" />{t('map.city')}<span className="map-context-divider" /><SlidersHorizontal size={13} />{activeCount ? t('filter.activeCount', { n: activeCount }) : t('filter.all')}</button>}
           <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} />
-          <MapLegend count={displayCount(total, lang)} loading={isLoading} truncated={truncated} apiError={apiError} recordType={recordType} />
-          {!selected && recordType === 'exploitation_certificates' && !isMobile && <div className="map-filter-callout"><FileCheck2 size={19} /><div><strong>{t('filter.certificateHint')}</strong><span>{t('filter.activeHelp')}</span></div></div>}
+          <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={isLoading} truncated={truncated} apiError={apiError} filterError={filterError} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} />
         </div>
         {!isMobile && selected && <aside className="workspace-details" aria-label={t('panel.title')}><DetailsPanel parcel={selected} onClose={() => setSelected(null)} /></aside>}
       </main>
