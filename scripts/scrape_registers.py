@@ -308,31 +308,27 @@ def choose_largest_page_size(driver, wait):
         print("No existing numeric page-size option; retaining the current size", flush=True)
         return
     size, value = max(choices)
-    if before["page_size"] == value:
+    if before["page_size"] == value and before["model_page_size"] == size:
         print(f"Largest existing page size {size} already selected", flush=True)
         return
     expected = total_rows(driver, before)
     marker = request_marker(before)
-    # Resolve the current SELECT inside this one script: a grid rerender cannot
-    # invalidate a saved WebElement between option inspection and selection.
+    # Resolve the current pager and grid in one script. Changing the dropdown's
+    # value alone does not update this register's DataSource; its documented
+    # pageSize setter performs the actual paged query and refreshes the pager.
     phase(CURRENT_SOURCE, f"page size: selecting existing option {value}")
     changed = driver.execute_script("""
         const value = arguments[0];
-        const element = document.querySelector('.k-grid .k-pager-sizes select');
+        const gridElement = document.querySelector('.k-grid');
+        const element = gridElement && gridElement.querySelector('.k-pager-sizes select');
         if (!element || !Array.from(element.options).some(option => option.value === value)) return false;
-        const widget = window.jQuery && window.jQuery(element).data('kendoDropDownList');
-        if (widget) {
-            widget.value(value);
-            widget.trigger('change');
-            return true;
-        }
-        if (!element.getClientRects().length) return false;
-        element.value = value;
-        element.dispatchEvent(new Event('change', {bubbles: true}));
+        const grid = window.jQuery && window.jQuery(gridElement).data('kendoGrid');
+        if (!grid || !grid.dataSource || typeof grid.dataSource.pageSize !== 'function') return false;
+        grid.dataSource.pageSize(Number(value));
         return true;
     """, value)
     if not changed:
-        print("Existing page-size control has no usable widget; retaining the current size", flush=True)
+        print("Existing pager has no usable grid data source; retaining the current size", flush=True)
         return
     phase(CURRENT_SOURCE, f"page size: waiting for option {value} to render rows")
     after = wait_read_render(driver, wait, marker=marker, page_number=1, page_size=value)
