@@ -4,19 +4,22 @@ import { invalidFilterDates, propertyFilterParams } from '@/lib/propertyFilters'
 
 export default function useViewportParcels(bounds, filters = {}) {
   const filterError = invalidFilterDates(filters);
+  const filterParams = propertyFilterParams(filters);
   const viewKey = bounds
     ? [bounds.north, bounds.south, bounds.east, bounds.west, bounds.zoom]
         .map((value) => Number(value).toFixed(4))
         .join('|')
     : null;
   const query = useQuery({
-    queryKey: ['plots', viewKey, propertyFilterParams(filters)],
+    queryKey: ['plots', viewKey, filterParams],
     enabled: Boolean(bounds) && !filterError,
     staleTime: 30000,
-    queryFn: () => realEstateApi.viewport(bounds, filters),
+    queryFn: ({ signal }) => realEstateApi.viewport(bounds, filters, signal),
+    placeholderData: (previous, previousQuery) => JSON.stringify(previousQuery?.queryKey[2]) === JSON.stringify(filterParams) ? previous : undefined,
   });
   return {
     ...query,
+    isLoading: !filterError && query.isFetching,
     parcels: filterError ? [] : query.data?.items || [],
     truncated: !filterError && Boolean(query.data?.truncated),
     total: filterError ? 0 : query.data?.total || 0,

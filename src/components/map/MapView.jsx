@@ -69,14 +69,20 @@ export default function MapView({
         const position = [Number(item.lat), Number(item.lng)];
         if (!Number.isFinite(position[0]) || !Number.isFinite(position[1])) return null;
         if (cluster) {
+          const count = Number(item.count);
+          if (!Number.isFinite(count) || count < 1) return null;
           const certificateCount = Number(item.certificate_count) || 0;
-          const size = Number(item.count) > 999 ? 48 : Number(item.count) > 99 ? 43 : 37;
+          const scale = count >= 1000 ? 'xlarge' : count >= 100 ? 'large' : count >= 10 ? 'medium' : 'small';
+          const size = { small: 44, medium: 56, large: 68, xlarge: 80 }[scale];
+          const clusterLabel = t(count === 1 ? 'map.clusterSingle' : 'map.cluster', { n: displayCount(count, lang) });
+          const certificateLabel = certificateCount > 0 ? t('map.clusterCertificates', { n: displayCount(certificateCount, lang) }) : '';
+          const clusterZoom = Number.isFinite(Number(item.zoom)) ? Number(item.zoom) : 13;
           const icon = divIcon({
             className: 'plot-cluster-icon', iconSize: [size, size], iconAnchor: [size / 2, size / 2],
-            html: `<span class="plot-cluster ${certificateCount ? 'has-certificate' : ''}" style="width:${size}px;height:${size}px">${displayCount(item.count, lang)}${certificateCount ? '<span class="cluster-certificate-dot"></span>' : ''}</span>`,
+            html: `<span class="plot-cluster plot-cluster-${scale} ${certificateCount ? 'has-certificate' : ''}" style="width:${size}px;height:${size}px"><span class="cluster-count">${displayCount(count, lang)}</span>${count >= 10 ? `<span class="cluster-count-label">${t('map.clusterPlots')}</span>` : ''}${certificateCount ? '<span class="cluster-certificate-dot" aria-hidden="true"></span>' : ''}</span>`,
           });
-          return <Marker key={`cluster-${item.cell_key || index}`} position={position} icon={icon} eventHandlers={{ click: () => onClusterClick(position, Math.min(19, (item.zoom || 15) + 2)) }}>
-            <Tooltip direction="top" offset={[0, -12]}><span>{t('map.cluster', { n: displayCount(item.count, lang) })}</span>{certificateCount > 0 && <span className="cluster-tooltip-certificate">{t('map.clusterCertificates', { n: certificateCount })}</span>}</Tooltip>
+          return <Marker key={`cluster-${item.cell_key || index}`} position={position} icon={icon} title={[clusterLabel, certificateLabel].filter(Boolean).join(' ')} keyboard zIndexOffset={size} eventHandlers={{ click: () => onClusterClick(position, Math.min(19, clusterZoom + 2), item.bounds) }}>
+            <Tooltip direction="top" offset={[0, -(size / 2) + 5]}><span>{clusterLabel}</span>{certificateCount > 0 && <span className="cluster-tooltip-certificate">{certificateLabel}</span>}</Tooltip>
           </Marker>;
         }
         return (

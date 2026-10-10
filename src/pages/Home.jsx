@@ -96,6 +96,14 @@ export default function Home() {
     if (!map || !navigator.geolocation) { toast({ title: t('map.locateError'), variant: 'destructive' }); return; }
     navigator.geolocation.getCurrentPosition((position) => { const point = { lat: position.coords.latitude, lng: position.coords.longitude }; setUserLocation(point); map.flyTo([point.lat, point.lng], 17); }, () => toast({ title: t('map.locateError'), variant: 'destructive' }));
   }, [map, t, toast]);
+  const handleClusterClick = useCallback((center, zoom, clusterBounds) => {
+    if (!map) return;
+    map.stop();
+    const limits = ['south', 'north', 'west', 'east'].map((key) => Number(clusterBounds?.[key]));
+    if (clusterBounds && limits.every(Number.isFinite) && limits[0] <= limits[1] && limits[2] <= limits[3]) {
+      map.fitBounds([[limits[0], limits[2]], [limits[1], limits[3]]], { padding: [48, 48], maxZoom: zoom, animate: true });
+    } else map.flyTo(center, zoom);
+  }, [map]);
 
   const sidebar = <>
     <SearchPanel query={query} onQueryChange={handleQueryChange} onSubmit={handleSearch} onClear={handleClear} loading={searching} results={results} resultQuery={searchedFor} onSelectResult={handleSelectResult} />
@@ -110,7 +118,7 @@ export default function Home() {
       <main className={`map-workspace ${selected ? 'has-selected' : ''}`}>
         {!isMobile && <aside className="workspace-sidebar" aria-label={t('search.title')}>{sidebar}</aside>}
         <div className="map-stage">
-          <MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} userLocation={userLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={(center, zoom) => map?.flyTo(center, zoom)} />
+          <MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} userLocation={userLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} />
           {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{t('search.mobile')}<SlidersHorizontal size={16} />{activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : <button className="map-context" onClick={editFilters} aria-label={t('filter.edit')}><span className="context-dot" />{t('map.city')}<span className="map-context-divider" /><SlidersHorizontal size={13} />{activeCount ? t('filter.activeCount', { n: activeCount }) : t('filter.all')}</button>}
           <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} />
           <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={isLoading} truncated={truncated} apiError={apiError} filterError={filterError} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} />

@@ -829,47 +829,70 @@ try {
         $countStmt = $pdo->prepare('SELECT COUNT(*) FROM parcels p WHERE ' . $where);
         $countStmt->execute($bounds);
         $total = (int)$countStmt->fetchColumn();
-        $limit = 900;
+        $pointLimit = 1800;
+        $clusterLimit = 1800;
+        if ($total === 0) respond(['items' => [], 'total' => 0, 'truncated' => false]);
 
-        if ($zoom >= 16) {
-            $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng' . ($registry !== null ? '' : ', ' . document_flags_select()) . ' FROM parcels p ' . ($registry !== null ? '' : document_flags_join()) . ' WHERE ' . $where . ' ORDER BY p.cadastral_id LIMIT ' . ($limit + 1));
+        if ($zoom >= 17 && $total <= $pointLimit) {
+            $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng' . ($registry !== null ? '' : ', ' . document_flags_select()) . ' FROM parcels p ' . ($registry !== null ? '' : document_flags_join()) . ' WHERE ' . $where . ' ORDER BY p.cadastral_id LIMIT ' . ($pointLimit + 1));
             $stmt->execute($bounds);
             $items = array_map(static function (array $row) use ($registry): array {
                 return array_merge(['kind' => 'plot'], $registry !== null ? registry_plot($row, $registry) : serialize_plot($row));
             }, $stmt->fetchAll());
-            $truncated = count($items) > $limit;
-            if ($truncated) array_pop($items);
-            respond(['items' => $items, 'total' => $total, 'truncated' => $truncated]);
+            if (count($items) <= $pointLimit) respond(['items' => $items, 'total' => count($items), 'truncated' => false]);
+            // Coordinate edits between the count and select must not produce a
+            // truncated subset of points. Fall through to complete aggregation.
+            unset($items);
         }
 
-        $cell = $zoom >= 14 ? 0.002 : 0.008;
         $certificateExpression = 'COALESCE(flags.has_exploitation_certificate, 0)';
         if ($registry !== null) {
             $certificateExpression = $registry['certificate_ids'] === [] ? '0' : 'p.cadastral_id IN (' . quoted_ids($pdo, array_keys($registry['certificate_ids'])) . ')';
         }
-        $stmt = $pdo->prepare(
-            'SELECT FLOOR(p.latitude / :cell_lat) AS gy, FLOOR(p.longitude / :cell_lng) AS gx,
-                    AVG(p.latitude) AS lat, AVG(p.longitude) AS lng, COUNT(*) AS point_count,
-                    SUM(' . $certificateExpression . ') AS certificate_count
-             FROM parcels p ' . ($registry !== null ? '' : document_flags_join()) . ' WHERE ' . $where . '
-             GROUP BY gy, gx ORDER BY point_count DESC LIMIT ' . ($limit + 1)
-        );
-        $stmt->execute(array_merge(['cell_lat' => $cell, 'cell_lng' => $cell], $bounds));
-        $rows = $stmt->fetchAll();
-        $truncated = count($rows) > $limit;
-        if ($truncated) array_pop($rows);
-        $items = array_map(static function (array $row) use ($zoom): array {
+        // A Leaflet/Web Mercator world is 256 * 2^zoom pixels wide. Using
+        // 128-pixel cells gives 2^(zoom+1) cells per axis. World anchoring makes
+        // every cell split into exactly 2 x 2 children at the next zoom level.
+        // Clamp Mercator latitude to avoid poles, zero cosine and invalid LN.
+        $mercatorLatitude = 'LEAST(85.05112878, GREATEST(-85.05112878, p.latitude))';
+        $mercatorY = '(1 - LN(TAN(RADIANS(' . $mercatorLatitude . ')) + 1 / COS(RADIANS(' . $mercatorLatitude . '))) / PI()) / 2';
+        $clusterZoom = $zoom;
+        do {
+            $worldCells = 1 << ($clusterZoom + 1);
+            $stmt = $pdo->prepare(
+                'SELECT LEAST(:world_max_x, GREATEST(0, FLOOR((p.longitude + 180) / 360 * :world_cells_x))) AS gx,
+                        LEAST(:world_max_y, GREATEST(0, FLOOR(' . $mercatorY . ' * :world_cells_y))) AS gy,
+                        AVG(p.latitude) AS lat, AVG(p.longitude) AS lng, COUNT(*) AS point_count,
+                        MIN(p.latitude) AS south, MAX(p.latitude) AS north,
+                        MIN(p.longitude) AS west, MAX(p.longitude) AS east,
+                        SUM(' . $certificateExpression . ') AS certificate_count
+                 FROM parcels p ' . ($registry !== null ? '' : document_flags_join()) . ' WHERE ' . $where . '
+                 GROUP BY gy, gx ORDER BY point_count DESC, gy, gx LIMIT ' . ($clusterLimit + 1)
+            );
+            $stmt->execute(array_merge(['world_max_x' => $worldCells - 1, 'world_max_y' => $worldCells - 1,
+                'world_cells_x' => $worldCells, 'world_cells_y' => $worldCells], $bounds));
+            $rows = $stmt->fetchAll();
+            if (count($rows) <= $clusterLimit) break;
+            // Very large bounds at a detailed zoom can span too many cells.
+            // Regroup all matching points at a coarser level instead of dropping
+            // clusters. At level 0 only four world cells are possible.
+            $clusterZoom--;
+        } while ($clusterZoom >= 0);
+        $items = array_map(static function (array $row) use ($zoom, $clusterZoom): array {
             return [
                 'kind' => 'cluster',
-                'cell_key' => $row['gy'] . ':' . $row['gx'],
+                'cell_key' => $clusterZoom . ':' . $row['gx'] . ':' . $row['gy'],
                 'lat' => (float)$row['lat'],
                 'lng' => (float)$row['lng'],
                 'count' => (int)$row['point_count'],
                 'certificate_count' => (int)$row['certificate_count'],
+                'bounds' => ['south' => (float)$row['south'], 'north' => (float)$row['north'],
+                    'west' => (float)$row['west'], 'east' => (float)$row['east']],
                 'zoom' => $zoom,
+                'cluster_zoom' => $clusterZoom,
             ];
         }, $rows);
-        respond(['items' => $items, 'total' => $total, 'truncated' => $truncated]);
+        $total = array_sum(array_column($items, 'count'));
+        respond(['items' => $items, 'total' => $total, 'truncated' => false, 'requested_zoom' => $zoom, 'cluster_zoom' => $clusterZoom]);
     }
 
     if ($action === 'search') {

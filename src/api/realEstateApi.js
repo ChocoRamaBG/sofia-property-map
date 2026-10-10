@@ -2,13 +2,13 @@ import { propertyFilterParams } from '@/lib/propertyFilters';
 
 const API_URL = import.meta.env.VITE_API_URL || './api.php';
 
-async function request(action, params = {}) {
+async function request(action, params = {}, signal) {
   const url = new URL(API_URL, window.location.href);
   url.searchParams.set('action', action);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
   });
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
+  const response = await fetch(url, { headers: { Accept: 'application/json' }, signal });
   const payload = await response.json().catch(() => {
     throw new Error('The data service returned an invalid response.');
   });
@@ -18,7 +18,7 @@ async function request(action, params = {}) {
 
 export const realEstateApi = {
   meta: () => request('meta'),
-  viewport: (bounds, filters = {}) => request('viewport', { ...bounds, ...propertyFilterParams(filters) }),
+  viewport: (bounds, filters = {}, signal) => request('viewport', { ...bounds, ...propertyFilterParams(filters) }, signal),
   search: (query, filters = {}) => request('search', { q: query, ...propertyFilterParams(filters) }),
   plot: (id) => request('plot', { id }),
 };

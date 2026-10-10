@@ -261,10 +261,22 @@ button.map-context:hover { background: white; border-color: #a8c7b1; color: #2e7
 .legend-warning, .legend-error { margin-top: 9px; font-size: 10px; line-height: 1.6; }
 .legend-warning { color: #a67820; }
 .legend-error { color: #b43a3a; }
-.plot-cluster-icon { background: transparent; border: none; }
-.plot-cluster { position: relative; display: grid; place-items: center; border-radius: 50%; color: #31545a; border: 2px solid #ffffff; background: #e6edeced; box-shadow: 0 0 0 3px #537e761e, 0 2px 5px #3c5b4929; font-size: 11px; font-weight: 700; }
-.plot-cluster.has-certificate { background: #126e55ee; color: #fff; box-shadow: 0 0 0 4px #04855628, 0 3px 7px #153f2c29; }
-.cluster-certificate-dot { position: absolute; right: -2px; top: -1px; width: 9px; height: 9px; border-radius: 50%; border: 2px solid #fff; background: #93d4a4; }
+.plot-cluster-icon { background: transparent; border: none; border-radius: 50%; }
+.plot-cluster { --cluster-halo: 4px; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border-radius: 50%; color: #fff; border: 2px solid #ffffff; background: #2c5660f2; box-shadow: 0 0 0 var(--cluster-halo) #3a6a6a26, 0 3px 9px #254c4540; font-weight: 700; transform-origin: center; transition: transform .16s, box-shadow .16s; }
+.plot-cluster-medium { --cluster-halo: 5px; }
+.plot-cluster-large { --cluster-halo: 6px; }
+.plot-cluster-xlarge { --cluster-halo: 7px; }
+.cluster-count { display: block; font-size: 14px; line-height: 1.1; letter-spacing: -.35px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plot-cluster-medium .cluster-count { font-size: 17px; }
+.plot-cluster-large .cluster-count { font-size: 19px; }
+.plot-cluster-xlarge .cluster-count { font-size: 20px; }
+.cluster-count-label { display: block; margin-top: 1px; font-size: 9px; font-weight: 500; line-height: 1.2; color: #ecf5ef; }
+.plot-cluster-large .cluster-count-label, .plot-cluster-xlarge .cluster-count-label { font-size: 10px; }
+.plot-cluster.has-certificate { background: #127653f2; box-shadow: 0 0 0 var(--cluster-halo) #00845d2e, 0 3px 9px #153f2c40; }
+.plot-cluster-icon:hover .plot-cluster { transform: scale(1.07); box-shadow: 0 0 0 calc(var(--cluster-halo) + 2px) #39827735, 0 5px 13px #214c454f; }
+.plot-cluster-icon:focus-visible { outline: 3px solid #214f62; outline-offset: 9px; }
+.cluster-certificate-dot { position: absolute; right: 0; top: 0; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; background: #95e1b1; box-shadow: 0 1px 3px #1e54352b; }
+.plot-cluster-large .cluster-certificate-dot, .plot-cluster-xlarge .cluster-certificate-dot { right: 2px; top: 2px; width: 14px; height: 14px; }
 .leaflet-tooltip { color: #264b4c; padding: 9px 11px; border: 1px solid #e1e9e0; border-radius: 6px; font-size: 11px; box-shadow: 0 3px 12px #183b391c; }
 .cluster-tooltip-certificate, .point-tooltip-status { display: block; margin-top: 3px; font-size: 10px; font-weight: 400; color: #647c72; }
 .map-filter-callout { position: absolute; bottom: 29px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 13px 17px; border-radius: 9px; background: #f6fcf5f7; border: 1px solid #d9e8d9; color: #327153; z-index: 1000; box-shadow: 0 4px 16px #173b3918; }
