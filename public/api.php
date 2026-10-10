@@ -395,6 +395,16 @@ function quoted_ids(PDO $pdo, array $ids): string {
     return implode(',', array_map(static function (string $id) use ($pdo): string { return $pdo->quote($id); }, $ids));
 }
 
+function coordinate_backed_id_count(PDO $pdo, array $ids): int {
+    // The registry indexes contain unique, validated exact IDs. Count only IDs
+    // with coordinates so filter totals describe points available on the map.
+    $total = 0;
+    foreach (array_chunk($ids, 1000) as $chunk) {
+        $total += (int)$pdo->query('SELECT COUNT(*) FROM parcels WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND cadastral_id IN (' . quoted_ids($pdo, $chunk) . ')')->fetchColumn();
+    }
+    return $total;
+}
+
 function registry_filter(PDO $pdo, array $registry, string $recordType): string {
     if ($recordType === 'all') return '';
     $ids = $recordType === 'no_records' ? array_keys($registry['by_id'])
@@ -566,8 +576,11 @@ try {
         if ($registry !== null) {
             $counts['documents'] = array_sum($registry['document_counts']);
             $counts['documents_by_source'] = $registry['document_counts'];
-            $counts['plots_by_source'] = array_map('count', $registry['source_ids']);
-            $counts['plots_with_exploitation_certificate'] = count($registry['certificate_ids']);
+            $counts['plots_by_source'] = [];
+            foreach ($registry['source_ids'] as $code => $ids) {
+                $counts['plots_by_source'][$code] = coordinate_backed_id_count($pdo, array_keys($ids));
+            }
+            $counts['plots_with_exploitation_certificate'] = coordinate_backed_id_count($pdo, array_keys($registry['certificate_ids']));
             $counts['linked_exploitation_certificates'] = $registry['linked_certificates'];
             respond(['counts' => $counts, 'imports' => $registry['imports'], 'registry_generated_at' => $registry['generated_at']]);
         }
@@ -577,10 +590,10 @@ try {
             $counts['documents_by_source'][$row['code']] = (int)$row['document_count'];
             $counts['plots_by_source'][$row['code']] = 0;
         }
-        foreach ($pdo->query('SELECT source_code, COUNT(DISTINCT parcel_cadastral_id) AS plot_count FROM parcel_documents GROUP BY source_code')->fetchAll() as $row) {
+        foreach ($pdo->query('SELECT pd.source_code, COUNT(DISTINCT pd.parcel_cadastral_id) AS plot_count FROM parcel_documents pd JOIN parcels p ON p.cadastral_id = pd.parcel_cadastral_id WHERE p.latitude IS NOT NULL AND p.longitude IS NOT NULL GROUP BY pd.source_code')->fetchAll() as $row) {
             $counts['plots_by_source'][$row['source_code']] = (int)$row['plot_count'];
         }
-        $counts['plots_with_exploitation_certificate'] = (int)$pdo->query("SELECT COUNT(DISTINCT parcel_cadastral_id) FROM parcel_documents WHERE source_code IN ('exploitation_certificates', 'exploitation_certificates_legacy')")->fetchColumn();
+        $counts['plots_with_exploitation_certificate'] = (int)$pdo->query("SELECT COUNT(DISTINCT pd.parcel_cadastral_id) FROM parcel_documents pd JOIN parcels p ON p.cadastral_id = pd.parcel_cadastral_id WHERE pd.source_code IN ('exploitation_certificates', 'exploitation_certificates_legacy') AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL")->fetchColumn();
         $counts['linked_exploitation_certificates'] = (int)$pdo->query("SELECT COUNT(*) FROM (SELECT source_code, document_hash FROM parcel_documents WHERE source_code IN ('exploitation_certificates', 'exploitation_certificates_legacy') GROUP BY source_code, document_hash) linked_certificates")->fetchColumn();
         $imports = $pdo->query('SELECT di.source_code, ds.label_bg, ds.label_en, ds.source_url, ds.snapshot_date, ds.snapshot_file AS source_snapshot, di.source_file, di.imported_at, di.records_loaded FROM data_imports di LEFT JOIN data_sources ds ON ds.code = di.source_code ORDER BY di.imported_at DESC')->fetchAll();
         $imports = array_map(static function (array $row): array {
