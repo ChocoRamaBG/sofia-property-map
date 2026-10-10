@@ -77,11 +77,11 @@ Upload that file into the protected private directory. The monthly workflow then
 
 1. Fetches the previous private snapshot over FTPS.
 2. Selects a date window with at least 90 days of overlap, extending back to the oldest core-source capture minus 30 days when a run was missed or the initial workbooks are old.
-3. Runs the supplied Selenium parser approach for permits, certificates, and design visas in headless Chrome. It reads visible official headings and cells, checks the filter and pagination, and requires the captured count to equal each register's total.
+3. Runs the supplied Selenium parser approach for permits, certificates, and design visas in headless Chrome. It reads visible official headings and cells, selects the largest existing numeric page-size option when available, checks the filter and pagination, and requires the captured count to equal a stable register total. Repeated individual rows stop the capture for inspection.
 4. Merges every completed capture with earlier observations. It retains legacy evidence and changed versions of a record.
 5. Uploads a temporary private JSON file, reads it back, verifies SHA-256, saves the previous snapshot privately, and replaces the live file with an atomic rename.
 
-Partial runs, unexpected headings, repeated pages, missing totals, failed date filters, changed hosted data during a run, or files over 10 MiB stop publication. The existing hosted snapshot continues to serve users. A successful capture is retained as a private Actions artifact for 31 days. Job logs and the published dataset's completion date establish whether a run succeeded.
+Partial runs, unexpected headings, repeated rows or pages, changing or missing totals, failed date filters, changed hosted data during a run, or files over 10 MiB stop publication. The existing hosted snapshot continues to serve users. Each fully completed source capture is retained as a private Actions artifact for 31 days even if a later source or merge fails. Job logs and the published dataset's completion date establish whether a run succeeded.
 
 To run it immediately, open GitHub Actions, select **Monthly Sofia register refresh**, and choose **Run workflow**. Leave start_date blank for the gap-aware window, or enter an earlier DD.MM.YYYY date. For the initial May 2025 snapshots, the automatic window extends back to April 2025.
 

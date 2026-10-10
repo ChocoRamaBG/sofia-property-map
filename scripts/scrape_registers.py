@@ -23,6 +23,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
 
 from registry_sources import CORE_CODES, SOURCES
 
@@ -57,6 +58,49 @@ def fingerprint(values: list[list[str]]) -> str:
 
 def wait_idle(driver, wait):
     wait.until(lambda browser: not any(element.is_displayed() for element in browser.find_elements(By.CSS_SELECTOR, ".k-loading-mask")))
+
+
+def choose_largest_page_size(driver, wait):
+    """Use only an existing numeric option in the register's pager select."""
+    selects = driver.find_elements(By.CSS_SELECTOR, ".k-grid .k-pager-sizes select")
+    if not selects:
+        return
+    element = selects[0]
+    choices = []
+    for option in element.find_elements(By.TAG_NAME, "option"):
+        value = option.get_attribute("value") or ""
+        if value.isdigit() and int(value) > 0:
+            choices.append((int(value), value))
+    if not choices:
+        return
+    size, value = max(choices)
+    if element.get_attribute("value") == value:
+        return
+    previous_values = page_values(driver)
+    previous_hash = fingerprint(previous_values)
+    expected = total_rows(driver)
+    if element.is_displayed():
+        Select(element).select_by_value(value)
+    else:
+        # Kendo decorates an existing hidden SELECT. Its documented widget API
+        # selects one of that element's actual options; no page size is invented.
+        changed = driver.execute_script("""
+            const element = arguments[0], value = arguments[1];
+            if (!Array.from(element.options).some(option => option.value === value)) return false;
+            const widget = window.jQuery && window.jQuery(element).data('kendoDropDownList');
+            if (!widget) return false;
+            widget.value(value);
+            widget.trigger('change');
+            return true;
+        """, element, value)
+        if not changed:
+            return
+    if expected > len(previous_values):
+        wait.until(lambda browser: fingerprint(page_values(browser)) != previous_hash)
+    wait_idle(driver, wait)
+    if total_rows(driver) != expected:
+        raise RuntimeError("Register total changed while selecting page size")
+    print(f"Using the register's existing {size}-row page-size option", flush=True)
 
 
 def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
@@ -102,6 +146,7 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     if date_field.get_attribute("value") != start_date:
         raise RuntimeError("The register did not retain the requested start date")
 
+    choose_largest_page_size(driver, wait)
     expected = total_rows(driver)
     headers = [" ".join(cell.text.split()) for cell in driver.find_elements(By.CSS_SELECTOR, ".k-grid thead tr:not(.k-filter-row) th") if cell.is_displayed()]
     normalized_headers = {header.casefold() for header in headers}
@@ -109,9 +154,14 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
         raise RuntimeError(f"Required register headings changed: {headers!r}")
     rows: list[list[str]] = []
     seen_pages = set()
+    seen_rows = set()
     for page_number in range(1, max_pages + 1):
         wait_idle(driver, wait)
+        if total_rows(driver) != expected:
+            raise RuntimeError("Register total changed during pagination; repeat the window")
         current = page_values(driver)
+        if total_rows(driver) != expected:
+            raise RuntimeError("Register total changed while reading a page; repeat the window")
         if expected == 0:
             if current:
                 raise RuntimeError("Zero total conflicts with visible data rows")
@@ -122,6 +172,11 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
         if page_hash in seen_pages:
             raise RuntimeError(f"Pagination repeated a captured page ({page_number})")
         seen_pages.add(page_hash)
+        for row in current:
+            row_hash = fingerprint([row])
+            if row_hash in seen_rows:
+                raise RuntimeError(f"Pagination repeated an individual record on page {page_number}; inspect the register before publication")
+            seen_rows.add(row_hash)
         rows.extend(current)
         print(f"{code}: page {page_number}, {len(rows)}/{expected} rows", flush=True)
         if len(rows) == expected:
@@ -184,14 +239,16 @@ def main():
     captures = []
     try:
         for code in codes:
-            captures.append(read_source(driver, code, args.start_date, args.max_pages))
+            capture = read_source(driver, code, args.start_date, args.max_pages)
+            # Keep only a source that fully completed, even if a later source
+            # fails. The merge/publication still requires all three core files.
+            path = args.output / f"{capture['source_code']}.json"
+            pending = path.with_suffix(".json.pending")
+            pending.write_text(json.dumps(capture, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            pending.replace(path)
+            captures.append(capture)
     finally:
         driver.quit()
-    for capture in captures:
-        path = args.output / f"{capture['source_code']}.json"
-        pending = path.with_suffix(".json.pending")
-        pending.write_text(json.dumps(capture, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        pending.replace(path)
     print(f"Completed {len(captures)} source captures in {args.output}")
 
 
