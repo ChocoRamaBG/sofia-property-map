@@ -107,9 +107,9 @@ def check_manifest(payload: bytes) -> dict:
             raise ValueError("Invalid bounded shard descriptor")
         names.add(descriptor["file"])
     if sum(item["records"] for item in descriptors) > MAX_DOCUMENTS:
-        raise ValueError("Snapshot exceeds 60,000 observations")
+        raise ValueError("Snapshot exceeds 100,000 observations")
     if sum(item["bytes"] for item in descriptors) + index["bytes"] > MAX_LOCAL_BYTES:
-        raise ValueError("Snapshot exceeds the 64 MiB processing limit")
+        raise ValueError("Snapshot exceeds the 128 MiB processing limit")
     return manifest
 
 
@@ -140,16 +140,28 @@ def reconstruct(manifest_payload: bytes, reader, keep_payloads: bool = False) ->
     parcels = index.get("parcels")
     if not isinstance(parcels, dict) or len(parcels) > MAX_INDEX_PARCELS:
         raise ValueError("Index lacks parcel lookup entries")
-    shard_names = {descriptor["file"] for descriptor in manifest["documents"]}
+    reference_format = index.get("reference_format")
+    if reference_format not in (None, "tuple-v1"):
+        raise ValueError("Unsupported parcel reference format")
+    shard_files = [descriptor["file"] for descriptor in manifest["documents"]]
+    shard_names = set(shard_files)
     expected_refs = {}
     for parcel, entry in parcels.items():
         if not isinstance(parcel, str) or CADASTRAL_ID.fullmatch(parcel) is None or not isinstance(entry, dict) or not isinstance(entry.get("documents"), list) or not 1 <= len(entry["documents"]) <= MAX_DOCUMENTS:
             raise ValueError("Malformed parcel lookup entry")
         refs = set()
         for ref in entry["documents"]:
-            if not isinstance(ref, dict) or ref.get("source_code") not in codes or ref.get("source_code") == "coordinates" or not matches(HEX64, ref.get("document_hash")) or ref.get("shard") not in shard_names:
+            if reference_format == "tuple-v1":
+                if not isinstance(ref, list) or len(ref) != 3 or not integer(ref[0], 0, len(codes) - 1) or not matches(HEX64, ref[1]) or not integer(ref[2], 0, len(shard_files) - 1):
+                    raise ValueError("Malformed compact parcel observation reference")
+                code, document_hash, shard = codes[ref[0]], ref[1], shard_files[ref[2]]
+            else:
+                if not isinstance(ref, dict):
+                    raise ValueError("Malformed parcel observation reference")
+                code, document_hash, shard = ref.get("source_code"), ref.get("document_hash"), ref.get("shard")
+            if code not in codes or code == "coordinates" or not matches(HEX64, document_hash) or shard not in shard_names:
                 raise ValueError("Malformed parcel observation reference")
-            identity = (ref["source_code"], ref["document_hash"], ref["shard"])
+            identity = (code, document_hash, shard)
             if identity in refs:
                 raise ValueError("Repeated observation reference for a parcel")
             refs.add(identity)
@@ -184,7 +196,7 @@ def reconstruct(manifest_payload: bytes, reader, keep_payloads: bool = False) ->
     snapshot = {"version": 1, "generated_at": manifest["generated_at"], "sources": sources, "documents": documents, "imports": imports, "completion": manifest["completion"]}
     validate_snapshot(snapshot)
     if len(json_bytes(snapshot)) > MAX_LOCAL_BYTES:
-        raise ValueError("Reconstructed local dataset exceeds 64 MiB")
+        raise ValueError("Reconstructed local dataset exceeds 128 MiB")
     return snapshot, manifest, payloads
 
 

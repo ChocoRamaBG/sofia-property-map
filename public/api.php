@@ -4,6 +4,11 @@ declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
+// Keep these v2 bounds synchronized with build_registry_snapshot.py.
+const REGISTRY_MAX_INDEX_BYTES = 8 * 1024 * 1024;
+const REGISTRY_MAX_DATASET_BYTES = 128 * 1024 * 1024;
+const REGISTRY_MAX_DOCUMENTS = 100000;
+
 function respond(array $body, int $status = 200): void {
     http_response_code($status);
     echo json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -250,24 +255,27 @@ function load_registry_v2(string $activePath): array {
         throw new RuntimeException('Registry manifest format is invalid.');
     }
     validate_registry_completion($manifest['completion'] ?? null);
-    validate_registry_file_descriptor($manifest['index'] ?? null, '/^index\.json$/', 4 * 1024 * 1024);
+    validate_registry_file_descriptor($manifest['index'] ?? null, '/^index\.json$/', REGISTRY_MAX_INDEX_BYTES);
     $root = __DIR__ . '/private/registry-snapshots';
     $directory = $root . '/' . $manifest['snapshot_id'];
     if (is_link($root) || is_link($directory) || !is_dir($directory)) throw new RuntimeException('Registry snapshot directory is unavailable.');
     $shards = [];
     $records = 0;
+    $totalBytes = $manifest['index']['bytes'];
     foreach ($manifest['documents'] as $shard) {
         validate_registry_file_descriptor($shard, '/^documents-[0-9]{3}\.jsonl$/', 1024 * 1024);
         if (isset($shards[$shard['file']]) || !is_int($shard['records'] ?? null) || $shard['records'] < 1) {
             throw new RuntimeException('Registry document shard is invalid.');
         }
         $records += $shard['records'];
-        if ($records > 60000) throw new RuntimeException('Registry snapshot contains too many documents.');
+        if ($records > REGISTRY_MAX_DOCUMENTS) throw new RuntimeException('Registry snapshot contains too many documents.');
+        $totalBytes += $shard['bytes'];
+        if ($totalBytes > REGISTRY_MAX_DATASET_BYTES) throw new RuntimeException('Registry snapshot exceeds its processing size limit.');
         $path = $directory . '/' . $shard['file'];
         if (!is_file($path) || is_link($path) || filesize($path) !== $shard['bytes']) throw new RuntimeException('Registry shard is unavailable.');
         $shards[$shard['file']] = $shard;
     }
-    $index = bounded_registry_json($directory . '/index.json', 4 * 1024 * 1024, $manifest['index']['bytes'], $manifest['index']['sha256']);
+    $index = bounded_registry_json($directory . '/index.json', REGISTRY_MAX_INDEX_BYTES, $manifest['index']['bytes'], $manifest['index']['sha256']);
     if (($index['version'] ?? null) !== 2 || ($index['snapshot_id'] ?? null) !== $manifest['snapshot_id']
         || ($index['generated_at'] ?? null) !== $manifest['generated_at'] || !is_array($index['parcels'] ?? null)
         || count($index['parcels']) > 50000 || !is_array($index['document_counts'] ?? null)) {
@@ -277,6 +285,10 @@ function load_registry_v2(string $activePath): array {
     if ($index['completion'] != $manifest['completion']) throw new RuntimeException('Registry snapshot completion is inconsistent.');
     $sources = validate_registry_sources($index['sources'] ?? null);
     $imports = public_registry_imports($index['imports'] ?? null, $sources);
+    $referenceFormat = $index['reference_format'] ?? null;
+    if ($referenceFormat !== null && $referenceFormat !== 'tuple-v1') throw new RuntimeException('Registry reference format is invalid.');
+    $sourceCodes = array_keys($sources);
+    $shardNames = array_keys($shards);
     $documentCounts = array_fill_keys(array_keys($sources), 0);
     foreach ($index['document_counts'] as $code => $count) {
         if (!isset($sources[$code]) || !is_int($count) || $count < 0 || ($code === 'coordinates' && $count !== 0)) throw new RuntimeException('Registry document count is invalid.');
@@ -288,36 +300,58 @@ function load_registry_v2(string $activePath): array {
     $flags = [];
     $sourceIds = array_fill_keys(array_keys($sources), []);
     $certificateIds = [];
+    // Internal references are packed [shard name, newline-delimited exact IDs].
     $docRefs = [];
     $indexedCounts = array_fill_keys(array_keys($sources), 0);
     $certificateDocuments = [];
-    foreach ($index['parcels'] as $id => $parcel) {
+    // Release decoded references as each parcel is indexed. Retain a compact
+    // shard lookup rather than a second copy of every reference array.
+    $parcelIds = array_keys($index['parcels']);
+    foreach ($parcelIds as $id) {
+        $parcel = $index['parcels'][$id];
+        unset($index['parcels'][$id]);
         if (!is_string($id) || !preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $id)
             || !is_array($parcel) || !snapshot_list($parcel['documents'] ?? null) || count($parcel['documents']) < 1
-            || count($parcel['documents']) > 60000) throw new RuntimeException('Registry parcel index is invalid.');
+            || count($parcel['documents']) > REGISTRY_MAX_DOCUMENTS) throw new RuntimeException('Registry parcel index is invalid.');
         $flags[$id] = empty_document_flags();
         foreach ($parcel['documents'] as $ref) {
-            if (!is_array($ref) || !is_string($ref['source_code'] ?? null) || !isset($sources[$ref['source_code']])
-                || $ref['source_code'] === 'coordinates' || !is_string($ref['document_hash'] ?? null)
-                || !preg_match('/^[a-f0-9]{64}$/', $ref['document_hash']) || !is_string($ref['shard'] ?? null)
-                || !isset($shards[$ref['shard']])) throw new RuntimeException('Registry document reference is invalid.');
-            $key = $ref['source_code'] . ':' . $ref['document_hash'];
-            if (isset($byId[$id][$key]) || (isset($docRefs[$key]) && $docRefs[$key]['shard'] !== $ref['shard'])) {
+            if ($referenceFormat === 'tuple-v1') {
+                if (!snapshot_list($ref) || count($ref) !== 3 || !is_int($ref[0]) || !isset($sourceCodes[$ref[0]])
+                    || !is_int($ref[2]) || !isset($shardNames[$ref[2]])) throw new RuntimeException('Registry compact reference is invalid.');
+                $code = $sourceCodes[$ref[0]];
+                $documentHash = $ref[1];
+                $shardName = $shardNames[$ref[2]];
+            } else {
+                if (!is_array($ref)) throw new RuntimeException('Registry document reference is invalid.');
+                $code = $ref['source_code'] ?? null;
+                $documentHash = $ref['document_hash'] ?? null;
+                $shardName = $ref['shard'] ?? null;
+            }
+            if (!is_string($code) || !isset($sources[$code]) || $code === 'coordinates'
+                || !is_string($documentHash) || !preg_match('/^[a-f0-9]{64}$/', $documentHash)
+                || !is_string($shardName) || !isset($shards[$shardName])) throw new RuntimeException('Registry document reference is invalid.');
+            $key = $code . ':' . $documentHash;
+            if (isset($byId[$id][$key]) || (isset($docRefs[$key]) && $docRefs[$key][0] !== $shardName)) {
                 throw new RuntimeException('Registry document reference is duplicated or inconsistent.');
             }
-            if (!isset($docRefs[$key])) $indexedCounts[$ref['source_code']]++;
-            $byId[$id][$key] = $ref;
-            $docRefs[$key]['shard'] = $ref['shard'];
-            $docRefs[$key]['ids'][$id] = true;
+            $byId[$id][$key] = $shardName;
+            // Validated cadastral IDs contain no newlines. A scalar list avoids
+            // allocating one nested associative array for every document.
+            if (!isset($docRefs[$key])) {
+                $indexedCounts[$code]++;
+                $docRefs[$key] = [$shardName, $id . "\n"];
+            } else {
+                $docRefs[$key][1] .= $id . "\n";
+            }
             $flags[$id]['document_count']++;
-            $sourceIds[$ref['source_code']][$id] = true;
-            if (source_is_certificate($ref['source_code'])) {
+            $sourceIds[$code][$id] = true;
+            if (source_is_certificate($code)) {
                 $flags[$id]['has_exploitation_certificate'] = true;
                 $certificateIds[$id] = true;
                 $certificateDocuments[$key] = true;
-            } elseif ($ref['source_code'] === 'building_permits') {
+            } elseif ($code === 'building_permits') {
                 $flags[$id]['has_building_permit'] = true;
-            } elseif ($ref['source_code'] === 'projecting_visas') {
+            } elseif ($code === 'projecting_visas') {
                 $flags[$id]['has_projecting_visa'] = true;
             }
         }
@@ -327,7 +361,7 @@ function load_registry_v2(string $activePath): array {
         if ($count > $documentCounts[$code]) throw new RuntimeException('Registry indexed source total is invalid.');
     }
     $generatedAt = $manifest['generated_at'];
-    unset($index, $manifest);
+    unset($index, $manifest, $parcelIds, $parcel, $ref);
     return [
         'format' => 2, 'directory' => $directory, 'shards' => $shards, 'doc_refs' => $docRefs,
         'generated_at' => $generatedAt, 'sources' => $sources, 'documents' => [], 'imports' => $imports,
@@ -344,7 +378,7 @@ function load_registry_snapshot(): ?array {
     $snapshot = bounded_registry_json($path, 10 * 1024 * 1024);
     if (!is_array($snapshot) || ($snapshot['version'] ?? null) !== 1 || !snapshot_timestamp_valid($snapshot['generated_at'] ?? null)
         || !snapshot_list($snapshot['sources'] ?? null) || !snapshot_list($snapshot['documents'] ?? null)
-        || !snapshot_list($snapshot['imports'] ?? null) || count($snapshot['sources']) > 5 || count($snapshot['documents']) > 60000) {
+        || !snapshot_list($snapshot['imports'] ?? null) || count($snapshot['sources']) > 5 || count($snapshot['documents']) > REGISTRY_MAX_DOCUMENTS) {
         throw new RuntimeException('Registry snapshot format is invalid.');
     }
     $sources = validate_registry_sources($snapshot['sources']);
@@ -437,11 +471,11 @@ function registry_document_iterator(array $registry, ?string $parcelId = null): 
     if ($parcelId === null) {
         $shardNames = array_fill_keys(array_keys($registry['shards']), true);
     } else {
-        foreach ($registry['by_id'][$parcelId] ?? [] as $ref) $shardNames[$ref['shard']] = true;
+        foreach ($registry['by_id'][$parcelId] ?? [] as $shardName) $shardNames[$shardName] = true;
     }
     $expectedRefs = [];
     foreach ($registry['doc_refs'] as $key => $ref) {
-        if (isset($shardNames[$ref['shard']])) $expectedRefs[$key] = true;
+        if (isset($shardNames[$ref[0]])) $expectedRefs[$key] = true;
     }
     $seen = [];
     $sourceCounts = array_fill_keys(array_keys($registry['sources']), 0);
@@ -470,8 +504,16 @@ function registry_document_iterator(array $registry, ?string $parcelId = null): 
                 $ids = array_fill_keys($document['cadastral_ids'], true);
                 if (count($ids) !== count($document['cadastral_ids'])) throw new RuntimeException('Registry document links are duplicated.');
                 $ref = $registry['doc_refs'][$key] ?? null;
-                if (($ref !== null && ($ref['shard'] !== $name || array_diff_key($ids, $ref['ids']) !== [] || array_diff_key($ref['ids'], $ids) !== []))
-                    || ($ref === null && $ids !== [])) throw new RuntimeException('Registry exact-ID index is inconsistent.');
+                if ($ref !== null) {
+                    $actualIds = array_keys($ids);
+                    $indexedIds = explode("\n", rtrim($ref[1], "\n"));
+                    sort($actualIds, SORT_STRING);
+                    sort($indexedIds, SORT_STRING);
+                    if ($ref[0] !== $name || $actualIds !== $indexedIds) throw new RuntimeException('Registry exact-ID index is inconsistent.');
+                    unset($actualIds, $indexedIds);
+                } elseif ($ids !== []) {
+                    throw new RuntimeException('Registry exact-ID index is inconsistent.');
+                }
                 $records++;
                 if ($records > $shard['records']) throw new RuntimeException('Registry shard document count is inconsistent.');
                 $sourceCounts[$document['source_code']]++;
@@ -495,6 +537,20 @@ function contains_text(string $haystack, string $needle): bool {
 }
 
 function registry_search(PDO $pdo, array $registry, string $term, string $recordType): array {
+    // Exact parcel lookups use the validated index and the coordinate primary key;
+    // address and partial-ID searches continue through the full-text path below.
+    if (preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $term)) {
+        if (!registry_id_matches_filter($term, $registry, $recordType)) return [];
+        $stmt = $pdo->prepare('SELECT cadastral_id, latitude AS lat, longitude AS lng FROM parcels WHERE cadastral_id = :id LIMIT 1');
+        $stmt->execute(['id' => $term]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            if (!isset($registry['by_id'][$term])) return [];
+            $row = ['cadastral_id' => $term, 'lat' => null, 'lng' => null];
+        }
+        $plot = registry_plot($row, $registry);
+        return [array_merge($plot, ['primary' => $plot['cadastral_id'], 'secondary' => $plot['document_count'] . ' linked register records'])];
+    }
     $candidateIds = [];
     foreach ($registry['by_id'] as $id => $_) {
         if (registry_id_matches_filter($id, $registry, $recordType) && contains_text($id, $term)) $candidateIds[$id] = true;

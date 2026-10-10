@@ -10,6 +10,7 @@ An InfinityFree-compatible React + PHP + MySQL website for looking up cadastral 
 - A missing linked record does not establish that a document is absent from the original register. Use the linked municipal register for verification.
 - The initial core workbooks are from May 2025. The legacy certificate workbook has an unknown capture date and contributes only rows containing exact parcel IDs. Certificate issue dates are preserved separately from capture dates.
 - A linked certificate for putting a building into use is evidence recorded for the parcel. A missing record does not prove that a building has no permission, and a parcel can contain multiple buildings. The UI uses this distinction for the Act 16 filter.
+- Clicking a plot shows the stated addresses, districts, construction descriptions and scopes from all linked sources, followed by every original field and retained observation. Register navigation includes permits, design visas, certificates and archived certificates. Act 16 is a supplemental summary. The coordinate source contains no cadastral area, ownership or land-use attributes.
 
 ## Data storage
 
@@ -17,7 +18,18 @@ MySQL stores the coordinate points and original imported records. The API prefer
 
 The snapshot retains all 335 unique records from the three initial workbooks, plus 2,652 legacy certificate rows with exact parcel IDs. Legacy rows without exact identifiers remain in the supplied workbook. Bootstrap output is about 3 MB and remains supported as a single file. Monthly publication uses version 2 so accumulated observations do not need to fit in one hosted file.
 
-Version-2 snapshots have a manifest of at most 256 KiB, a parcel lookup index of at most 4 MiB, and JSONL document shards of at most 1 MiB each. Their maximum document count is 60,000. Local reconstruction and merge processing have a separate 64 MiB limit; this larger local file is never uploaded to the host. Reaching any index, shard, manifest, document-count or local processing limit stops publication and preserves the currently hosted snapshot. Capacity depends on record size and the number of exact parcel links, as well as document count.
+Version-2 snapshots have a manifest of at most 256 KiB, a parcel lookup index of at most 8 MiB, and JSONL document shards of at most 1 MiB each. Their maximum document count is 100,000. Local reconstruction and total published files have a 128 MiB limit; the larger reconstructed local file is never uploaded to the host. Reaching any index, shard, manifest, document-count or processing limit stops publication and preserves the currently hosted snapshot. Capacity depends on record size and the number of exact parcel links, as well as document count. The PHP reader releases decoded index entries as it builds compact internal lookups to reduce memory use.
+
+To add supplied historical workbooks to an existing hosted snapshot, fetch it first and keep the fetch metadata sidecar. Run the local archive importer from the website directory:
+
+    python scripts/bootstrap_registry_sources.py --previous seed/deploy/previous.json --output seed/deploy/archive-merged.json --audit seed/deploy/archive-audit.json
+
+The importer recognizes the historical column layouts, skips exact duplicate workbook copies and spreadsheet QA counters, adds only records with exact parcel identifiers, and preserves all existing observations. Changed record values remain separate observations. Archive capture dates remain unknown when the filename does not record a full year. Build the merged result as a fresh sharded snapshot and publish using the original fetched previous.json and its sidecar:
+
+    python scripts/build_registry_snapshot.py --reshard --previous seed/deploy/archive-merged.json --format sharded --output seed/deploy/archive-publish
+    python scripts/deploy_registry_ftps.py publish --input seed/deploy/archive-publish --previous seed/deploy/previous.json
+
+Subsequent monthly merges retain these archive observations.
 
 ## Local development
 
@@ -100,7 +112,7 @@ Use the printed date in the capture command. Set NAG_HEADLESS=0 for a visible lo
 
 The fetch command automatically prefers the active version-2 manifest. It validates and reconstructs its observations as a local version-1 JSON file for the existing merge logic. It also writes previous.json.fetch-meta.json beside previous.json. This sidecar records the original hosted manifest or fallback file's path, byte count and SHA-256, plus the reconstructed local file's SHA-256. Keep both files together until publication; comparing the reconstructed JSON to a hosted manifest would otherwise give the wrong result. An existing malformed version-2 pointer fails the fetch rather than falling back.
 
-The sharded output directory contains registry-active.json and registry-snapshots/<32-character lowercase hexadecimal snapshot_id>/. Use a fresh output directory for each build; the builder refuses to replace an existing local active manifest. The manifest names index.json and documents-000.jsonl, documents-001.jsonl, and subsequent shards. Each shard line is a complete observation; the index maps exact parcel IDs to their source, document hash and shard. Only validated relative names are accepted. FTP writes are restricted to these immutable private files, the active pointer and its temporary/previous copies. The private .htaccess is checked before either fetching or publishing. A failed upload can leave an inactive snapshot directory; rebuild to get a fresh snapshot ID instead of overwriting its contents.
+The sharded output directory contains registry-active.json and registry-snapshots/<32-character lowercase hexadecimal snapshot_id>/. Use a fresh output directory for each build; the builder refuses to replace an existing local active manifest. The manifest names index.json and documents-000.jsonl, documents-001.jsonl, and subsequent shards. Each shard line is a complete observation. New indexes set reference_format to tuple-v1 and map exact parcel IDs to [source-list position, document hash, manifest-shard position]; the reader and publisher also accept earlier object references. Only validated relative names are accepted. Deploy the updated PHP reader before publishing a compact index. FTP writes are restricted to these immutable private files, the active pointer and its temporary/previous copies. The private .htaccess is checked before either fetching or publishing. A failed upload can leave an inactive snapshot directory; rebuild to get a fresh snapshot ID instead of overwriting its contents.
 
 For compatibility before version 2 is active, --format v1 still writes the original JSON format and publish --input path/to/registry-data.json still accepts it when it is at most 10 MiB. Once an active version-2 snapshot exists, publication requires a sharded directory. To recover the immediately previous version-2 snapshot, restore the verified private registry-active.previous.json as registry-active.json through the hosting file manager or FTPS. During the first migration, removing the new active pointer reactivates the untouched original registry-data.json. Retain the protected immutable directory referenced by any pointer you may restore.
 

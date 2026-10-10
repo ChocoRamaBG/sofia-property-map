@@ -18,11 +18,11 @@ from build_seed import CADASTRAL_ID, CERTIFICATES_DEFAULT, PERMITS_DEFAULT, ROOT
 from registry_sources import CORE_CODES, SOURCES, labelled_fields
 
 MAX_BYTES = 10 * 1024 * 1024
-MAX_LOCAL_BYTES = 64 * 1024 * 1024
+MAX_LOCAL_BYTES = 128 * 1024 * 1024
 MAX_SHARD_BYTES = 1024 * 1024
-MAX_INDEX_BYTES = 4 * 1024 * 1024
+MAX_INDEX_BYTES = 8 * 1024 * 1024
 MAX_MANIFEST_BYTES = 256 * 1024
-MAX_DOCUMENTS = 60000
+MAX_DOCUMENTS = 100000
 MAX_INDEX_PARCELS = 50000
 SOURCE_CODES = {"coordinates", *SOURCES}
 KNOWN_DATES = {"building_permits": "2025-05-20", "exploitation_certificates": "2025-05-21", "projecting_visas": "2025-05-12", "exploitation_certificates_legacy": None}
@@ -189,7 +189,7 @@ def write_sharded_snapshot(snapshot: dict, output: Path) -> tuple[dict, int]:
     if (output / "registry-active.json").exists():
         raise ValueError("Publish output already has an active manifest; choose a fresh output directory")
     if len(json_bytes(snapshot)) > MAX_LOCAL_BYTES:
-        raise ValueError("Reconstructed dataset exceeds the 64 MiB local processing limit")
+        raise ValueError("Reconstructed dataset exceeds the 128 MiB local processing limit")
     snapshot_id = uuid4().hex
     directory = output / "registry-snapshots" / snapshot_id
     if directory.exists():
@@ -199,8 +199,10 @@ def write_sharded_snapshot(snapshot: dict, output: Path) -> tuple[dict, int]:
         "version": 2, "snapshot_id": snapshot_id, "generated_at": snapshot["generated_at"],
         "sources": snapshot["sources"], "imports": snapshot.get("imports", []),
         "completion": completion, "document_counts": {source["code"]: 0 for source in snapshot["sources"]},
+        "reference_format": "tuple-v1",
         "parcels": {},
     }
+    source_positions = {source["code"]: position for position, source in enumerate(snapshot["sources"])}
     shards: list[tuple[str, bytes, int]] = []
     payload = bytearray()
     records = 0
@@ -217,14 +219,15 @@ def write_sharded_snapshot(snapshot: dict, output: Path) -> tuple[dict, int]:
             shards.append((f"documents-{len(shards):03d}.jsonl", bytes(payload), records))
             payload = bytearray()
             records = 0
-        shard = f"documents-{len(shards):03d}.jsonl"
+        shard_position = len(shards)
         payload.extend(line)
         records += 1
         index["document_counts"][document["source_code"]] += 1
         for parcel in sorted(set(document["cadastral_ids"])):
-            index["parcels"].setdefault(parcel, {"documents": []})["documents"].append({
-                "source_code": document["source_code"], "document_hash": document["document_hash"], "shard": shard,
-            })
+            # Positions refer to the ordered sources and manifest shard lists.
+            index["parcels"].setdefault(parcel, {"documents": []})["documents"].append([
+                source_positions[document["source_code"]], document["document_hash"], shard_position,
+            ])
     if payload:
         shards.append((f"documents-{len(shards):03d}.jsonl", bytes(payload), records))
     index["parcels"] = dict(sorted(index["parcels"].items()))
@@ -232,7 +235,7 @@ def write_sharded_snapshot(snapshot: dict, output: Path) -> tuple[dict, int]:
         raise ValueError("Parcel lookup index exceeds the API limit of 50,000 identifiers")
     index_payload = json_bytes(index)
     if len(index_payload) > MAX_INDEX_BYTES:
-        raise ValueError("Parcel lookup index exceeds 4 MiB; retain the hosted snapshot and review storage")
+        raise ValueError("Parcel lookup index exceeds 8 MiB; retain the hosted snapshot and review storage")
     manifest = {
         "version": 2, "snapshot_id": snapshot_id, "generated_at": snapshot["generated_at"],
         "index": {"file": "index.json", "bytes": len(index_payload), "sha256": hashlib.sha256(index_payload).hexdigest()},
@@ -244,10 +247,11 @@ def write_sharded_snapshot(snapshot: dict, output: Path) -> tuple[dict, int]:
         raise ValueError("Active snapshot manifest exceeds 256 KiB")
     # Validate all bounds before creating any publishable local files. The active
     # manifest is written last, so an interrupted build lacks a completed pointer.
-    total_bytes = len(index_payload) + len(manifest_payload)
+    total_bytes = len(index_payload) + len(manifest_payload) + sum(len(data) for _, data, _ in shards)
+    if total_bytes > MAX_LOCAL_BYTES:
+        raise ValueError("Publishable snapshot files exceed the 128 MiB processing limit")
     for name, data, _ in shards:
         write_atomic(directory / name, data)
-        total_bytes += len(data)
     write_atomic(directory / "index.json", index_payload)
     write_atomic(output / "registry-active.json", manifest_payload)
     return manifest, total_bytes
@@ -371,6 +375,7 @@ def choose_start_date(snapshot: dict) -> str:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bootstrap", action="store_true")
+    parser.add_argument("--reshard", action="store_true", help="Write an existing complete version-1 dataset as bounded version-2 files without changing observations")
     parser.add_argument("--previous", type=Path)
     parser.add_argument("--capture", type=Path)
     parser.add_argument("--choose-start-date", action="store_true")
@@ -382,17 +387,24 @@ def main():
     parser.add_argument("--legacy", type=Path, default=ROOT / "Udostoverenie za Vuvezhdane v Eksploataciya" / "Old Registry" / "All_Data_Old_Registry.xlsx")
     parser.add_argument("--skip-legacy", action="store_true")
     args = parser.parse_args()
+    if args.reshard:
+        if not args.previous or args.format != "sharded":
+            parser.error("--reshard requires --previous and --format sharded")
+        if args.bootstrap or args.capture or args.choose_start_date:
+            parser.error("--reshard cannot be combined with --bootstrap, --capture, or --choose-start-date")
     if args.choose_start_date:
         if not args.previous:
             parser.error("--choose-start-date requires --previous")
         print(choose_start_date(read_json(args.previous, MAX_LOCAL_BYTES)))
         return
-    if args.bootstrap:
+    if args.reshard:
+        result = read_json(args.previous, MAX_LOCAL_BYTES)
+    elif args.bootstrap:
         result = bootstrap(args)
     elif args.previous and args.capture:
         result = merge(read_json(args.previous, MAX_LOCAL_BYTES), args.capture)
     else:
-        parser.error("Use --bootstrap or provide --previous and --capture")
+        parser.error("Use --bootstrap, --reshard with --previous and --format sharded, or provide --previous and --capture")
     validate_snapshot(result)
     payload = json_bytes(result)
     if args.format == "sharded":
