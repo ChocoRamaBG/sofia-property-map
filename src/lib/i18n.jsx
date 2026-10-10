@@ -1,0 +1,323 @@
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+
+const DICT = {
+  'app.title': { bg: 'Проверка на имоти в София', en: 'Sofia Property Register' },
+  'app.subtitle': { bg: 'Строителни документи на картата', en: 'Construction records on the map' },
+  'app.officialRegister': { bg: 'Официален регистър', en: 'Official register' },
+  'search.eyebrow': { bg: 'СОФИЯ · ПРОВЕРКА НА ИМОТ', en: 'SOFIA · PROPERTY LOOKUP' },
+  'search.heading': { bg: 'Намерете имота.\nВижте документите.', en: 'Find the plot.\nExplore its records.' },
+  'search.description': { bg: 'Удостоверения за въвеждане в експлоатация, разрешения за строеж и визи — с връзка към източника.', en: 'Exploitation certificates, building permits and planning visas — with a link to the source.' },
+  'search.mobile': { bg: 'Търсене и филтри', en: 'Search & filters' },
+  'filter.title': { bg: 'Показвай на картата', en: 'Show on the map' },
+  'filter.description': { bg: 'Филтрирайте по намерени документи.', en: 'Filter by linked documents.' },
+  'filter.all': { bg: 'Всички имоти', en: 'All plots' },
+  'filter.exploitation_certificates': { bg: 'Въвеждане в експлоатация', en: 'Exploitation certificates' },
+  'filter.certificateHint': { bg: 'Проверка за „Акт 16“', en: 'Check for “Act 16”' },
+  'filter.building_permits': { bg: 'Разрешение за строеж', en: 'Building permit' },
+  'filter.projecting_visas': { bg: 'Виза за проектиране', en: 'Planning visa' },
+  'filter.no_records': { bg: 'Без свързан запис', en: 'No linked record' },
+  'filter.note': { bg: 'Броят е за целия набор. Липсата на свързан запис не доказва липса на документ.', en: 'Counts cover the full dataset. No linked record does not prove a document is absent.' },
+  'filter.activeHelp': { bg: 'Показани са имоти със свързано удостоверение.', en: 'Showing plots with a linked exploitation certificate.' },
+  'dataset.points': { bg: 'точки на имоти', en: 'plot points' },
+  'dataset.records': { bg: 'регистрови записа', en: 'register records' },
+  'dataset.sources': { bg: 'Източници и актуалност', en: 'Sources & freshness' },
+  'dataset.snapshot': { bg: 'Данни към {date}', en: 'Snapshot as of {date}' },
+  'dataset.dateUnknown': { bg: 'Дата на извличане: неизвестна', en: 'Capture date: unknown' },
+  'dataset.loaded': { bg: 'Последно зареждане: {date}', en: 'Last data load: {date}' },
+  'dataset.snapshotHelp': { bg: 'Записите са извлечения от общинските регистри. Проверете актуалния документ в официалния източник.', en: 'Records are snapshots of the municipal registers. Verify the current document in the official source.' },
+  'map.city': { bg: 'София', en: 'Sofia' },
+  'map.pointsInView': { bg: 'имота в този изглед', en: 'plots in this view' },
+  'map.howTitle': { bg: 'Изберете точка на картата', en: 'Select a point on the map' },
+  'map.howHelp': { bg: 'Приближете група, после натиснете имот. Ще видите записите и точния им обхват.', en: 'Zoom into a cluster, then select a plot to see its records and their scope.' },
+  'map.clusterCertificates': { bg: '{n} със свързано удостоверение', en: '{n} with a linked certificate' },
+  'legend.exploitation_certificates': { bg: 'Свързано удостоверение', en: 'Linked exploitation certificate' },
+  'legend.building_permits': { bg: 'Свързано разрешение', en: 'Linked building permit' },
+  'legend.projecting_visas': { bg: 'Свързана виза', en: 'Linked planning visa' },
+  'legend.no_records': { bg: 'Без свързан запис', en: 'No linked record' },
+  'certificate.heading': { bg: 'Въвеждане в експлоатация', en: 'Entry into exploitation' },
+  'certificate.found': { bg: 'Намерено удостоверение', en: 'Certificate record found' },
+  'certificate.foundShort': { bg: 'Свързано удостоверение', en: 'Linked exploitation certificate' },
+  'certificate.notLinked': { bg: 'Няма свързано удостоверение', en: 'No linked certificate record' },
+  'certificate.document': { bg: 'Номер в регистъра', en: 'Register reference' },
+  'certificate.foundHelp': { bg: 'Записът е свързан с този кадастрален идентификатор. Проверете описанието и обхвата, за да установите дали се отнася за конкретната сграда или част от нея.', en: 'The record is linked to this cadastral identifier. Check its description and scope to establish whether it covers the specific building or part of it.' },
+  'certificate.notLinkedHelp': { bg: 'В наличните данни няма удостоверение с точно съвпадащ идентификатор. Това не установява дали сградата е въведена в експлоатация. Проверете официалния регистър.', en: 'The available data has no certificate matching this exact identifier. This does not establish whether the building is approved for use. Check the official register.' },
+  'certificate.term': { bg: 'Какво показваме при „Акт 16“?', en: 'What does the “Act 16” lookup show?' },
+  'certificate.termHelp': { bg: 'Тук се показват записи от регистъра на удостоверенията за въвеждане в експлоатация. „Акт 16“ е познато наименование за ориентация; точният вид и обхват на документа се проверяват в официалния източник.', en: 'This lookup shows entries from the exploitation certificate register. “Act 16” is a familiar search term; verify the exact document type and scope in the official source.' },
+  'source.exploitation_certificates': { bg: 'ВЪВЕЖДАНЕ В ЕКСПЛОАТАЦИЯ', en: 'EXPLOITATION CERTIFICATE' },
+  'source.exploitation_certificates_legacy': { bg: 'ВЪВЕЖДАНЕ В ЕКСПЛОАТАЦИЯ · АРХИВ', en: 'EXPLOITATION CERTIFICATE · ARCHIVE' },
+  'source.building_permits': { bg: 'РАЗРЕШЕНИЕ ЗА СТРОЕЖ', en: 'BUILDING PERMIT' },
+  'source.projecting_visas': { bg: 'ВИЗА ЗА ПРОЕКТИРАНЕ', en: 'PLANNING VISA' },
+  'panel.registerRecord': { bg: 'Регистров запис', en: 'Register entry' },
+  'panel.loadError': { bg: 'Данните за имота не могат да се заредят.', en: 'The plot records could not be loaded.' },
+
+  'nav.map': { bg: 'Карта', en: 'Map' },
+  'nav.admin': { bg: 'Администрация', en: 'Administration' },
+
+  'demo.banner': { bg: 'Демонстрационни (синтетични) данни. Те не са официален източник и не описват реални имоти.', en: 'Demo (synthetic) data. Not an official source and does not describe real properties.' },
+  'demo.badge': { bg: 'Демо данни', en: 'Demo data' },
+  'data.notice': { bg: 'Точките служат за ориентация и не очертават граници. Данните са извлечения от регистрите — проверявайте документа за конкретния строеж.', en: 'Points are location guides, not parcel boundaries. Records are register snapshots — verify the document for the specific construction.' },
+
+  'search.title': { bg: 'Търсене', en: 'Search' },
+  'search.placeholder': { bg: 'Идентификатор, адрес или документ', en: 'Identifier, address or document' },
+  'search.button': { bg: 'Търси', en: 'Search' },
+  'search.searching': { bg: 'Търсене…', en: 'Searching…' },
+  'search.hint': { bg: 'Напр. 68134.1005.88. Адреси се намират само ако присъстват в свързаните записи.', en: 'E.g. 68134.1005.88. Addresses are searchable only when included in linked records.' },
+  'search.noResults': { bg: 'Няма намерени записи.', en: 'No matching records found.' },
+  'search.results': { bg: 'Резултати', en: 'Results' },
+  'search.clear': { bg: 'Изчисти', en: 'Clear' },
+  'search.matches': { bg: '{n} съвпадения', en: '{n} matches' },
+  'search.openPanel': { bg: 'Отвори', en: 'Open' },
+
+  'map.loading': { bg: 'Зареждане на имоти…', en: 'Loading plots…' },
+  'map.plotsInView': { bg: '{n} имота в текущия изглед', en: '{n} plots in current view' },
+  'map.truncated': { bg: 'Твърде много групи за този изглед. Приближете или преместете картата.', en: 'Too many groups for this view. Zoom in or pan to explore.' },
+  'map.zoomIn': { bg: 'Приближаване', en: 'Zoom in' },
+  'map.zoomOut': { bg: 'Отдалечаване', en: 'Zoom out' },
+  'map.locate': { bg: 'Моето местоположение', en: 'Locate me' },
+  'map.reset': { bg: 'Начален изглед', en: 'Reset view' },
+  'map.satellite': { bg: 'Сателит', en: 'Satellite' },
+  'map.standard': { bg: 'Карта', en: 'Map' },
+  'map.locateError': { bg: 'Местоположението не е достъпно.', en: 'Location is not available.' },
+  'map.you': { bg: 'Вие сте тук', en: 'You are here' },
+  'map.cluster': { bg: '{n} кадастрални точки — приближете', en: '{n} cadastral points — zoom in' },
+  'map.apiError': { bg: 'Данните временно не са достъпни. Опитайте да презаредите страницата.', en: 'Data is temporarily unavailable. Try refreshing the page.' },
+  'legend.title': { bg: 'Легенда', en: 'Legend' },
+  'legend.plot': { bg: 'Кадастрална точка', en: 'Cadastral point' },
+  'legend.cluster': { bg: 'Група точки', en: 'Point cluster' },
+
+  'panel.title': { bg: 'Информация за имота', en: 'Plot information' },
+  'panel.empty': { bg: 'Изберете кадастрална точка на картата, за да видите наличните регистрови записи и техните източници.', en: 'Select a cadastral point on the map to see available register records and their sources.' },
+  'panel.close': { bg: 'Затвори', en: 'Close' },
+  'panel.loading': { bg: 'Зареждане на данните…', en: 'Loading data…' },
+  'panel.copyId': { bg: 'Копирай идентификатора', en: 'Copy identifier' },
+  'panel.coordinateMarker': { bg: 'Кадастрална точка', en: 'Cadastral point' },
+  'panel.noCoordinate': { bg: 'Няма координата', en: 'No coordinate' },
+  'panel.linkedRecords': { bg: '{n} регистрови записа', en: '{n} register records' },
+  'panel.location': { bg: 'Координата на точката', en: 'Point coordinate' },
+  'panel.coordinateEvidence': { bg: 'Координатата е WGS84 и служи за ориентация. Първоначалният издател и датата на заснемане не са установени. Не представлява официална граница на имота.', en: 'The WGS84 coordinate is a location guide. Its original publisher and capture date are unknown. It is not an official parcel boundary.' },
+  'panel.noCoordinateHelp': { bg: 'За този идентификатор няма налична валидна координата в импортирания файл.', en: 'No valid coordinate is available for this identifier in the imported file.' },
+  'panel.matchMethod': { bg: 'Как е свързан записът', en: 'How records are linked' },
+  'panel.matchHelp': { bg: 'Регистровите документи се свързват само когато в извлечения текст има точно съвпадение на кадастралния идентификатор. Не се прави съпоставяне по адрес или близост.', en: 'Register documents are linked only when extracted text contains an exact cadastral identifier match. No address or proximity matching is used.' },
+  'panel.registerRecords': { bg: 'Свързани регистрови записи', en: 'Linked register records' },
+  'panel.recordsCount': { bg: '{n} записа', en: '{n} records' },
+  'panel.noRecords': { bg: 'В заредените снимки няма запис с точно съвпадащ кадастрален идентификатор. Това не доказва липса на документ в оригиналния регистър.', en: 'No record with an exact cadastral identifier match appears in the loaded snapshots. This does not prove that no document exists in the original register.' },
+  'panel.snapshotFile': { bg: 'Локална снимка: {file}', en: 'Local snapshot: {file}' },
+  'panel.snapshotDate': { bg: 'към {date}', en: 'as of {date}' },
+  'panel.openSource': { bg: 'Отвори регистъра', en: 'Open register' },
+  'panel.disclaimer': { bg: 'Данните може да са непълни или остарели. Наличието на запис за имота не удостоверява всички сгради и самостоятелни обекти в него. Проверете оригиналния документ преди решение за покупка.', en: 'Data may be incomplete or out of date. A record linked to a plot does not certify all its buildings or units. Verify the original document before making a purchase decision.' },
+  'error.request': { bg: 'Неуспешна заявка към сървъра', en: 'The server request failed' },
+  'panel.copied': { bg: 'Копирано', en: 'Copied' },
+  'panel.notFound': { bg: 'Записът не е намерен.', en: 'Record not found.' },
+
+  'section.identification': { bg: 'Идентификация', en: 'Identification' },
+  'section.property': { bg: 'Данни за имота', en: 'Property data' },
+  'section.planning': { bg: 'Устройство и ограничения', en: 'Planning and restrictions' },
+  'section.buildings': { bg: 'Сгради', en: 'Buildings' },
+  'section.provenance': { bg: 'Източници и проследимост', en: 'Sources and data provenance' },
+  'section.confidence': { bg: 'Достоверност и статус', en: 'Confidence and status' },
+  'section.conflicts': { bg: 'Установени различия', en: 'Detected conflicts' },
+  'section.history': { bg: 'История на данните', en: 'Data history' },
+
+  'field.cadastral_id': { bg: 'Кадастрален идентификатор', en: 'Cadastral identifier' },
+  'field.ekatte': { bg: 'ЕКАТТЕ', en: 'EKATTE code' },
+  'field.municipality': { bg: 'Община', en: 'Municipality' },
+  'field.region': { bg: 'Област', en: 'Region' },
+  'field.locality': { bg: 'Населено място', en: 'Locality' },
+  'field.address': { bg: 'Адрес', en: 'Address' },
+  'field.area': { bg: 'Площ', en: 'Area' },
+  'field.geometry': { bg: 'Геометрия', en: 'Geometry' },
+  'field.vertices': { bg: 'Брой точки на контура', en: 'Outline vertices' },
+  'field.centroid': { bg: 'Центроид', en: 'Centroid' },
+  'field.accuracy': { bg: 'Точност на геометрията', en: 'Geometry accuracy' },
+  'field.geometrySource': { bg: 'Източник на геометрията', en: 'Geometry source' },
+  'field.land_use': { bg: 'Начин на трайно ползване (НТП)', en: 'Land use (NTP)' },
+  'field.purpose': { bg: 'Предназначение', en: 'Purpose' },
+  'field.ownership': { bg: 'Вид собственост', en: 'Ownership type' },
+  'field.status': { bg: 'Статус на записа', en: 'Record status' },
+  'field.zoning': { bg: 'Устройствена зона', en: 'Zoning' },
+  'field.planning_status': { bg: 'Статус на ПУП', en: 'Planning status' },
+  'field.max_height': { bg: 'Макс. височина', en: 'Max. building height' },
+  'field.max_density': { bg: 'Макс. плътност', en: 'Max. density' },
+  'field.max_ratio': { bg: 'Макс. интензивност (Кинт)', en: 'Max. built ratio' },
+  'field.restrictions': { bg: 'Ограничения и сервитути', en: 'Restrictions and easements' },
+  'field.protected_area': { bg: 'Защитена зона', en: 'Protected area' },
+  'field.building_id': { bg: 'Идентификатор на сграда', en: 'Building identifier' },
+  'field.building_type': { bg: 'Вид сграда', en: 'Building type' },
+  'field.floors': { bg: 'Брой етажи', en: 'Floors' },
+  'field.underground': { bg: 'Подземни етажи', en: 'Underground floors' },
+  'field.height': { bg: 'Височина', en: 'Height' },
+  'field.built_area': { bg: 'Застроена площ', en: 'Built-up area' },
+  'field.total_area': { bg: 'Разгъната застроена площ', en: 'Total floor area' },
+  'field.apartments': { bg: 'Брой самостоятелни обекти', en: 'Dwelling units' },
+  'field.year_built': { bg: 'Година на построяване', en: 'Year built' },
+  'field.construction': { bg: 'Конструкция', en: 'Construction' },
+  'field.relationship': { bg: 'Връзка с имота', en: 'Relationship to plot' },
+  'field.source': { bg: 'Източник', en: 'Source' },
+  'field.dataset': { bg: 'Набор от данни', en: 'Dataset' },
+  'field.dataset_id': { bg: 'Идентификатор на набора', en: 'Dataset identifier' },
+  'field.source_url': { bg: 'Оригинален адрес', en: 'Original URL' },
+  'field.parser': { bg: 'Използван парсер', en: 'Parser used' },
+  'field.source_date': { bg: 'Дата на данните в източника', en: 'Source data date' },
+  'field.retrieved': { bg: 'Изтеглено на', en: 'Retrieved' },
+  'field.last_update': { bg: 'Последно обновяване', en: 'Last updated' },
+  'field.first_seen': { bg: 'Първо виждане', en: 'First seen' },
+  'field.parse_status': { bg: 'Резултат от обработката', en: 'Parsing result' },
+  'field.confidence': { bg: 'Достоверност', en: 'Confidence' },
+  'field.freshness': { bg: 'Актуалност на данните', en: 'Data freshness' },
+  'field.provided_fields': { bg: 'Предоставени полета', en: 'Fields supplied' },
+  'field.change_type': { bg: 'Тип промяна', en: 'Change type' },
+  'field.changed_at': { bg: 'Дата на промяната', en: 'Changed at' },
+  'field.changed_fields': { bg: 'Променени полета', en: 'Changed fields' },
+  'field.linkedPlots': { bg: 'Свързани имоти', en: 'Linked plots' },
+
+  'value.notAvailable': { bg: 'Няма налични данни в източника', en: 'Not available in the source data' },
+  'value.missingValues': { bg: 'Полета без стойност в източниците', en: 'Fields with no value in the sources' },
+  'value.noneMissing': { bg: 'Всички показвани полета имат стойност.', en: 'Every displayed field has a value.' },
+  'value.noData': { bg: 'Няма данни', en: 'No data' },
+
+  'status.ok': { bg: 'Обработено успешно', en: 'Parsed successfully' },
+  'status.partial': { bg: 'Частично обработено', en: 'Partially parsed' },
+  'status.failed': { bg: 'Грешка при обработка', en: 'Parsing failed' },
+  'status.not_available': { bg: 'Липсва в източника', en: 'Missing in source' },
+  'status.active': { bg: 'Актуален', en: 'Active' },
+  'status.archived': { bg: 'Архивиран', en: 'Archived' },
+  'confidence.high': { bg: 'Висока', en: 'High' },
+  'confidence.medium': { bg: 'Средна', en: 'Medium' },
+  'confidence.low': { bg: 'Ниска', en: 'Low' },
+
+  'prov.group.identification': { bg: 'Идентификация', en: 'Identification' },
+  'prov.group.property': { bg: 'Данни за имота', en: 'Property data' },
+  'prov.group.planning': { bg: 'Устройство и ограничения', en: 'Planning and restrictions' },
+  'prov.group.geometry': { bg: 'Геометрия', en: 'Geometry' },
+  'prov.official': { bg: 'Официален източник', en: 'Official source' },
+  'prov.synthetic': { bg: 'Синтетичен / демонстрационен източник', en: 'Synthetic / demo source' },
+  'prov.notConnected': { bg: 'Регистриран, данни още не са заредени', en: 'Registered, no data ingested yet' },
+  'prov.multiSource': { bg: 'Данните за този имот идват от няколко източника.', en: 'This plot draws data from more than one source.' },
+
+  'conflict.title': { bg: 'Конфликтни стойности', en: 'Conflicting values' },
+  'conflict.warning': { bg: 'Установено е несъответствие между източниците. Показани са всички стойности — не се избира автоматично една.', en: 'A discrepancy between sources was detected. All values are shown — none is chosen automatically.' },
+  'conflict.open': { bg: 'Открит', en: 'Open' },
+  'conflict.resolved': { bg: 'Решен', en: 'Resolved' },
+  'conflict.type.value_mismatch': { bg: 'Различни стойности', en: 'Value mismatch' },
+  'conflict.type.missing_in_source': { bg: 'Липсва в един от източниците', en: 'Missing in one source' },
+  'conflict.type.geometry_mismatch': { bg: 'Различна геометрия', en: 'Geometry mismatch' },
+
+  'history.created': { bg: 'Създаден запис', en: 'Record created' },
+  'history.updated': { bg: 'Обновен запис', en: 'Record updated' },
+  'history.removed': { bg: 'Премахнат от източника', en: 'Removed from source' },
+  'history.restored': { bg: 'Възстановен запис', en: 'Record restored' },
+  'history.none': { bg: 'Няма записани промени.', en: 'No recorded changes.' },
+  'history.previous': { bg: 'преди', en: 'previous' },
+
+  'building.plotData': { bg: 'Данни за имота', en: 'Plot data' },
+  'building.buildingData': { bg: 'Данни за сградата', en: 'Building data' },
+  'building.none': { bg: 'В източниците няма свързани сгради за този имот.', en: 'No buildings linked to this plot in the sources.' },
+  'building.separateNote': { bg: 'Имотът и сградата са отделни обекти и не са задължително едно и също.', en: 'A plot and a building are separate entities and are not necessarily the same thing.' },
+  'building.relationship.on_plot': { bg: 'Напълно върху имота', en: 'Entirely on the plot' },
+  'building.relationship.partly_on_plot': { bg: 'Частично върху имота', en: 'Partly on the plot' },
+  'building.relationship.crosses_plots': { bg: 'Обхваща няколко имота', en: 'Spans multiple plots' },
+  'building.relationship.unknown': { bg: 'Неопределена', en: 'Undetermined' },
+
+  'admin.title': { bg: 'Администрация на данните', en: 'Data administration' },
+  'admin.subtitle': { bg: 'Състояние на месечното обновяване и на източниците', en: 'Monthly update and source status' },
+  'admin.restricted': { bg: 'Достъпът е само за администратори.', en: 'Access is restricted to administrators.' },
+  'admin.runUpdate': { bg: 'Стартирай месечно обновяване', en: 'Run monthly update' },
+  'admin.running': { bg: 'Обновяването тече…', en: 'Update in progress…' },
+  'admin.lastSuccess': { bg: 'Последно успешно обновяване', en: 'Last successful update' },
+  'admin.lastAttempt': { bg: 'Последно опитано обновяване', en: 'Last attempted update' },
+  'admin.never': { bg: 'Няма данни', en: 'None yet' },
+  'admin.runs': { bg: 'Обновявания', en: 'Update runs' },
+  'admin.parserLogs': { bg: 'Дневник на парсерите', en: 'Parser log' },
+  'admin.datasets': { bg: 'Набори от данни', en: 'Datasets' },
+  'admin.sources': { bg: 'Регистрирани източници', en: 'Registered sources' },
+  'admin.noRuns': { bg: 'Няма изпълнени обновявания.', en: 'No update runs yet.' },
+  'admin.errors': { bg: 'Грешки', en: 'Errors' },
+  'admin.records_imported': { bg: 'Нови записи', en: 'New records' },
+  'admin.records_updated': { bg: 'Обновени записи', en: 'Updated records' },
+  'admin.records_removed': { bg: 'Премахнати записи', en: 'Removed records' },
+  'admin.records_rejected': { bg: 'Отхвърлени записи', en: 'Rejected records' },
+  'admin.records_unchanged': { bg: 'Без промяна', en: 'Unchanged' },
+  'admin.conflicts': { bg: 'Установени различия', en: 'Conflicts detected' },
+  'admin.processed': { bg: 'Обработени имоти', en: 'Plots processed' },
+  'admin.summary': { bg: 'Обобщение', en: 'Summary' },
+  'admin.status': { bg: 'Статус', en: 'Status' },
+  'admin.dataset': { bg: 'Набор', en: 'Dataset' },
+  'admin.parser': { bg: 'Парсер', en: 'Parser' },
+  'admin.read': { bg: 'Прочетени', en: 'Read' },
+  'admin.valid': { bg: 'Валидни', en: 'Valid' },
+  'admin.written': { bg: 'Нови', en: 'Written' },
+  'admin.updated': { bg: 'Обновени', en: 'Updated' },
+  'admin.removed': { bg: 'Премахнати', en: 'Removed' },
+  'admin.duration': { bg: 'Продължителност', en: 'Duration' },
+  'admin.errorMessage': { bg: 'Съобщение за грешка', en: 'Error message' },
+  'admin.pipeline': { bg: 'Конвейер: Източник → Парсер → Валидация → Междинна зона → База данни → Продукция', en: 'Pipeline: Source → Parser → Validation → Staging → Database → Production' },
+  'admin.pipelineNote': { bg: 'Неуспешно обновяване не засяга вече валидните данни. Премахнатите имоти се архивират, а не се изтриват.', en: 'A failed update does not affect existing valid data. Removed plots are archived, never deleted.' },
+  'admin.runStatus.running': { bg: 'В ход', en: 'Running' },
+  'admin.runStatus.success': { bg: 'Успешно', en: 'Successful' },
+  'admin.runStatus.partial': { bg: 'Частично успешно', en: 'Partially successful' },
+  'admin.runStatus.failed': { bg: 'Неуспешно', en: 'Failed' },
+  'admin.trigger.manual': { bg: 'Ръчно', en: 'Manual' },
+  'admin.trigger.scheduled': { bg: 'По график', en: 'Scheduled' },
+  'admin.trigger.backfill': { bg: 'Дозареждане', en: 'Backfill' },
+  'admin.source': { bg: 'Източник', en: 'Source' },
+  'admin.format': { bg: 'Формат', en: 'Format' },
+  'admin.coverage': { bg: 'Обхват', en: 'Coverage' },
+  'admin.org': { bg: 'Организация', en: 'Organisation' },
+  'admin.records': { bg: 'Записа', en: 'records' },
+  'admin.recordsCount': { bg: '{n} записа', en: '{n} records' },
+  'admin.connected': { bg: 'Заредени данни', en: 'Data ingested' },
+  'admin.notConnected': { bg: 'Данните още не са заредени', en: 'No data ingested yet' },
+  'admin.ingestError': { bg: 'Грешка при зареждане', en: 'Ingestion error' },
+  'admin.official': { bg: 'Официален', en: 'Official' },
+  'admin.synthetic': { bg: 'Синтетичен', en: 'Synthetic' },
+
+  'unit.sqm': { bg: 'м²', en: 'm²' },
+  'unit.m': { bg: 'м', en: 'm' },
+  'unit.percent': { bg: '%', en: '%' },
+  'time.today': { bg: 'днес', en: 'today' },
+  'time.daysAgo': { bg: 'преди {n} дни', en: '{n} days ago' },
+};
+
+const LanguageContext = createContext(null);
+
+export function LanguageProvider({ children }) {
+  const [lang, setLangState] = useState(() => {
+    try {
+      return localStorage.getItem('cadastral.lang') || 'bg';
+    } catch {
+      return 'bg';
+    }
+  });
+
+  const setLang = useCallback((next) => {
+    try {
+      localStorage.setItem('cadastral.lang', next);
+    } catch {
+      /* ignore */
+    }
+    setLangState(next);
+  }, []);
+
+  const value = useMemo(() => {
+    const t = (key, vars) => {
+      const entry = DICT[key];
+      let out = entry ? entry[lang] || entry.en || key : key;
+      if (vars) {
+        Object.keys(vars).forEach((k) => {
+          out = out.split(`{${k}}`).join(String(vars[k]));
+        });
+      }
+      return out;
+    };
+    const pick = (bg, en) => (lang === 'bg' ? bg || en || '' : en || bg || '');
+    return { lang, setLang, t, pick };
+  }, [lang, setLang]);
+
+  return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
+}
+
+export function useI18n() {
+  const ctx = useContext(LanguageContext);
+  if (!ctx) throw new Error('useI18n must be used inside LanguageProvider');
+  return ctx;
+}
