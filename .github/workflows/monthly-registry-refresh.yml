@@ -54,6 +54,14 @@ jobs:
           printf 'NAG_START_DATE=%s\n' "$start_date" >> "$GITHUB_ENV"
       - name: Capture all three official registers
         run: python scripts/scrape_registers.py --source all --output seed/monthly/capture
+      - name: Keep failed public-register diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sofia-register-failure-diagnostics-${{ github.run_id }}
+          path: seed/monthly/diagnostics/
+          retention-days: 31
+          if-no-files-found: ignore
       - name: Keep every completed source capture
         if: always()
         uses: actions/upload-artifact@v4

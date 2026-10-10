@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -25,6 +26,55 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from registry_sources import CORE_CODES, SOURCES
+
+CURRENT_SOURCE = "initialization"
+CURRENT_PHASE = "starting"
+
+
+def phase(source_code: str, message: str) -> None:
+    global CURRENT_SOURCE, CURRENT_PHASE
+    CURRENT_SOURCE, CURRENT_PHASE = source_code, message
+    print(f"[{source_code}] {message}", flush=True)
+
+
+def state_summary(state: dict | None) -> dict:
+    if not state:
+        return {"grid_present": False}
+    return {
+        "grid_present": True,
+        "pager": state["pager"][:300],
+        "selected_page": state["selected_page"],
+        "page_size": state["page_size"],
+        "page_size_options": state["page_sizes"][:20],
+        "headers": [header[:100] for header in state["headers"][:30]],
+        "row_count": len(state["rows"]),
+        "loading": state["loading"],
+    }
+
+
+def save_failure_diagnostics(driver, directory: Path) -> None:
+    """Keep bounded diagnostics from the public register, without row logs."""
+    directory.mkdir(parents=True, exist_ok=True)
+    prefix = f"{CURRENT_SOURCE}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    details = {"source": CURRENT_SOURCE, "phase": CURRENT_PHASE}
+    try:
+        details["url"] = driver.current_url
+        details["grid"] = state_summary(grid_state(driver))
+    except Exception as error:
+        details["grid_read_error"] = type(error).__name__
+    print("Failure diagnostics: " + json.dumps(details, ensure_ascii=False), file=sys.stderr, flush=True)
+    (directory / f"{prefix}.json").write_text(json.dumps(details, ensure_ascii=False, indent=2), encoding="utf-8")
+    # This browser visits only the public municipal register. Limit the HTML
+    # retained in the private Actions artifact to 256 KiB.
+    try:
+        source = driver.page_source.encode("utf-8")[:256 * 1024].decode("utf-8", errors="ignore")
+        (directory / f"{prefix}.html").write_text(source, encoding="utf-8")
+    except Exception as error:
+        print(f"Could not save bounded register HTML: {type(error).__name__}", file=sys.stderr, flush=True)
+    try:
+        driver.save_screenshot(str(directory / f"{prefix}.png"))
+    except Exception as error:
+        print(f"Could not save register screenshot: {type(error).__name__}", file=sys.stderr, flush=True)
 
 
 def sofia_now() -> datetime:
@@ -97,18 +147,23 @@ def wait_idle(driver, wait, page_number: int | None = None, previous_hash: str |
 
 def choose_largest_page_size(driver, wait):
     """Use only an existing numeric option in the register's pager select."""
+    phase(CURRENT_SOURCE, "page size: waiting for a quiet first-page render")
     before = wait_idle(driver, wait, page_number=1)
+    print("Page size before: " + json.dumps(state_summary(before), ensure_ascii=False), flush=True)
     choices = [(int(value), value) for value in before["page_sizes"] if value.isdigit() and int(value) > 0]
     if not choices:
+        print("No existing numeric page-size option; retaining the current size", flush=True)
         return
     size, value = max(choices)
     if before["page_size"] == value:
+        print(f"Largest existing page size {size} already selected", flush=True)
         return
     previous_values = before["rows"]
     previous_hash = fingerprint(previous_values)
     expected = total_rows(driver, before)
     # Resolve the current SELECT inside this one script: a grid rerender cannot
     # invalidate a saved WebElement between option inspection and selection.
+    phase(CURRENT_SOURCE, f"page size: selecting existing option {value}")
     changed = driver.execute_script("""
         const value = arguments[0];
         const element = document.querySelector('.k-grid .k-pager-sizes select');
@@ -125,8 +180,11 @@ def choose_largest_page_size(driver, wait):
         return true;
     """, value)
     if not changed:
+        print("Existing page-size control has no usable widget; retaining the current size", flush=True)
         return
+    phase(CURRENT_SOURCE, f"page size: waiting for option {value} to render rows")
     after = wait_idle(driver, wait, page_number=1, previous_hash=previous_hash if expected > len(previous_values) else None)
+    print("Page size after: " + json.dumps(state_summary(after), ensure_ascii=False), flush=True)
     if total_rows(driver, after) != expected:
         raise RuntimeError("Register total changed while selecting page size")
     print(f"Using the register's existing {size}-row page-size option", flush=True)
@@ -135,8 +193,11 @@ def choose_largest_page_size(driver, wait):
 def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     info = SOURCES[code]
     wait = WebDriverWait(driver, 35)
+    phase(code, "navigating to the official register")
     driver.get(info["source_url"])
+    phase(code, "waiting for the initial grid pager")
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".k-grid .k-pager-info")))
+    phase(code, "waiting for the initial grid to finish rendering")
     wait_idle(driver, wait)
 
     # Consent is optional; all functional failures below are raised.
@@ -147,7 +208,9 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
             element.click()
             break
 
+    phase(code, "reading the initial grid and locating the date filter")
     original_state = wait_idle(driver, wait)
+    print("Initial grid: " + json.dumps(state_summary(original_state), ensure_ascii=False), flush=True)
     original_fingerprint = fingerprint(original_state["rows"])
     original_total = total_rows(driver, original_state)
     form_selector = f'#{info["form_id"]}'
@@ -155,10 +218,12 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     if not driver.find_elements(*date_selector):
         date_selector = (By.XPATH, f'//*[@id="{info["form_id"]}"]/div/div[2]/span/span/input')
     date_field = wait.until(EC.visibility_of_element_located(date_selector))
+    phase(code, f"entering start date {start_date}")
     date_field.clear()
     date_field.send_keys(start_date)
     date_field.send_keys(Keys.TAB)
     search = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, f'{form_selector} input[type="submit"]')))
+    phase(code, f"submitting the date filter from {start_date}")
     search.click()
 
     observed_loading = False
@@ -178,13 +243,16 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
         return False
 
     # Do not proceed on an unchanged unfiltered grid and call it a monthly capture.
-    wait.until(filter_applied)
+    phase(code, "waiting for the filtered grid to complete its render")
+    filtered_state = wait.until(filter_applied)
+    print("Filtered grid: " + json.dumps(state_summary(filtered_state), ensure_ascii=False), flush=True)
     wait_idle(driver, wait, page_number=1)
     date_field = wait.until(EC.presence_of_element_located(date_selector))
     if date_field.get_attribute("value") != start_date:
         raise RuntimeError("The register did not retain the requested start date")
 
     choose_largest_page_size(driver, wait)
+    phase(code, "reading the filtered first page and its headings")
     first_state = wait_idle(driver, wait, page_number=1)
     expected = total_rows(driver, first_state)
     headers = first_state["headers"]
@@ -195,6 +263,7 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     seen_pages = set()
     seen_rows = set()
     for page_number in range(1, max_pages + 1):
+        phase(code, f"reading page {page_number}")
         state = wait_idle(driver, wait, page_number=page_number)
         if total_rows(driver, state) != expected:
             raise RuntimeError("Register total changed during pagination; repeat the window")
@@ -227,6 +296,7 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
         if not enabled:
             raise RuntimeError(f"Next page {page_number + 1} is absent before all rows were read")
         enabled[-1].click()
+        phase(code, f"waiting for page {page_number + 1} to finish rendering")
         wait_idle(driver, wait, page_number=page_number + 1, previous_hash=page_hash)
     else:
         raise RuntimeError(f"Exceeded the {max_pages}-page safety limit")
@@ -260,6 +330,7 @@ def main():
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parents[1] / "seed" / "monthly-capture")
     parser.add_argument("--start-date", default=os.environ.get("NAG_START_DATE") or (sofia_now() - timedelta(days=90)).strftime("%d.%m.%Y"))
     parser.add_argument("--max-pages", type=int, default=1000)
+    parser.add_argument("--diagnostics", type=Path, help="Private output for failed public-register screenshots, bounded HTML, and grid metadata")
     args = parser.parse_args()
     datetime.strptime(args.start_date, "%d.%m.%Y")
     if args.max_pages < 1 or args.max_pages > 1000:
@@ -272,6 +343,7 @@ def main():
     options.add_argument("--disable-dev-shm-usage")
     if os.environ.get("CHROME_BINARY"):
         options.binary_location = os.environ["CHROME_BINARY"]
+    phase("initialization", "starting Chrome")
     driver = webdriver.Chrome(options=options)
     driver.set_page_load_timeout(60)
     codes = CORE_CODES if args.source == "all" else (args.source,)
@@ -286,6 +358,9 @@ def main():
             pending.write_text(json.dumps(capture, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             pending.replace(path)
             captures.append(capture)
+    except Exception:
+        save_failure_diagnostics(driver, args.diagnostics or args.output.parent / "diagnostics")
+        raise
     finally:
         driver.quit()
     print(f"Completed {len(captures)} source captures in {args.output}")
@@ -295,5 +370,6 @@ if __name__ == "__main__":
     try:
         main()
     except (TimeoutException, RuntimeError, ValueError) as error:
-        print(f"Register capture failed: {error}", file=sys.stderr)
+        print(f"Register capture failed in {CURRENT_SOURCE}, phase '{CURRENT_PHASE}': {type(error).__name__}: {error}", file=sys.stderr, flush=True)
+        traceback.print_exc(limit=8)
         sys.exit(1)
