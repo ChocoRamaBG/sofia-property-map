@@ -120,6 +120,7 @@ def state_summary(state: dict | None) -> dict:
             {key: request.get(key) for key in ("id", "method", "path", "fromDate", "complete", "status")}
             for request in state.get("requests", [])[-5:]
         ],
+        "document_ready": state.get("document_ready"),
     }
 
 
@@ -194,7 +195,8 @@ def grid_state(driver) -> dict | None:
             model_rows: source ? source.view().length : null,
             read_path: typeof readUrl === 'string' ? new URL(readUrl, location.href).pathname : null,
             request_sequence: monitor ? monitor.requestSequence : null,
-            requests: monitor ? monitor.requests : []
+            requests: monitor ? monitor.requests : [],
+            document_ready: document.readyState
         };
     """)
 
@@ -219,14 +221,26 @@ def fingerprint(values: list[list[str]]) -> str:
     return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-def wait_idle(driver, wait, page_number: int | None = None) -> dict:
+def wait_idle(driver, wait, page_number: int | None = None, server_initialized: bool = False) -> dict:
     def rendered(browser):
         state = grid_state(browser)
-        if not state or not completed_read(state):
+        if not state or not (server_initial_render(state) if server_initialized else completed_read(state)):
             return False
         return ready_state(browser, state, page_number)
 
     return wait.until(rendered)
+
+
+def server_initial_render(state: dict) -> bool:
+    """The visa register embeds data in its completed HTML response.
+
+    Only the explicit server-initialized source can take this branch. Once it
+    issues a grid AJAX read, successful request/dataBound guards apply again.
+    """
+    if state["document_ready"] != "complete" or state.get("grid_token") is None:
+        return False
+    reads = [request for request in state["requests"] if request["sameOrigin"] and request["path"] == state["read_path"]]
+    return completed_read(state) if reads else True
 
 
 def request_marker(state: dict) -> dict:
@@ -276,7 +290,7 @@ def ready_state(driver, state: dict, page_number: int | None = None) -> dict | b
     return state
 
 
-def wait_filter_render(driver, wait, marker: dict, form: dict, start_date: str) -> dict:
+def wait_filter_render(driver, wait, marker: dict, form: dict, start_date: str, server_initialized: bool = False) -> dict:
     def rendered(browser):
         state = grid_state(browser)
         if not state:
@@ -289,19 +303,25 @@ def wait_filter_render(driver, wait, marker: dict, form: dict, start_date: str) 
             raise RuntimeError(f"The date-filter request failed with HTTP {search['status']}")
         if search["fromDate"] != start_date:
             raise RuntimeError("The search request did not submit the requested start date")
-        # The form's data-ajax-update replaces the result container. Its new
-        # grid then performs another asynchronous /Read before results exist.
-        if state["grid_token"] == marker["grid_token"] or not completed_read(state, search["id"]):
+        # All three forms replace their result container. Permits/certificates
+        # then Read asynchronously; visas embeds its filtered first page in
+        # the successful Search HTML response and has no initial grid request.
+        if state["grid_token"] == marker["grid_token"]:
+            return False
+        if server_initialized:
+            if not server_initial_render(state):
+                return False
+        elif not completed_read(state, search["id"]):
             return False
         return ready_state(browser, state, page_number=1)
 
     return wait.until(rendered)
 
 
-def choose_largest_page_size(driver, wait):
+def choose_largest_page_size(driver, wait, server_initialized: bool = False):
     """Use only an existing numeric option in the register's pager select."""
     phase(CURRENT_SOURCE, "page size: waiting for a quiet first-page render")
-    before = wait_idle(driver, wait, page_number=1)
+    before = wait_idle(driver, wait, page_number=1, server_initialized=server_initialized)
     print("Page size before: " + json.dumps(state_summary(before), ensure_ascii=False), flush=True)
     choices = [(int(value), value) for value in before["page_sizes"] if value.isdigit() and int(value) > 0]
     if not choices:
@@ -340,13 +360,18 @@ def choose_largest_page_size(driver, wait):
 
 def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     info = SOURCES[code]
+    server_initialized = info.get("binding_mode") == "server-initialized"
     wait = WebDriverWait(driver, 35)
     phase(code, "navigating to the official register")
     driver.get(info["source_url"])
     phase(code, "waiting for the initial grid pager")
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".k-grid .k-pager-info")))
-    phase(code, "waiting for the initial grid to finish rendering")
-    wait_read_render(driver, wait)
+    if server_initialized:
+        phase(code, "waiting for the server-initialized grid's document and data to finish rendering")
+        wait_idle(driver, wait, page_number=1, server_initialized=True)
+    else:
+        phase(code, "waiting for the initial grid to finish rendering")
+        wait_read_render(driver, wait)
 
     # Consent is optional; all functional failures below are raised.
     consent_links = driver.find_elements(By.CSS_SELECTOR, ".cc-dismiss, .cc-btn.cc-allow, a[title='Приемам']")
@@ -357,7 +382,7 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
             break
 
     phase(code, "reading the initial grid and locating the date filter")
-    original_state = wait_idle(driver, wait)
+    original_state = wait_idle(driver, wait, server_initialized=server_initialized)
     print("Initial grid: " + json.dumps(state_summary(original_state), ensure_ascii=False), flush=True)
     form_selector = f'#{info["form_id"]}'
     date_selector = (By.CSS_SELECTOR, f'{form_selector} input[name="FromDate"]')
@@ -380,17 +405,17 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     marker = request_marker(grid_state(driver))
     phase(code, f"submitting the date filter from {start_date}")
     search.click()
-    phase(code, "waiting for Search completion and the new grid's Read/dataBound")
-    filtered_state = wait_filter_render(driver, wait, marker, form, start_date)
+    phase(code, "waiting for Search completion and the new grid's server-rendered data" if server_initialized else "waiting for Search completion and the new grid's Read/dataBound")
+    filtered_state = wait_filter_render(driver, wait, marker, form, start_date, server_initialized=server_initialized)
     print("Filtered grid: " + json.dumps(state_summary(filtered_state), ensure_ascii=False), flush=True)
-    wait_idle(driver, wait, page_number=1)
+    wait_idle(driver, wait, page_number=1, server_initialized=server_initialized)
     date_field = wait.until(EC.presence_of_element_located(date_selector))
     if date_field.get_attribute("value") != start_date:
         raise RuntimeError("The register did not retain the requested start date")
 
-    choose_largest_page_size(driver, wait)
+    choose_largest_page_size(driver, wait, server_initialized=server_initialized)
     phase(code, "reading the filtered first page and its headings")
-    first_state = wait_idle(driver, wait, page_number=1)
+    first_state = wait_idle(driver, wait, page_number=1, server_initialized=server_initialized)
     expected = total_rows(driver, first_state)
     headers = first_state["headers"]
     normalized_headers = {header.casefold() for header in headers}
@@ -401,11 +426,11 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     seen_rows = set()
     for page_number in range(1, max_pages + 1):
         phase(code, f"reading page {page_number}")
-        state = wait_idle(driver, wait, page_number=page_number)
+        state = wait_idle(driver, wait, page_number=page_number, server_initialized=server_initialized)
         if total_rows(driver, state) != expected:
             raise RuntimeError("Register total changed during pagination; repeat the window")
         current = state["rows"]
-        if total_rows(driver, wait_idle(driver, wait, page_number=page_number)) != expected:
+        if total_rows(driver, wait_idle(driver, wait, page_number=page_number, server_initialized=server_initialized)) != expected:
             raise RuntimeError("Register total changed while reading a page; repeat the window")
         if expected == 0:
             if current:

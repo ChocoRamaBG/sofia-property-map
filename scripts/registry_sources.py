@@ -22,6 +22,9 @@ SOURCES = {
         "label_en": "Design visas register",
         "source_url": "https://nag.sofia.bg/RegisterVisasOfProection",
         "form_id": "RegisterVisasOfProectionSearchForms",
+        # This register embeds the first page in the HTML, including after
+        # Search. Subsequent page-size/pager operations use AJAX Grid_ReadData.
+        "binding_mode": "server-initialized",
         "required_headers": ["Номер", "Дата", "Издател", "Район", "Обхват"],
         "columns": ["Дата", "Виза", "Основание", "Издател", "Район", "Местоположение"],
     },
