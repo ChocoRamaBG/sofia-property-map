@@ -102,6 +102,12 @@ function snapshot_timestamp_valid($value): bool {
     return true;
 }
 
+function snapshot_import_timestamp_valid($value): bool {
+    if (snapshot_timestamp_valid($value)) return true;
+    if (!is_string($value) || !preg_match('/^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):(\d{2})$/', $value, $match)) return false;
+    return snapshot_date_valid($match[1]) && (int)$match[2] <= 23 && (int)$match[3] <= 59 && (int)$match[4] <= 59;
+}
+
 function snapshot_string($value, int $limit, bool $nullable = false): bool {
     return ($nullable && $value === null) || (is_string($value) && text_length($value) <= $limit);
 }
@@ -125,26 +131,15 @@ function public_source(array $source): array {
     ];
 }
 
-function load_registry_snapshot(): ?array {
-    $path = __DIR__ . '/private/registry-data.json';
-    if (!file_exists($path)) return null;
-    $bytes = filesize($path);
-    if ($bytes === false || $bytes <= 0 || $bytes > 10 * 1024 * 1024) {
-        throw new RuntimeException('Registry snapshot has an invalid size.');
-    }
-    $json = file_get_contents($path, false, null, 0, 10 * 1024 * 1024 + 1);
-    if ($json === false || strlen($json) > 10 * 1024 * 1024) throw new RuntimeException('Registry snapshot cannot be read.');
-    $snapshot = json_decode($json, true, 32, JSON_THROW_ON_ERROR);
-    if (!is_array($snapshot) || ($snapshot['version'] ?? null) !== 1 || !snapshot_timestamp_valid($snapshot['generated_at'] ?? null)
-        || !snapshot_list($snapshot['sources'] ?? null) || !snapshot_list($snapshot['documents'] ?? null)
-        || !snapshot_list($snapshot['imports'] ?? null) || count($snapshot['sources']) > 5 || count($snapshot['documents']) > 60000) {
-        throw new RuntimeException('Registry snapshot format is invalid.');
-    }
-    $allowedCodes = ['coordinates', 'building_permits', 'exploitation_certificates', 'exploitation_certificates_legacy', 'projecting_visas'];
-    $coreCodes = ['building_permits', 'exploitation_certificates', 'projecting_visas'];
+function registry_source_codes(): array {
+    return ['coordinates', 'building_permits', 'exploitation_certificates', 'exploitation_certificates_legacy', 'projecting_visas'];
+}
+
+function validate_registry_sources($rows): array {
+    if (!snapshot_list($rows) || count($rows) > 5) throw new RuntimeException('Registry sources are invalid.');
     $sources = [];
-    foreach ($snapshot['sources'] as $source) {
-        if (!is_array($source) || !in_array($source['code'] ?? null, $allowedCodes, true) || isset($sources[$source['code']])
+    foreach ($rows as $source) {
+        if (!is_array($source) || !in_array($source['code'] ?? null, registry_source_codes(), true) || isset($sources[$source['code']])
             || !snapshot_string($source['label_bg'] ?? null, 190) || !snapshot_string($source['label_en'] ?? null, 190)
             || !array_key_exists('source_url', $source) || !snapshot_string($source['source_url'], 500, true)
             || !array_key_exists('snapshot_date', $source) || !snapshot_date_valid($source['snapshot_date'])
@@ -160,21 +155,200 @@ function load_registry_snapshot(): ?array {
         }
         $sources[$source['code']] = $source;
     }
-    foreach ($coreCodes as $code) {
+    foreach (['building_permits', 'exploitation_certificates', 'projecting_visas'] as $code) {
         if (!isset($sources[$code])) throw new RuntimeException('Registry snapshot is missing a register.');
     }
-    $completion = $snapshot['completion'] ?? null;
+    return $sources;
+}
+
+function validate_registry_completion($completion): void {
     if (!is_array($completion) || ($completion['status'] ?? null) !== 'complete' || !snapshot_list($completion['sources'] ?? null)) {
         throw new RuntimeException('Registry snapshot is incomplete.');
     }
     foreach ($completion['sources'] as $code) {
-        if (!in_array($code, $allowedCodes, true)) throw new RuntimeException('Registry completion source is invalid.');
+        if (!in_array($code, registry_source_codes(), true)) throw new RuntimeException('Registry completion source is invalid.');
     }
-    if (array_diff($coreCodes, $completion['sources']) !== []
+    if (array_diff(['building_permits', 'exploitation_certificates', 'projecting_visas'], $completion['sources']) !== []
         || (isset($completion['start_date']) && !snapshot_date_valid($completion['start_date']))
         || (isset($completion['finished_at']) && !snapshot_timestamp_valid($completion['finished_at']))) {
         throw new RuntimeException('Registry snapshot is incomplete.');
     }
+}
+
+function validate_registry_document($document, array $sources): void {
+    if (!is_array($document) || !is_string($document['source_code'] ?? null) || !isset($sources[$document['source_code']])
+        || $document['source_code'] === 'coordinates'
+        || !is_string($document['document_hash'] ?? null) || !preg_match('/^[a-f0-9]{64}$/', $document['document_hash'])
+        || !snapshot_string($document['record_key'] ?? null, 190, true) || !is_array($document['raw_fields'] ?? null)
+        || count($document['raw_fields']) > 100 || !snapshot_list($document['cadastral_ids'] ?? null)
+        || count($document['cadastral_ids']) > 10000 || !snapshot_string($document['snapshot_file'] ?? null, 255, true)
+        || (isset($document['snapshot_date']) && !snapshot_date_valid($document['snapshot_date']))
+        || (isset($document['issued_at']) && !snapshot_date_valid($document['issued_at']))) {
+        throw new RuntimeException('Registry document is invalid.');
+    }
+    foreach ($document['raw_fields'] as $field => $value) {
+        if (!snapshot_string((string)$field, 200) || (!is_scalar($value) && $value !== null)
+            || (is_string($value) && strlen($value) > 500000)) throw new RuntimeException('Registry fields are invalid.');
+    }
+    foreach ($document['cadastral_ids'] as $id) {
+        if (!is_string($id) || !preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $id)) {
+            throw new RuntimeException('Registry cadastral link is invalid.');
+        }
+    }
+}
+
+function public_registry_imports($rows, array $sources): array {
+    if (!snapshot_list($rows) || count($rows) > 10000) throw new RuntimeException('Registry imports are invalid.');
+    $imports = [];
+    foreach ($rows as $import) {
+        if (!is_array($import) || !is_string($import['source_code'] ?? null) || !isset($sources[$import['source_code']])
+            || !snapshot_string($import['source_file'] ?? null, 255, true)
+            || !snapshot_import_timestamp_valid($import['imported_at'] ?? null)
+            || !is_int($import['records_loaded'] ?? null) || $import['records_loaded'] < 0
+            || (isset($import['snapshot_date']) && !snapshot_date_valid($import['snapshot_date']))) {
+            throw new RuntimeException('Registry import metadata is invalid.');
+        }
+        $source = $sources[$import['source_code']];
+        $fallback = ($import['source_file'] ?? null) === ($source['snapshot_file'] ?? null) ? $source['snapshot_date'] : null;
+        $imports[] = array_merge(public_source($source), [
+            'source_code' => $import['source_code'], 'imported_at' => $import['imported_at'], 'records_loaded' => $import['records_loaded'],
+            'snapshot_date' => array_key_exists('snapshot_date', $import) ? $import['snapshot_date'] : document_snapshot_date($import['source_file'] ?? null, $fallback),
+        ]);
+    }
+    return $imports;
+}
+
+function bounded_registry_json(string $path, int $limit, ?int $expectedBytes = null, ?string $expectedHash = null): array {
+    if (!is_file($path) || is_link($path)) throw new RuntimeException('Registry snapshot file is unavailable.');
+    $bytes = filesize($path);
+    if ($bytes === false || $bytes <= 0 || $bytes > $limit || ($expectedBytes !== null && $bytes !== $expectedBytes)) {
+        throw new RuntimeException('Registry snapshot has an invalid size.');
+    }
+    $json = file_get_contents($path, false, null, 0, $limit + 1);
+    if ($json === false || strlen($json) !== $bytes || ($expectedHash !== null && !hash_equals($expectedHash, hash('sha256', $json)))) {
+        throw new RuntimeException('Registry snapshot integrity check failed.');
+    }
+    $data = json_decode($json, true, 32, JSON_THROW_ON_ERROR);
+    unset($json);
+    if (!is_array($data)) throw new RuntimeException('Registry snapshot format is invalid.');
+    return $data;
+}
+
+function validate_registry_file_descriptor($file, string $pattern, int $limit): void {
+    if (!is_array($file) || !is_string($file['file'] ?? null) || !preg_match($pattern, $file['file'])
+        || !is_int($file['bytes'] ?? null) || $file['bytes'] < 1 || $file['bytes'] > $limit
+        || !is_string($file['sha256'] ?? null) || !preg_match('/^[a-f0-9]{64}$/', $file['sha256'])) {
+        throw new RuntimeException('Registry file descriptor is invalid.');
+    }
+}
+
+function load_registry_v2(string $activePath): array {
+    $manifest = bounded_registry_json($activePath, 256 * 1024);
+    if (($manifest['version'] ?? null) !== 2 || !is_string($manifest['snapshot_id'] ?? null)
+        || !preg_match('/^[a-f0-9]{32}$/', $manifest['snapshot_id']) || !snapshot_timestamp_valid($manifest['generated_at'] ?? null)
+        || !snapshot_list($manifest['documents'] ?? null) || count($manifest['documents']) > 1000) {
+        throw new RuntimeException('Registry manifest format is invalid.');
+    }
+    validate_registry_completion($manifest['completion'] ?? null);
+    validate_registry_file_descriptor($manifest['index'] ?? null, '/^index\.json$/', 4 * 1024 * 1024);
+    $root = __DIR__ . '/private/registry-snapshots';
+    $directory = $root . '/' . $manifest['snapshot_id'];
+    if (is_link($root) || is_link($directory) || !is_dir($directory)) throw new RuntimeException('Registry snapshot directory is unavailable.');
+    $shards = [];
+    $records = 0;
+    foreach ($manifest['documents'] as $shard) {
+        validate_registry_file_descriptor($shard, '/^documents-[0-9]{3}\.jsonl$/', 1024 * 1024);
+        if (isset($shards[$shard['file']]) || !is_int($shard['records'] ?? null) || $shard['records'] < 1) {
+            throw new RuntimeException('Registry document shard is invalid.');
+        }
+        $records += $shard['records'];
+        if ($records > 60000) throw new RuntimeException('Registry snapshot contains too many documents.');
+        $path = $directory . '/' . $shard['file'];
+        if (!is_file($path) || is_link($path) || filesize($path) !== $shard['bytes']) throw new RuntimeException('Registry shard is unavailable.');
+        $shards[$shard['file']] = $shard;
+    }
+    $index = bounded_registry_json($directory . '/index.json', 4 * 1024 * 1024, $manifest['index']['bytes'], $manifest['index']['sha256']);
+    if (($index['version'] ?? null) !== 2 || ($index['snapshot_id'] ?? null) !== $manifest['snapshot_id']
+        || ($index['generated_at'] ?? null) !== $manifest['generated_at'] || !is_array($index['parcels'] ?? null)
+        || count($index['parcels']) > 50000 || !is_array($index['document_counts'] ?? null)) {
+        throw new RuntimeException('Registry index format is invalid.');
+    }
+    validate_registry_completion($index['completion'] ?? null);
+    if ($index['completion'] != $manifest['completion']) throw new RuntimeException('Registry snapshot completion is inconsistent.');
+    $sources = validate_registry_sources($index['sources'] ?? null);
+    $imports = public_registry_imports($index['imports'] ?? null, $sources);
+    $documentCounts = array_fill_keys(array_keys($sources), 0);
+    foreach ($index['document_counts'] as $code => $count) {
+        if (!isset($sources[$code]) || !is_int($count) || $count < 0 || ($code === 'coordinates' && $count !== 0)) throw new RuntimeException('Registry document count is invalid.');
+        $documentCounts[$code] = $count;
+    }
+    if (array_sum($documentCounts) !== $records) throw new RuntimeException('Registry document totals are inconsistent.');
+
+    $byId = [];
+    $flags = [];
+    $sourceIds = array_fill_keys(array_keys($sources), []);
+    $certificateIds = [];
+    $docRefs = [];
+    $indexedCounts = array_fill_keys(array_keys($sources), 0);
+    $certificateDocuments = [];
+    foreach ($index['parcels'] as $id => $parcel) {
+        if (!is_string($id) || !preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $id)
+            || !is_array($parcel) || !snapshot_list($parcel['documents'] ?? null) || count($parcel['documents']) < 1
+            || count($parcel['documents']) > 60000) throw new RuntimeException('Registry parcel index is invalid.');
+        $flags[$id] = empty_document_flags();
+        foreach ($parcel['documents'] as $ref) {
+            if (!is_array($ref) || !is_string($ref['source_code'] ?? null) || !isset($sources[$ref['source_code']])
+                || $ref['source_code'] === 'coordinates' || !is_string($ref['document_hash'] ?? null)
+                || !preg_match('/^[a-f0-9]{64}$/', $ref['document_hash']) || !is_string($ref['shard'] ?? null)
+                || !isset($shards[$ref['shard']])) throw new RuntimeException('Registry document reference is invalid.');
+            $key = $ref['source_code'] . ':' . $ref['document_hash'];
+            if (isset($byId[$id][$key]) || (isset($docRefs[$key]) && $docRefs[$key]['shard'] !== $ref['shard'])) {
+                throw new RuntimeException('Registry document reference is duplicated or inconsistent.');
+            }
+            if (!isset($docRefs[$key])) $indexedCounts[$ref['source_code']]++;
+            $byId[$id][$key] = $ref;
+            $docRefs[$key]['shard'] = $ref['shard'];
+            $docRefs[$key]['ids'][$id] = true;
+            $flags[$id]['document_count']++;
+            $sourceIds[$ref['source_code']][$id] = true;
+            if (source_is_certificate($ref['source_code'])) {
+                $flags[$id]['has_exploitation_certificate'] = true;
+                $certificateIds[$id] = true;
+                $certificateDocuments[$key] = true;
+            } elseif ($ref['source_code'] === 'building_permits') {
+                $flags[$id]['has_building_permit'] = true;
+            } elseif ($ref['source_code'] === 'projecting_visas') {
+                $flags[$id]['has_projecting_visa'] = true;
+            }
+        }
+    }
+    if (count($docRefs) > $records) throw new RuntimeException('Registry indexed document total is invalid.');
+    foreach ($indexedCounts as $code => $count) {
+        if ($count > $documentCounts[$code]) throw new RuntimeException('Registry indexed source total is invalid.');
+    }
+    $generatedAt = $manifest['generated_at'];
+    unset($index, $manifest);
+    return [
+        'format' => 2, 'directory' => $directory, 'shards' => $shards, 'doc_refs' => $docRefs,
+        'generated_at' => $generatedAt, 'sources' => $sources, 'documents' => [], 'imports' => $imports,
+        'by_id' => $byId, 'flags' => $flags, 'source_ids' => $sourceIds, 'document_counts' => $documentCounts,
+        'certificate_ids' => $certificateIds, 'linked_certificates' => count($certificateDocuments),
+    ];
+}
+
+function load_registry_snapshot(): ?array {
+    $activePath = __DIR__ . '/private/registry-active.json';
+    if (file_exists($activePath) || is_link($activePath)) return load_registry_v2($activePath);
+    $path = __DIR__ . '/private/registry-data.json';
+    if (!file_exists($path) && !is_link($path)) return null;
+    $snapshot = bounded_registry_json($path, 10 * 1024 * 1024);
+    if (!is_array($snapshot) || ($snapshot['version'] ?? null) !== 1 || !snapshot_timestamp_valid($snapshot['generated_at'] ?? null)
+        || !snapshot_list($snapshot['sources'] ?? null) || !snapshot_list($snapshot['documents'] ?? null)
+        || !snapshot_list($snapshot['imports'] ?? null) || count($snapshot['sources']) > 5 || count($snapshot['documents']) > 60000) {
+        throw new RuntimeException('Registry snapshot format is invalid.');
+    }
+    $sources = validate_registry_sources($snapshot['sources']);
+    validate_registry_completion($snapshot['completion'] ?? null);
 
     $byId = [];
     $flags = [];
@@ -184,28 +358,13 @@ function load_registry_snapshot(): ?array {
     $certificateIds = [];
     $linkedCertificates = 0;
     foreach ($snapshot['documents'] as $index => $document) {
-        if (!is_array($document) || !isset($sources[$document['source_code'] ?? '']) || ($document['source_code'] ?? '') === 'coordinates'
-            || !is_string($document['document_hash'] ?? null) || !preg_match('/^[a-f0-9]{64}$/', $document['document_hash'])
-            || !snapshot_string($document['record_key'] ?? null, 190, true) || !is_array($document['raw_fields'] ?? null)
-            || count($document['raw_fields']) > 100 || !snapshot_list($document['cadastral_ids'] ?? null)
-            || count($document['cadastral_ids']) > 10000 || !snapshot_string($document['snapshot_file'] ?? null, 255, true)
-            || (isset($document['snapshot_date']) && !snapshot_date_valid($document['snapshot_date']))
-            || (isset($document['issued_at']) && !snapshot_date_valid($document['issued_at']))) {
-            throw new RuntimeException('Registry document is invalid.');
-        }
+        validate_registry_document($document, $sources);
         $key = $document['source_code'] . ':' . $document['document_hash'];
         if (isset($seenDocuments[$key])) throw new RuntimeException('Registry snapshot contains duplicate documents.');
         $seenDocuments[$key] = true;
-        foreach ($document['raw_fields'] as $field => $value) {
-            if (!snapshot_string((string)$field, 200) || (!is_scalar($value) && $value !== null)
-                || (is_string($value) && strlen($value) > 500000)) throw new RuntimeException('Registry fields are invalid.');
-        }
         $documentCounts[$document['source_code']]++;
         $ids = [];
         foreach ($document['cadastral_ids'] as $id) {
-            if (!is_string($id) || !preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $id)) {
-                throw new RuntimeException('Registry cadastral link is invalid.');
-            }
             if (isset($ids[$id])) continue;
             $ids[$id] = true;
             $byId[$id][] = $index;
@@ -223,24 +382,9 @@ function load_registry_snapshot(): ?array {
         }
         if ($ids !== [] && source_is_certificate($document['source_code'])) $linkedCertificates++;
     }
-    $imports = [];
-    foreach ($snapshot['imports'] as $import) {
-        if (!is_array($import) || !isset($sources[$import['source_code'] ?? ''])
-            || !snapshot_string($import['source_file'] ?? null, 255, true)
-            || !snapshot_string($import['imported_at'] ?? null, 50)
-            || !is_int($import['records_loaded'] ?? null) || $import['records_loaded'] < 0
-            || (isset($import['snapshot_date']) && !snapshot_date_valid($import['snapshot_date']))) {
-            throw new RuntimeException('Registry import metadata is invalid.');
-        }
-        $source = $sources[$import['source_code']];
-        $fallback = ($import['source_file'] ?? null) === ($source['snapshot_file'] ?? null) ? $source['snapshot_date'] : null;
-        $imports[] = array_merge(public_source($source), [
-            'source_code' => $import['source_code'], 'imported_at' => $import['imported_at'], 'records_loaded' => $import['records_loaded'],
-            'snapshot_date' => array_key_exists('snapshot_date', $import) ? $import['snapshot_date'] : document_snapshot_date($import['source_file'] ?? null, $fallback),
-        ]);
-    }
+    $imports = public_registry_imports($snapshot['imports'], $sources);
     return [
-        'generated_at' => $snapshot['generated_at'], 'sources' => $sources, 'documents' => $snapshot['documents'], 'imports' => $imports,
+        'format' => 1, 'generated_at' => $snapshot['generated_at'], 'sources' => $sources, 'documents' => $snapshot['documents'], 'imports' => $imports,
         'by_id' => $byId, 'flags' => $flags, 'source_ids' => $sourceIds, 'document_counts' => $documentCounts,
         'certificate_ids' => $certificateIds, 'linked_certificates' => $linkedCertificates,
     ];
@@ -270,6 +414,72 @@ function registry_id_matches_filter(string $id, array $registry, string $recordT
     return isset($registry['source_ids'][$recordType][$id]);
 }
 
+function registry_document_iterator(array $registry, ?string $parcelId = null): Generator {
+    if (($registry['format'] ?? 1) === 1) {
+        if ($parcelId === null) {
+            foreach ($registry['documents'] as $document) yield $document;
+        } else {
+            foreach ($registry['by_id'][$parcelId] ?? [] as $index) yield $registry['documents'][$index];
+        }
+        return;
+    }
+    $shardNames = [];
+    if ($parcelId === null) {
+        $shardNames = array_fill_keys(array_keys($registry['shards']), true);
+    } else {
+        foreach ($registry['by_id'][$parcelId] ?? [] as $ref) $shardNames[$ref['shard']] = true;
+    }
+    $expectedRefs = [];
+    foreach ($registry['doc_refs'] as $key => $ref) {
+        if (isset($shardNames[$ref['shard']])) $expectedRefs[$key] = true;
+    }
+    $seen = [];
+    $sourceCounts = array_fill_keys(array_keys($registry['sources']), 0);
+    foreach ($shardNames as $name => $_) {
+        $shard = $registry['shards'][$name];
+        $path = $registry['directory'] . '/' . $name;
+        if (!is_file($path) || is_link($path) || filesize($path) !== $shard['bytes']) {
+            throw new RuntimeException('Registry document shard is unavailable.');
+        }
+        $handle = fopen($path, 'rb');
+        if ($handle === false) throw new RuntimeException('Registry document shard cannot be read.');
+        $hash = hash_init('sha256');
+        $bytes = 0;
+        $records = 0;
+        try {
+            while (($line = fgets($handle, 1024 * 1024 + 1)) !== false) {
+                $bytes += strlen($line);
+                if ($bytes > $shard['bytes'] || trim($line) === '') throw new RuntimeException('Registry JSONL row is invalid.');
+                hash_update($hash, $line);
+                $document = json_decode($line, true, 32, JSON_THROW_ON_ERROR);
+                unset($line);
+                validate_registry_document($document, $registry['sources']);
+                $key = $document['source_code'] . ':' . $document['document_hash'];
+                if (isset($seen[$key])) throw new RuntimeException('Registry document is duplicated.');
+                $seen[$key] = true;
+                $ids = array_fill_keys($document['cadastral_ids'], true);
+                if (count($ids) !== count($document['cadastral_ids'])) throw new RuntimeException('Registry document links are duplicated.');
+                $ref = $registry['doc_refs'][$key] ?? null;
+                if (($ref !== null && ($ref['shard'] !== $name || array_diff_key($ids, $ref['ids']) !== [] || array_diff_key($ref['ids'], $ids) !== []))
+                    || ($ref === null && $ids !== [])) throw new RuntimeException('Registry exact-ID index is inconsistent.');
+                $records++;
+                if ($records > $shard['records']) throw new RuntimeException('Registry shard document count is inconsistent.');
+                $sourceCounts[$document['source_code']]++;
+                if ($parcelId === null || isset($registry['by_id'][$parcelId][$key])) yield $document;
+                unset($document, $ids);
+            }
+            if (!feof($handle) || $records !== $shard['records'] || $bytes !== $shard['bytes']
+                || !hash_equals($shard['sha256'], hash_final($hash))) {
+                throw new RuntimeException('Registry document shard integrity check failed.');
+            }
+        } finally {
+            fclose($handle);
+        }
+    }
+    if (array_diff_key($expectedRefs, $seen) !== []) throw new RuntimeException('Registry referenced document is missing.');
+    if ($parcelId === null && $sourceCounts !== $registry['document_counts']) throw new RuntimeException('Registry source document totals are inconsistent.');
+}
+
 function contains_text(string $haystack, string $needle): bool {
     return function_exists('mb_stripos') ? mb_stripos($haystack, $needle, 0, 'UTF-8') !== false : stripos($haystack, $needle) !== false;
 }
@@ -279,13 +489,23 @@ function registry_search(PDO $pdo, array $registry, string $term, string $record
     foreach ($registry['by_id'] as $id => $_) {
         if (registry_id_matches_filter($id, $registry, $recordType) && contains_text($id, $term)) $candidateIds[$id] = true;
     }
-    foreach ($registry['documents'] as $document) {
+    foreach (registry_document_iterator($registry) as $document) {
         $text = json_encode($document['raw_fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($text === false || !contains_text($text, $term)) continue;
         foreach ($document['cadastral_ids'] as $id) {
             if (registry_id_matches_filter($id, $registry, $recordType)) $candidateIds[$id] = true;
         }
     }
+    unset($document, $text);
+    // Only the first forty candidates can enter the ordered forty-result response.
+    // Avoid fetching thousands of coordinate rows for a broad register-text search.
+    $candidateIdList = array_keys($candidateIds);
+    usort($candidateIdList, static function (string $a, string $b) use ($term): int {
+        if (($a === $term) !== ($b === $term)) return $a === $term ? -1 : 1;
+        return strcmp($a, $b);
+    });
+    $candidateIds = array_fill_keys(array_slice($candidateIdList, 0, 40), true);
+    unset($candidateIdList);
     $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $term) . '%';
     $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng FROM parcels p WHERE p.cadastral_id LIKE :term' . registry_filter($pdo, $registry, $recordType) . ' ORDER BY (p.cadastral_id = :exact_term) DESC, p.cadastral_id LIMIT 40');
     $stmt->execute(['term' => $like, 'exact_term' => $term]);
@@ -308,8 +528,7 @@ function registry_search(PDO $pdo, array $registry, string $term, string $record
 
 function registry_plot_sources(string $id, array $registry): array {
     $grouped = [];
-    foreach ($registry['by_id'][$id] ?? [] as $index) {
-        $document = $registry['documents'][$index];
+    foreach (registry_document_iterator($registry, $id) as $document) {
         $code = $document['source_code'];
         $source = $registry['sources'][$code];
         if (!isset($grouped[$code])) $grouped[$code] = array_merge(public_source($source), ['documents' => []]);
@@ -345,7 +564,7 @@ try {
             'documents' => (int)$pdo->query('SELECT COUNT(*) FROM source_documents')->fetchColumn(),
         ];
         if ($registry !== null) {
-            $counts['documents'] = count($registry['documents']);
+            $counts['documents'] = array_sum($registry['document_counts']);
             $counts['documents_by_source'] = $registry['document_counts'];
             $counts['plots_by_source'] = array_map('count', $registry['source_ids']);
             $counts['plots_with_exploitation_certificate'] = count($registry['certificate_ids']);

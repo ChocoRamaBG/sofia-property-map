@@ -30,6 +30,69 @@ from registry_sources import CORE_CODES, SOURCES
 CURRENT_SOURCE = "initialization"
 CURRENT_PHASE = "starting"
 
+# Install before the municipal page's scripts run. Its initial zero-row grid is
+# only a placeholder, and Search replaces it before issuing a separate /Read.
+# Observe native request completion and the documented Kendo dataBound event;
+# identical first rows are not evidence that a request finished.
+CAPTURE_MONITOR_SCRIPT = r"""
+(() => {
+    if (window.__sofiaCapture) return;
+    const monitor = window.__sofiaCapture = {
+        sequence: 0, requestSequence: 0, gridSequence: 0,
+        requests: [], grids: new WeakMap()
+    };
+    const tick = () => ++monitor.sequence;
+    monitor.attach = () => {
+        const element = document.querySelector('.k-grid');
+        const widget = element && window.jQuery && window.jQuery(element).data('kendoGrid');
+        if (!widget || !widget.dataSource) return null;
+        let record = monitor.grids.get(element);
+        if (!record || record.widget !== widget) {
+            record = {token: ++monitor.gridSequence, widget, bound: 0, boundEvent: 0, error: null};
+            monitor.grids.set(element, record);
+            widget.bind('dataBound', () => {
+                record.bound += 1;
+                record.boundEvent = tick();
+            });
+            widget.dataSource.bind('error', () => { record.error = 'Kendo data source error'; });
+        }
+        return record;
+    };
+    const nativeOpen = XMLHttpRequest.prototype.open;
+    const nativeSend = XMLHttpRequest.prototype.send;
+    const requestUrls = new WeakMap();
+    XMLHttpRequest.prototype.open = function(method, url) {
+        requestUrls.set(this, {method: String(method), url: String(url)});
+        return nativeOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function(body) {
+        const details = requestUrls.get(this);
+        if (details) {
+            const url = new URL(details.url, location.href);
+            const bodyParams = typeof body === 'string' ? new URLSearchParams(body) : null;
+            const parameter = name => url.searchParams.get(name) || (bodyParams && bodyParams.get(name));
+            const request = {
+                id: ++monitor.requestSequence, startEvent: tick(),
+                method: details.method, path: url.pathname, sameOrigin: url.origin === location.origin,
+                fromDate: parameter('FromDate'), searchQueryId: parameter('searchQueryId'),
+                complete: false, status: null
+            };
+            monitor.requests.push(request);
+            if (monitor.requests.length > 256) monitor.requests.shift();
+            this.addEventListener('loadend', () => {
+                request.complete = true;
+                request.status = this.status;
+                request.endEvent = tick();
+            }, {once: true});
+            monitor.attach();
+        }
+        return nativeSend.apply(this, arguments);
+    };
+    new MutationObserver(() => monitor.attach()).observe(document, {childList: true, subtree: true});
+    document.addEventListener('DOMContentLoaded', () => monitor.attach(), {once: true});
+})();
+"""
+
 
 def phase(source_code: str, message: str) -> None:
     global CURRENT_SOURCE, CURRENT_PHASE
@@ -49,6 +112,14 @@ def state_summary(state: dict | None) -> dict:
         "headers": [header[:100] for header in state["headers"][:30]],
         "row_count": len(state["rows"]),
         "loading": state["loading"],
+        "grid_token": state.get("grid_token"),
+        "data_bound_count": state.get("data_bound_count"),
+        "model_total": state.get("model_total"),
+        "read_path": state.get("read_path"),
+        "recent_requests": [
+            {key: request.get(key) for key in ("id", "method", "path", "fromDate", "complete", "status")}
+            for request in state.get("requests", [])[-5:]
+        ],
     }
 
 
@@ -95,6 +166,12 @@ def grid_state(driver) -> dict | None:
         const selected = grid.querySelector('.k-pager-numbers .k-state-selected, .k-pager-numbers .k-selected, .k-pager-numbers [aria-current="page"]');
         const pageText = selected ? selected.innerText.trim() : '';
         const sizeSelect = grid.querySelector('.k-pager-sizes select');
+        const monitor = window.__sofiaCapture;
+        const record = monitor && monitor.attach();
+        const widget = record && record.widget;
+        const source = widget && widget.dataSource;
+        const transportRead = source && source.options.transport && source.options.transport.read;
+        const readUrl = typeof transportRead === 'string' ? transportRead : transportRead && transportRead.url;
         return {
             loading: Array.from(document.querySelectorAll('.k-loading-mask')).some(visible),
             pager: pager ? pager.innerText.trim() : '',
@@ -106,7 +183,18 @@ def grid_state(driver) -> dict | None:
                 .map(row => Array.from(row.querySelectorAll('td')).filter(visible).map(cell => cell.innerText.trim()))
                 .filter(cells => cells.length > 0),
             page_size: sizeSelect ? sizeSelect.value : null,
-            page_sizes: sizeSelect ? Array.from(sizeSelect.options).map(option => option.value) : []
+            page_sizes: sizeSelect ? Array.from(sizeSelect.options).map(option => option.value) : [],
+            grid_token: record ? record.token : null,
+            data_bound_count: record ? record.bound : 0,
+            bound_event: record ? record.boundEvent : 0,
+            source_error: record ? record.error : null,
+            model_total: source ? source.total() : null,
+            model_page: source ? source.page() : null,
+            model_page_size: source ? source.pageSize() : null,
+            model_rows: source ? source.view().length : null,
+            read_path: typeof readUrl === 'string' ? new URL(readUrl, location.href).pathname : null,
+            request_sequence: monitor ? monitor.requestSequence : null,
+            requests: monitor ? monitor.requests : []
         };
     """)
 
@@ -131,16 +219,81 @@ def fingerprint(values: list[list[str]]) -> str:
     return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-def wait_idle(driver, wait, page_number: int | None = None, previous_hash: str | None = None) -> dict:
+def wait_idle(driver, wait, page_number: int | None = None) -> dict:
     def rendered(browser):
         state = grid_state(browser)
-        if not state or state["loading"] or not state["pager"] or not state["headers"]:
+        if not state or not completed_read(state):
             return False
-        if page_number is not None and state["selected_page"] is not None and state["selected_page"] != page_number:
+        return ready_state(browser, state, page_number)
+
+    return wait.until(rendered)
+
+
+def request_marker(state: dict) -> dict:
+    if state.get("request_sequence") is None or state.get("grid_token") is None:
+        raise RuntimeError("The request/dataBound observer was not installed")
+    return {"request_id": state["request_sequence"], "grid_token": state["grid_token"], "bound_event": state["bound_event"]}
+
+
+def completed_read(state: dict, after_request: int = 0, after_bound: int = 0) -> bool:
+    """Require a successful grid read and its subsequent data binding."""
+    if not state.get("read_path"):
+        return False
+    reads = [request for request in state["requests"] if request["sameOrigin"] and request["path"] == state["read_path"] and request["id"] > after_request]
+    if not reads or any(not request["complete"] for request in reads):
+        return False
+    request = reads[-1]
+    if not 200 <= request["status"] < 300:
+        raise RuntimeError(f"The register read failed with HTTP {request['status']}")
+    return state["bound_event"] > max(after_bound, request["startEvent"])
+
+
+def wait_read_render(driver, wait, marker: dict | None = None, page_number: int | None = None, page_size: str | None = None) -> dict:
+    def rendered(browser):
+        state = grid_state(browser)
+        if not state or not completed_read(state, marker["request_id"] if marker else 0, marker["bound_event"] if marker else 0):
             return False
-        if previous_hash is not None and fingerprint(state["rows"]) == previous_hash:
+        if marker and state["grid_token"] != marker["grid_token"]:
+            raise RuntimeError("The grid was unexpectedly replaced during a pager request")
+        if page_size is not None and (state["page_size"] != page_size or state["model_page_size"] != int(page_size)):
             return False
-        return state
+        return ready_state(browser, state, page_number)
+
+    return wait.until(rendered)
+
+
+def ready_state(driver, state: dict, page_number: int | None = None) -> dict | bool:
+    """Accept genuine empty results only after request completion is established."""
+    if state.get("source_error"):
+        raise RuntimeError(state["source_error"])
+    if state["loading"] or not state["pager"] or not state["headers"]:
+        return False
+    expected = total_rows(driver, state)
+    if state["model_total"] != expected or state["model_rows"] != len(state["rows"]):
+        return False
+    if expected and page_number is not None and (state["selected_page"] != page_number or state["model_page"] != page_number):
+        return False
+    return state
+
+
+def wait_filter_render(driver, wait, marker: dict, form: dict, start_date: str) -> dict:
+    def rendered(browser):
+        state = grid_state(browser)
+        if not state:
+            return False
+        searches = [request for request in state["requests"] if request["sameOrigin"] and request["id"] > marker["request_id"] and request["path"] == form["path"] and request["searchQueryId"] == form["search_query_id"]]
+        if not searches or any(not request["complete"] for request in searches):
+            return False
+        search = searches[-1]
+        if not 200 <= search["status"] < 300:
+            raise RuntimeError(f"The date-filter request failed with HTTP {search['status']}")
+        if search["fromDate"] != start_date:
+            raise RuntimeError("The search request did not submit the requested start date")
+        # The form's data-ajax-update replaces the result container. Its new
+        # grid then performs another asynchronous /Read before results exist.
+        if state["grid_token"] == marker["grid_token"] or not completed_read(state, search["id"]):
+            return False
+        return ready_state(browser, state, page_number=1)
 
     return wait.until(rendered)
 
@@ -158,9 +311,8 @@ def choose_largest_page_size(driver, wait):
     if before["page_size"] == value:
         print(f"Largest existing page size {size} already selected", flush=True)
         return
-    previous_values = before["rows"]
-    previous_hash = fingerprint(previous_values)
     expected = total_rows(driver, before)
+    marker = request_marker(before)
     # Resolve the current SELECT inside this one script: a grid rerender cannot
     # invalidate a saved WebElement between option inspection and selection.
     phase(CURRENT_SOURCE, f"page size: selecting existing option {value}")
@@ -183,7 +335,7 @@ def choose_largest_page_size(driver, wait):
         print("Existing page-size control has no usable widget; retaining the current size", flush=True)
         return
     phase(CURRENT_SOURCE, f"page size: waiting for option {value} to render rows")
-    after = wait_idle(driver, wait, page_number=1, previous_hash=previous_hash if expected > len(previous_values) else None)
+    after = wait_read_render(driver, wait, marker=marker, page_number=1, page_size=value)
     print("Page size after: " + json.dumps(state_summary(after), ensure_ascii=False), flush=True)
     if total_rows(driver, after) != expected:
         raise RuntimeError("Register total changed while selecting page size")
@@ -198,7 +350,7 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     phase(code, "waiting for the initial grid pager")
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".k-grid .k-pager-info")))
     phase(code, "waiting for the initial grid to finish rendering")
-    wait_idle(driver, wait)
+    wait_read_render(driver, wait)
 
     # Consent is optional; all functional failures below are raised.
     consent_links = driver.find_elements(By.CSS_SELECTOR, ".cc-dismiss, .cc-btn.cc-allow, a[title='Приемам']")
@@ -211,8 +363,6 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     phase(code, "reading the initial grid and locating the date filter")
     original_state = wait_idle(driver, wait)
     print("Initial grid: " + json.dumps(state_summary(original_state), ensure_ascii=False), flush=True)
-    original_fingerprint = fingerprint(original_state["rows"])
-    original_total = total_rows(driver, original_state)
     form_selector = f'#{info["form_id"]}'
     date_selector = (By.CSS_SELECTOR, f'{form_selector} input[name="FromDate"]')
     if not driver.find_elements(*date_selector):
@@ -223,28 +373,19 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     date_field.send_keys(start_date)
     date_field.send_keys(Keys.TAB)
     search = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, f'{form_selector} input[type="submit"]')))
+    form = driver.execute_script("""
+        const form = document.querySelector(arguments[0]);
+        if (!form || form.getAttribute('data-ajax') !== 'true' || !form.getAttribute('data-ajax-update')) return null;
+        const action = new URL(form.action, location.href);
+        return {path: action.pathname, search_query_id: action.searchParams.get('searchQueryId')};
+    """, form_selector)
+    if not form:
+        raise RuntimeError("The register search form no longer uses the expected AJAX replacement")
+    marker = request_marker(grid_state(driver))
     phase(code, f"submitting the date filter from {start_date}")
     search.click()
-
-    observed_loading = False
-
-    def filter_applied(browser):
-        nonlocal observed_loading
-        state = grid_state(browser)
-        if not state:
-            return False
-        if state["loading"]:
-            observed_loading = True
-            return False
-        if not state["pager"] or not state["headers"]:
-            return False
-        if observed_loading or total_rows(browser, state) != original_total or fingerprint(state["rows"]) != original_fingerprint:
-            return state
-        return False
-
-    # Do not proceed on an unchanged unfiltered grid and call it a monthly capture.
-    phase(code, "waiting for the filtered grid to complete its render")
-    filtered_state = wait.until(filter_applied)
+    phase(code, "waiting for Search completion and the new grid's Read/dataBound")
+    filtered_state = wait_filter_render(driver, wait, marker, form, start_date)
     print("Filtered grid: " + json.dumps(state_summary(filtered_state), ensure_ascii=False), flush=True)
     wait_idle(driver, wait, page_number=1)
     date_field = wait.until(EC.presence_of_element_located(date_selector))
@@ -295,9 +436,10 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
         enabled = [element for element in next_links if element.is_displayed() and element.get_attribute("aria-disabled") != "true" and not re.search(r"(?:k-state-disabled|k-disabled)", element.get_attribute("class") or "")]
         if not enabled:
             raise RuntimeError(f"Next page {page_number + 1} is absent before all rows were read")
+        marker = request_marker(state)
         enabled[-1].click()
         phase(code, f"waiting for page {page_number + 1} to finish rendering")
-        wait_idle(driver, wait, page_number=page_number + 1, previous_hash=page_hash)
+        wait_read_render(driver, wait, marker=marker, page_number=page_number + 1)
     else:
         raise RuntimeError(f"Exceeded the {max_pages}-page safety limit")
 
@@ -346,6 +488,7 @@ def main():
     phase("initialization", "starting Chrome")
     driver = webdriver.Chrome(options=options)
     driver.set_page_load_timeout(60)
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": CAPTURE_MONITOR_SCRIPT})
     codes = CORE_CODES if args.source == "all" else (args.source,)
     captures = []
     try:

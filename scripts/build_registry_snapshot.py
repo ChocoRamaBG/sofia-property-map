@@ -9,18 +9,24 @@ import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from build_seed import CADASTRAL_ID, CERTIFICATES_DEFAULT, PERMITS_DEFAULT, ROOT, VISAS_DEFAULT, source_documents
 from registry_sources import CORE_CODES, SOURCES, labelled_fields
 
 MAX_BYTES = 10 * 1024 * 1024
+MAX_LOCAL_BYTES = 64 * 1024 * 1024
+MAX_SHARD_BYTES = 1024 * 1024
+MAX_INDEX_BYTES = 4 * 1024 * 1024
+MAX_MANIFEST_BYTES = 256 * 1024
+MAX_DOCUMENTS = 60000
 KNOWN_DATES = {"building_permits": "2025-05-20", "exploitation_certificates": "2025-05-21", "projecting_visas": "2025-05-12", "exploitation_certificates_legacy": None}
 
 
-def read_json(path: Path) -> dict:
-    if path.stat().st_size > MAX_BYTES:
-        raise ValueError(f"Snapshot exceeds the hosting file limit: {path}")
+def read_json(path: Path, limit: int = MAX_BYTES) -> dict:
+    if path.stat().st_size > limit:
+        raise ValueError(f"JSON file exceeds its {limit:,}-byte limit: {path}")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError("Snapshot must be a JSON object")
@@ -33,7 +39,7 @@ def validate_snapshot(snapshot: dict) -> None:
     codes = {item.get("code") for item in snapshot["sources"]}
     if not set(CORE_CODES).issubset(codes):
         raise ValueError("Snapshot is missing a core register")
-    if len(snapshot["documents"]) > 60000:
+    if len(snapshot["documents"]) > MAX_DOCUMENTS:
         raise ValueError("Snapshot exceeds the API document limit")
     for document in snapshot["documents"]:
         if document.get("source_code") not in SOURCES or not re.fullmatch(r"[a-f0-9]{64}", document.get("document_hash", "")):
@@ -42,9 +48,90 @@ def validate_snapshot(snapshot: dict) -> None:
             raise ValueError("Invalid document fields or identifier list")
         if any(not isinstance(plot_id, str) or CADASTRAL_ID.fullmatch(plot_id) is None for plot_id in document["cadastral_ids"]):
             raise ValueError("Snapshot contains a malformed parcel identifier")
+        if len(document["cadastral_ids"]) != len(set(document["cadastral_ids"])):
+            raise ValueError("Snapshot repeats a parcel identifier within an observation")
     completion = snapshot.get("completion", {})
     if completion.get("status") != "complete" or not set(CORE_CODES).issubset(completion.get("sources", [])):
         raise ValueError("Snapshot lacks a completed core-source manifest")
+
+
+def json_bytes(value: dict) -> bytes:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def write_atomic(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name(path.name + ".pending")
+    pending.write_bytes(payload)
+    pending.replace(path)
+
+
+def write_sharded_snapshot(snapshot: dict, output: Path) -> tuple[dict, int]:
+    """Prepare immutable bounded files and an active manifest, without FTP access."""
+    validate_snapshot(snapshot)
+    if (output / "registry-active.json").exists():
+        raise ValueError("Publish output already has an active manifest; choose a fresh output directory")
+    if len(json_bytes(snapshot)) > MAX_LOCAL_BYTES:
+        raise ValueError("Reconstructed dataset exceeds the 64 MiB local processing limit")
+    snapshot_id = uuid4().hex
+    directory = output / "registry-snapshots" / snapshot_id
+    if directory.exists():
+        raise ValueError("Snapshot directory already exists; immutable files cannot be overwritten")
+    completion = snapshot["completion"]
+    index = {
+        "version": 2, "snapshot_id": snapshot_id, "generated_at": snapshot["generated_at"],
+        "sources": snapshot["sources"], "imports": snapshot.get("imports", []),
+        "completion": completion, "document_counts": {source["code"]: 0 for source in snapshot["sources"]},
+        "parcels": {},
+    }
+    shards: list[tuple[str, bytes, int]] = []
+    payload = bytearray()
+    records = 0
+    seen = set()
+    for document in sorted(snapshot["documents"], key=lambda item: (item["source_code"], item["document_hash"])):
+        identity = (document["source_code"], document["document_hash"])
+        if identity in seen:
+            raise ValueError("Snapshot contains duplicate source/document observations")
+        seen.add(identity)
+        line = json_bytes(document) + b"\n"
+        if len(line) > MAX_SHARD_BYTES:
+            raise ValueError("A register observation exceeds the 1 MiB shard limit")
+        if payload and len(payload) + len(line) > MAX_SHARD_BYTES:
+            shards.append((f"documents-{len(shards):03d}.jsonl", bytes(payload), records))
+            payload = bytearray()
+            records = 0
+        shard = f"documents-{len(shards):03d}.jsonl"
+        payload.extend(line)
+        records += 1
+        index["document_counts"][document["source_code"]] += 1
+        for parcel in sorted(set(document["cadastral_ids"])):
+            index["parcels"].setdefault(parcel, {"documents": []})["documents"].append({
+                "source_code": document["source_code"], "document_hash": document["document_hash"], "shard": shard,
+            })
+    if payload:
+        shards.append((f"documents-{len(shards):03d}.jsonl", bytes(payload), records))
+    index["parcels"] = dict(sorted(index["parcels"].items()))
+    index_payload = json_bytes(index)
+    if len(index_payload) > MAX_INDEX_BYTES:
+        raise ValueError("Parcel lookup index exceeds 4 MiB; retain the hosted snapshot and review storage")
+    manifest = {
+        "version": 2, "snapshot_id": snapshot_id, "generated_at": snapshot["generated_at"],
+        "index": {"file": "index.json", "bytes": len(index_payload), "sha256": hashlib.sha256(index_payload).hexdigest()},
+        "documents": [{"file": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "records": count} for name, data, count in shards],
+        "completion": completion,
+    }
+    manifest_payload = json_bytes(manifest)
+    if len(manifest_payload) > MAX_MANIFEST_BYTES:
+        raise ValueError("Active snapshot manifest exceeds 256 KiB")
+    # Validate all bounds before creating any publishable local files. The active
+    # manifest is written last, so an interrupted build lacks a completed pointer.
+    total_bytes = len(index_payload) + len(manifest_payload)
+    for name, data, _ in shards:
+        write_atomic(directory / name, data)
+        total_bytes += len(data)
+    write_atomic(directory / "index.json", index_payload)
+    write_atomic(output / "registry-active.json", manifest_payload)
+    return manifest, total_bytes
 
 
 def snapshot_date(code: str, filename: str) -> str | None:
@@ -168,6 +255,7 @@ def main():
     parser.add_argument("--previous", type=Path)
     parser.add_argument("--capture", type=Path)
     parser.add_argument("--choose-start-date", action="store_true")
+    parser.add_argument("--format", choices=("v1", "sharded"), default="v1", help="Sharded output is a directory containing a version-2 active manifest and bounded immutable files")
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parents[1] / "seed" / "deploy" / "registry-data.json")
     parser.add_argument("--permits", type=Path, default=PERMITS_DEFAULT)
     parser.add_argument("--certificates", type=Path, default=CERTIFICATES_DEFAULT)
@@ -178,23 +266,24 @@ def main():
     if args.choose_start_date:
         if not args.previous:
             parser.error("--choose-start-date requires --previous")
-        print(choose_start_date(read_json(args.previous)))
+        print(choose_start_date(read_json(args.previous, MAX_LOCAL_BYTES)))
         return
     if args.bootstrap:
         result = bootstrap(args)
     elif args.previous and args.capture:
-        result = merge(read_json(args.previous), args.capture)
+        result = merge(read_json(args.previous, MAX_LOCAL_BYTES), args.capture)
     else:
         parser.error("Use --bootstrap or provide --previous and --capture")
     validate_snapshot(result)
-    payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if len(payload) > MAX_BYTES:
-        raise ValueError("Merged snapshot exceeds 10 MiB; retain the current hosted version and review storage")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    pending = args.output.with_suffix(".json.pending")
-    pending.write_bytes(payload)
-    pending.replace(args.output)
-    print(f"Snapshot: {len(result['documents'])} documents, {len(payload):,} bytes; {args.output}")
+    payload = json_bytes(result)
+    if args.format == "sharded":
+        manifest, total_bytes = write_sharded_snapshot(result, args.output)
+        print(f"Snapshot v2: {len(result['documents'])} documents, {len(manifest['documents'])} shards, {total_bytes:,} bytes; {args.output}")
+    elif len(payload) > MAX_BYTES:
+        raise ValueError("Single-file snapshot exceeds 10 MiB; use --format sharded instead")
+    else:
+        write_atomic(args.output, payload)
+        print(f"Snapshot v1: {len(result['documents'])} documents, {len(payload):,} bytes; {args.output}")
     for code in SOURCES:
         docs = [item for item in result["documents"] if item["source_code"] == code]
         ids = {plot for item in docs for plot in item["cadastral_ids"]}

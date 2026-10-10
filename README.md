@@ -13,9 +13,11 @@ An InfinityFree-compatible React + PHP + MySQL website for looking up cadastral 
 
 ## Data storage
 
-MySQL stores the coordinate points and original imported records. The API reads newer register observations from htdocs/private/registry-data.json when a valid, complete snapshot is present. The private directory's .htaccess prevents public downloads. GitHub publishes only this prepared dataset; it does not connect to InfinityFree MySQL or invoke a hosted import/cron URL.
+MySQL stores the coordinate points and original imported records. The API prefers htdocs/private/registry-active.json, a small manifest pointing to a complete immutable snapshot under htdocs/private/registry-snapshots/<snapshot_id>/. If the active manifest is absent, the API continues to support the original htdocs/private/registry-data.json format. An invalid active manifest stops the request; it is not silently replaced with older evidence. The private directory's .htaccess prevents public downloads. GitHub publishes prepared files; it does not connect to InfinityFree MySQL or invoke a hosted import/cron URL.
 
-The snapshot retains all 335 unique records from the three initial workbooks, plus 2,652 legacy certificate rows with exact parcel IDs. Legacy rows without exact identifiers remain in the supplied workbook. Bootstrap output is about 3 MB and stays below the host's 10 MiB file limit.
+The snapshot retains all 335 unique records from the three initial workbooks, plus 2,652 legacy certificate rows with exact parcel IDs. Legacy rows without exact identifiers remain in the supplied workbook. Bootstrap output is about 3 MB and remains supported as a single file. Monthly publication uses version 2 so accumulated observations do not need to fit in one hosted file.
+
+Version-2 snapshots have a manifest of at most 256 KiB, a parcel lookup index of at most 4 MiB, and JSONL document shards of at most 1 MiB each. Their maximum document count is 60,000. Local reconstruction and merge processing have a separate 64 MiB limit; this larger local file is never uploaded to the host. Reaching any index, shard, manifest, document-count or local processing limit stops publication and preserves the currently hosted snapshot. Capacity depends on record size and the number of exact parcel links, as well as document count.
 
 ## Local development
 
@@ -79,9 +81,10 @@ Upload that file into the protected private directory. The monthly workflow then
 2. Selects a date window with at least 90 days of overlap, extending back to the oldest core-source capture minus 30 days when a run was missed or the initial workbooks are old.
 3. Runs the supplied Selenium parser approach for permits, certificates, and design visas in headless Chrome. It reads visible official headings and cells, selects the largest existing numeric page-size option when available, checks the filter and pagination, and requires the captured count to equal a stable register total. Repeated individual rows stop the capture for inspection.
 4. Merges every completed capture with earlier observations. It retains legacy evidence and changed versions of a record.
-5. Uploads a temporary private JSON file, reads it back, verifies SHA-256, saves the previous snapshot privately, and replaces the live file with an atomic rename.
+5. Builds a new immutable snapshot directory with bounded index and document files. The publisher validates every parcel reference against the corresponding document and verifies every uploaded file's byte count and SHA-256 by downloading it again.
+6. Checks that the hosted pointer still matches the one fetched at the beginning, backs up the previous pointer privately, and replaces the active manifest by atomic rename. During the first version-2 publication, the original single-file snapshot stays in place as a fallback. Older immutable snapshot directories are retained for recovery; this workflow does not delete them.
 
-Partial runs, unexpected headings, repeated rows or pages, changing or missing totals, failed date filters, changed hosted data during a run, or files over 10 MiB stop publication. The existing hosted snapshot continues to serve users. Each fully completed source capture is retained as a private Actions artifact for 31 days even if a later source or merge fails. Job logs and the published dataset's completion date establish whether a run succeeded.
+Partial runs, unexpected headings, repeated rows or pages, changing or missing totals, failed date filters, changed hosted data during a run, invalid parcel references or files exceeding their format limits stop publication. The existing hosted snapshot continues to serve users. Each fully completed source capture is retained as a private Actions artifact for 31 days even if a later source or merge fails. Job logs and the published dataset's completion date establish whether a run succeeded.
 
 To run it immediately, open GitHub Actions, select **Monthly Sofia register refresh**, and choose **Run workflow**. Leave start_date blank for the gap-aware window, or enter an earlier DD.MM.YYYY date. For the initial May 2025 snapshots, the automatic window extends back to April 2025.
 
@@ -90,10 +93,16 @@ For a local refresh, provide the three FTP environment variables in the current 
     python scripts/deploy_registry_ftps.py fetch --output seed/monthly/previous.json
     python scripts/build_registry_snapshot.py --previous seed/monthly/previous.json --choose-start-date
     python scripts/scrape_registers.py --source all --start-date DD.MM.YYYY --output seed/monthly/capture
-    python scripts/build_registry_snapshot.py --previous seed/monthly/previous.json --capture seed/monthly/capture --output seed/monthly/registry-data.json
-    python scripts/deploy_registry_ftps.py publish --input seed/monthly/registry-data.json --previous seed/monthly/previous.json
+    python scripts/build_registry_snapshot.py --previous seed/monthly/previous.json --capture seed/monthly/capture --format sharded --output seed/monthly/publish
+    python scripts/deploy_registry_ftps.py publish --input seed/monthly/publish --previous seed/monthly/previous.json
 
 Use the printed date in the capture command. Set NAG_HEADLESS=0 for a visible local Chrome window. The three original Python entry points in the sibling parser folders delegate to the shared parser and write completed JSON captures into their exports folders. The historical archive parser is not scheduled; its linked workbook observations are retained in every merge.
+
+The fetch command automatically prefers the active version-2 manifest. It validates and reconstructs its observations as a local version-1 JSON file for the existing merge logic. It also writes previous.json.fetch-meta.json beside previous.json. This sidecar records the original hosted manifest or fallback file's path, byte count and SHA-256, plus the reconstructed local file's SHA-256. Keep both files together until publication; comparing the reconstructed JSON to a hosted manifest would otherwise give the wrong result. An existing malformed version-2 pointer fails the fetch rather than falling back.
+
+The sharded output directory contains registry-active.json and registry-snapshots/<32-character lowercase hexadecimal snapshot_id>/. Use a fresh output directory for each build; the builder refuses to replace an existing local active manifest. The manifest names index.json and documents-000.jsonl, documents-001.jsonl, and subsequent shards. Each shard line is a complete observation; the index maps exact parcel IDs to their source, document hash and shard. Only validated relative names are accepted. FTP writes are restricted to these immutable private files, the active pointer and its temporary/previous copies. The private .htaccess is checked before either fetching or publishing. A failed upload can leave an inactive snapshot directory; rebuild to get a fresh snapshot ID instead of overwriting its contents.
+
+For compatibility before version 2 is active, --format v1 still writes the original JSON format and publish --input path/to/registry-data.json still accepts it when it is at most 10 MiB. Once an active version-2 snapshot exists, publication requires a sharded directory. To recover the immediately previous version-2 snapshot, restore the verified private registry-active.previous.json as registry-active.json through the hosting file manager or FTPS. During the first migration, removing the new active pointer reactivates the untouched original registry-data.json. Retain the protected immutable directory referenced by any pointer you may restore.
 
 ## Build and upload to InfinityFree
 
