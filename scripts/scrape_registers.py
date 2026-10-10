@@ -18,12 +18,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from selenium import webdriver
-from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import Select
 
 from registry_sources import CORE_CODES, SOURCES
 
@@ -32,8 +31,39 @@ def sofia_now() -> datetime:
     return datetime.now(ZoneInfo("Europe/Sofia"))
 
 
-def total_rows(driver) -> int:
-    pager = driver.find_element(By.CSS_SELECTOR, ".k-pager-info").text.strip()
+def grid_state(driver) -> dict | None:
+    """Read one coherent DOM render without holding stale WebElements."""
+    return driver.execute_script("""
+        const grid = document.querySelector('.k-grid');
+        if (!grid) return null;
+        const visible = element => {
+            const style = getComputedStyle(element);
+            return style.display !== 'none' && style.visibility !== 'hidden'
+                && style.visibility !== 'collapse' && element.getClientRects().length > 0;
+        };
+        const pager = Array.from(grid.querySelectorAll('.k-pager-info')).find(visible);
+        const selected = grid.querySelector('.k-pager-numbers .k-state-selected, .k-pager-numbers .k-selected, .k-pager-numbers [aria-current="page"]');
+        const pageText = selected ? selected.innerText.trim() : '';
+        const sizeSelect = grid.querySelector('.k-pager-sizes select');
+        return {
+            loading: Array.from(document.querySelectorAll('.k-loading-mask')).some(visible),
+            pager: pager ? pager.innerText.trim() : '',
+            selected_page: /^\\d+$/.test(pageText) ? Number(pageText) : null,
+            headers: Array.from(grid.querySelectorAll('thead tr:not(.k-filter-row) th'))
+                .filter(visible).map(cell => cell.innerText.trim().replace(/\\s+/g, ' ')),
+            rows: Array.from(grid.querySelectorAll('tbody tr[role="row"]'))
+                .filter(row => visible(row) && !/k-grouping-row|k-nodata|k-no-data/.test(row.className))
+                .map(row => Array.from(row.querySelectorAll('td')).filter(visible).map(cell => cell.innerText.trim()))
+                .filter(cells => cells.length > 0),
+            page_size: sizeSelect ? sizeSelect.value : null,
+            page_sizes: sizeSelect ? Array.from(sizeSelect.options).map(option => option.value) : []
+        };
+    """)
+
+
+def total_rows(driver, state: dict | None = None) -> int:
+    state = state if state is not None else grid_state(driver)
+    pager = state["pager"] if state else ""
     match = re.search(r"(?:от|of)\s+([\d\s\u00a0.,]+)", pager, re.IGNORECASE)
     if match:
         return int(re.sub(r"\D", "", match.group(1)))
@@ -42,63 +72,62 @@ def total_rows(driver) -> int:
     raise RuntimeError(f"Cannot establish the register total from pager: {pager!r}")
 
 
-def data_rows(driver):
-    # The existing parsers use role=row. Restrict the capture to the grid body.
-    grids = driver.find_elements(By.CSS_SELECTOR, ".k-grid tbody tr[role='row']")
-    return [row for row in grids if row.find_elements(By.CSS_SELECTOR, "td") and not re.search(r"k-grouping-row|k-nodata|k-no-data", row.get_attribute("class") or "")]
-
-
 def page_values(driver) -> list[list[str]]:
-    return [[cell.text.strip() for cell in row.find_elements(By.CSS_SELECTOR, "td") if cell.is_displayed()] for row in data_rows(driver)]
+    state = grid_state(driver)
+    return state["rows"] if state else []
 
 
 def fingerprint(values: list[list[str]]) -> str:
     return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-def wait_idle(driver, wait):
-    wait.until(lambda browser: not any(element.is_displayed() for element in browser.find_elements(By.CSS_SELECTOR, ".k-loading-mask")))
+def wait_idle(driver, wait, page_number: int | None = None, previous_hash: str | None = None) -> dict:
+    def rendered(browser):
+        state = grid_state(browser)
+        if not state or state["loading"] or not state["pager"] or not state["headers"]:
+            return False
+        if page_number is not None and state["selected_page"] is not None and state["selected_page"] != page_number:
+            return False
+        if previous_hash is not None and fingerprint(state["rows"]) == previous_hash:
+            return False
+        return state
+
+    return wait.until(rendered)
 
 
 def choose_largest_page_size(driver, wait):
     """Use only an existing numeric option in the register's pager select."""
-    selects = driver.find_elements(By.CSS_SELECTOR, ".k-grid .k-pager-sizes select")
-    if not selects:
-        return
-    element = selects[0]
-    choices = []
-    for option in element.find_elements(By.TAG_NAME, "option"):
-        value = option.get_attribute("value") or ""
-        if value.isdigit() and int(value) > 0:
-            choices.append((int(value), value))
+    before = wait_idle(driver, wait, page_number=1)
+    choices = [(int(value), value) for value in before["page_sizes"] if value.isdigit() and int(value) > 0]
     if not choices:
         return
     size, value = max(choices)
-    if element.get_attribute("value") == value:
+    if before["page_size"] == value:
         return
-    previous_values = page_values(driver)
+    previous_values = before["rows"]
     previous_hash = fingerprint(previous_values)
-    expected = total_rows(driver)
-    if element.is_displayed():
-        Select(element).select_by_value(value)
-    else:
-        # Kendo decorates an existing hidden SELECT. Its documented widget API
-        # selects one of that element's actual options; no page size is invented.
-        changed = driver.execute_script("""
-            const element = arguments[0], value = arguments[1];
-            if (!Array.from(element.options).some(option => option.value === value)) return false;
-            const widget = window.jQuery && window.jQuery(element).data('kendoDropDownList');
-            if (!widget) return false;
+    expected = total_rows(driver, before)
+    # Resolve the current SELECT inside this one script: a grid rerender cannot
+    # invalidate a saved WebElement between option inspection and selection.
+    changed = driver.execute_script("""
+        const value = arguments[0];
+        const element = document.querySelector('.k-grid .k-pager-sizes select');
+        if (!element || !Array.from(element.options).some(option => option.value === value)) return false;
+        const widget = window.jQuery && window.jQuery(element).data('kendoDropDownList');
+        if (widget) {
             widget.value(value);
             widget.trigger('change');
             return true;
-        """, element, value)
-        if not changed:
-            return
-    if expected > len(previous_values):
-        wait.until(lambda browser: fingerprint(page_values(browser)) != previous_hash)
-    wait_idle(driver, wait)
-    if total_rows(driver) != expected:
+        }
+        if (!element.getClientRects().length) return false;
+        element.value = value;
+        element.dispatchEvent(new Event('change', {bubbles: true}));
+        return true;
+    """, value)
+    if not changed:
+        return
+    after = wait_idle(driver, wait, page_number=1, previous_hash=previous_hash if expected > len(previous_values) else None)
+    if total_rows(driver, after) != expected:
         raise RuntimeError("Register total changed while selecting page size")
     print(f"Using the register's existing {size}-row page-size option", flush=True)
 
@@ -118,9 +147,9 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
             element.click()
             break
 
-    original_rows = data_rows(driver)
-    original_fingerprint = fingerprint(page_values(driver))
-    original_total = total_rows(driver)
+    original_state = wait_idle(driver, wait)
+    original_fingerprint = fingerprint(original_state["rows"])
+    original_total = total_rows(driver, original_state)
     form_selector = f'#{info["form_id"]}'
     date_selector = (By.CSS_SELECTOR, f'{form_selector} input[name="FromDate"]')
     if not driver.find_elements(*date_selector):
@@ -132,23 +161,33 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     search = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, f'{form_selector} input[type="submit"]')))
     search.click()
 
+    observed_loading = False
+
     def filter_applied(browser):
-        try:
-            stale = bool(original_rows) and not original_rows[0].is_enabled()
-        except StaleElementReferenceException:
-            stale = True
-        return stale or total_rows(browser) != original_total or fingerprint(page_values(browser)) != original_fingerprint
+        nonlocal observed_loading
+        state = grid_state(browser)
+        if not state:
+            return False
+        if state["loading"]:
+            observed_loading = True
+            return False
+        if not state["pager"] or not state["headers"]:
+            return False
+        if observed_loading or total_rows(browser, state) != original_total or fingerprint(state["rows"]) != original_fingerprint:
+            return state
+        return False
 
     # Do not proceed on an unchanged unfiltered grid and call it a monthly capture.
     wait.until(filter_applied)
-    wait_idle(driver, wait)
+    wait_idle(driver, wait, page_number=1)
     date_field = wait.until(EC.presence_of_element_located(date_selector))
     if date_field.get_attribute("value") != start_date:
         raise RuntimeError("The register did not retain the requested start date")
 
     choose_largest_page_size(driver, wait)
-    expected = total_rows(driver)
-    headers = [" ".join(cell.text.split()) for cell in driver.find_elements(By.CSS_SELECTOR, ".k-grid thead tr:not(.k-filter-row) th") if cell.is_displayed()]
+    first_state = wait_idle(driver, wait, page_number=1)
+    expected = total_rows(driver, first_state)
+    headers = first_state["headers"]
     normalized_headers = {header.casefold() for header in headers}
     if not {header.casefold() for header in info["required_headers"]}.issubset(normalized_headers):
         raise RuntimeError(f"Required register headings changed: {headers!r}")
@@ -156,11 +195,11 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
     seen_pages = set()
     seen_rows = set()
     for page_number in range(1, max_pages + 1):
-        wait_idle(driver, wait)
-        if total_rows(driver) != expected:
+        state = wait_idle(driver, wait, page_number=page_number)
+        if total_rows(driver, state) != expected:
             raise RuntimeError("Register total changed during pagination; repeat the window")
-        current = page_values(driver)
-        if total_rows(driver) != expected:
+        current = state["rows"]
+        if total_rows(driver, wait_idle(driver, wait, page_number=page_number)) != expected:
             raise RuntimeError("Register total changed while reading a page; repeat the window")
         if expected == 0:
             if current:
@@ -188,7 +227,7 @@ def read_source(driver, code: str, start_date: str, max_pages: int) -> dict:
         if not enabled:
             raise RuntimeError(f"Next page {page_number + 1} is absent before all rows were read")
         enabled[-1].click()
-        wait.until(lambda browser: fingerprint(page_values(browser)) != page_hash)
+        wait_idle(driver, wait, page_number=page_number + 1, previous_hash=page_hash)
     else:
         raise RuntimeError(f"Exceeded the {max_pages}-page safety limit")
 
