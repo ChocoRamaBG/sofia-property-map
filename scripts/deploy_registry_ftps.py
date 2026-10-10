@@ -10,21 +10,20 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
-import json
 import os
 import posixpath
 import re
 import ssl
 from collections import Counter
-from datetime import datetime
 from ftplib import FTP_TLS, error_perm
 from pathlib import Path
 from uuid import uuid4
 
 from build_registry_snapshot import (
-    CADASTRAL_ID, CORE_CODES, MAX_BYTES, MAX_DOCUMENTS, MAX_INDEX_BYTES,
-    MAX_LOCAL_BYTES, MAX_MANIFEST_BYTES, MAX_SHARD_BYTES, SOURCES,
-    json_bytes, validate_snapshot, write_atomic,
+    CADASTRAL_ID, MAX_BYTES, MAX_DOCUMENTS, MAX_INDEX_BYTES, MAX_INDEX_PARCELS,
+    MAX_LOCAL_BYTES, MAX_MANIFEST_BYTES, MAX_SHARD_BYTES,
+    json_bytes, parse_json, timestamp_valid, validate_completion, validate_document,
+    validate_imports, validate_snapshot, validate_sources, write_atomic,
 )
 
 PRIVATE = "/htdocs/private"
@@ -42,6 +41,10 @@ def digest(payload: bytes) -> str:
 
 def integer(value, minimum: int, maximum: int) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and minimum <= value <= maximum
+
+
+def matches(pattern, value) -> bool:
+    return isinstance(value, str) and pattern.fullmatch(value) is not None
 
 
 def read_remote(ftp: FTP_TLS, path: str, limit: int = MAX_BYTES) -> bytes:
@@ -65,7 +68,7 @@ def read_local(path: Path, limit: int) -> bytes:
 def check_payload(payload: bytes, limit: int = MAX_BYTES) -> dict:
     if len(payload) > limit:
         raise ValueError("Version-1 dataset exceeds its allowed byte limit")
-    snapshot = json.loads(payload.decode("utf-8"))
+    snapshot = parse_json(payload.decode("utf-8"))
     if not isinstance(snapshot, dict):
         raise ValueError("Dataset must be a JSON object")
     validate_snapshot(snapshot)
@@ -73,33 +76,34 @@ def check_payload(payload: bytes, limit: int = MAX_BYTES) -> dict:
 
 
 def completed(value) -> bool:
-    return isinstance(value, dict) and value.get("status") == "complete" and isinstance(value.get("sources"), list) and set(CORE_CODES).issubset(value["sources"])
+    try:
+        validate_completion(value)
+        return True
+    except ValueError:
+        return False
 
 
 def check_manifest(payload: bytes) -> dict:
     if len(payload) > MAX_MANIFEST_BYTES:
         raise ValueError("Active manifest exceeds 256 KiB")
-    manifest = json.loads(payload.decode("utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("version") != 2 or not HEX32.fullmatch(str(manifest.get("snapshot_id", ""))):
+    manifest = parse_json(payload.decode("utf-8"))
+    if not isinstance(manifest, dict) or type(manifest.get("version")) is not int or manifest["version"] != 2 or not matches(HEX32, manifest.get("snapshot_id")):
         raise ValueError("Invalid version-2 snapshot identity")
     if not completed(manifest.get("completion")):
         raise ValueError("Active manifest lacks a completed core-source capture")
-    if not isinstance(manifest.get("generated_at"), str) or len(manifest["generated_at"]) > 50:
+    if not timestamp_valid(manifest.get("generated_at")):
         raise ValueError("Active manifest lacks a valid generation timestamp")
-    generated = datetime.fromisoformat(manifest["generated_at"].replace("Z", "+00:00"))
-    if generated.tzinfo is None:
-        raise ValueError("Generation timestamp must include a timezone")
     index = manifest.get("index")
-    if not isinstance(index, dict) or index.get("file") != "index.json" or not integer(index.get("bytes"), 1, MAX_INDEX_BYTES) or not HEX64.fullmatch(str(index.get("sha256", ""))):
+    if not isinstance(index, dict) or index.get("file") != "index.json" or not integer(index.get("bytes"), 1, MAX_INDEX_BYTES) or not matches(HEX64, index.get("sha256")):
         raise ValueError("Invalid bounded index descriptor")
     descriptors = manifest.get("documents")
-    if not isinstance(descriptors, list) or len(descriptors) > MAX_DOCUMENTS:
+    if not isinstance(descriptors, list) or len(descriptors) > 1000:
         raise ValueError("Invalid shard descriptor list")
     names = set()
     for descriptor in descriptors:
-        if not isinstance(descriptor, dict) or not SHARD_NAME.fullmatch(str(descriptor.get("file", ""))) or descriptor["file"] in names:
+        if not isinstance(descriptor, dict) or not matches(SHARD_NAME, descriptor.get("file")) or descriptor["file"] in names:
             raise ValueError("Invalid or repeated immutable shard name")
-        if not integer(descriptor.get("bytes"), 1, MAX_SHARD_BYTES) or not integer(descriptor.get("records"), 1, MAX_DOCUMENTS) or not HEX64.fullmatch(str(descriptor.get("sha256", ""))):
+        if not integer(descriptor.get("bytes"), 1, MAX_SHARD_BYTES) or not integer(descriptor.get("records"), 1, MAX_DOCUMENTS) or not matches(HEX64, descriptor.get("sha256")):
             raise ValueError("Invalid bounded shard descriptor")
         names.add(descriptor["file"])
     if sum(item["records"] for item in descriptors) > MAX_DOCUMENTS:
@@ -120,36 +124,30 @@ def reconstruct(manifest_payload: bytes, reader, keep_payloads: bool = False) ->
     """Validate every bounded file and rebuild v1 only for local merge processing."""
     manifest = check_manifest(manifest_payload)
     index_payload = checked_file(reader, manifest["index"], MAX_INDEX_BYTES)
-    index = json.loads(index_payload.decode("utf-8"))
-    if not isinstance(index, dict) or index.get("version") != 2 or index.get("snapshot_id") != manifest["snapshot_id"] or index.get("generated_at") != manifest["generated_at"] or index.get("completion") != manifest["completion"]:
+    index = parse_json(index_payload.decode("utf-8"))
+    if not isinstance(index, dict) or type(index.get("version")) is not int or index["version"] != 2 or index.get("snapshot_id") != manifest["snapshot_id"] or index.get("generated_at") != manifest["generated_at"] or index.get("completion") != manifest["completion"]:
         raise ValueError("Index does not match the active manifest")
     sources = index.get("sources")
     imports = index.get("imports")
-    if not isinstance(sources, list) or not isinstance(imports, list):
-        raise ValueError("Index lacks source/import metadata")
-    codes = []
-    for source in sources:
-        if not isinstance(source, dict) or source.get("code") not in SOURCES:
-            raise ValueError("Index contains an unknown source")
-        codes.append(source["code"])
-    if len(codes) != len(set(codes)) or not set(CORE_CODES).issubset(codes):
-        raise ValueError("Index repeats a source or omits a core register")
+    source_map = validate_sources(sources)
+    validate_imports(imports, source_map)
+    codes = list(source_map)
     counts = index.get("document_counts")
-    if not isinstance(counts, dict) or set(counts) != set(codes) or any(not integer(value, 0, MAX_DOCUMENTS) for value in counts.values()):
+    if not isinstance(counts, dict) or set(counts) != set(codes) or any(not integer(value, 0, MAX_DOCUMENTS) for value in counts.values()) or counts.get("coordinates", 0) != 0:
         raise ValueError("Index has invalid source observation counts")
     if sum(counts.values()) != sum(item["records"] for item in manifest["documents"]):
         raise ValueError("Index and shard record counts differ")
     parcels = index.get("parcels")
-    if not isinstance(parcels, dict):
+    if not isinstance(parcels, dict) or len(parcels) > MAX_INDEX_PARCELS:
         raise ValueError("Index lacks parcel lookup entries")
     shard_names = {descriptor["file"] for descriptor in manifest["documents"]}
     expected_refs = {}
     for parcel, entry in parcels.items():
-        if not isinstance(parcel, str) or CADASTRAL_ID.fullmatch(parcel) is None or not isinstance(entry, dict) or not isinstance(entry.get("documents"), list) or not entry["documents"]:
+        if not isinstance(parcel, str) or CADASTRAL_ID.fullmatch(parcel) is None or not isinstance(entry, dict) or not isinstance(entry.get("documents"), list) or not 1 <= len(entry["documents"]) <= MAX_DOCUMENTS:
             raise ValueError("Malformed parcel lookup entry")
         refs = set()
         for ref in entry["documents"]:
-            if not isinstance(ref, dict) or ref.get("source_code") not in codes or not HEX64.fullmatch(str(ref.get("document_hash", ""))) or ref.get("shard") not in shard_names:
+            if not isinstance(ref, dict) or ref.get("source_code") not in codes or ref.get("source_code") == "coordinates" or not matches(HEX64, ref.get("document_hash")) or ref.get("shard") not in shard_names:
                 raise ValueError("Malformed parcel observation reference")
             identity = (ref["source_code"], ref["document_hash"], ref["shard"])
             if identity in refs:
@@ -171,13 +169,8 @@ def reconstruct(manifest_payload: bytes, reader, keep_payloads: bool = False) ->
         if keep_payloads:
             payloads[descriptor["file"]] = payload
         for line in lines:
-            document = json.loads(line.decode("utf-8"))
-            if not isinstance(document, dict) or document.get("source_code") not in codes or not HEX64.fullmatch(str(document.get("document_hash", ""))):
-                raise ValueError("Malformed shard observation")
-            if not isinstance(document.get("cadastral_ids"), list) or any(not isinstance(parcel, str) or CADASTRAL_ID.fullmatch(parcel) is None for parcel in document["cadastral_ids"]):
-                raise ValueError("Malformed shard parcel identifiers")
-            if len(document["cadastral_ids"]) != len(set(document["cadastral_ids"])):
-                raise ValueError("Shard observation repeats a parcel identifier")
+            document = parse_json(line.decode("utf-8"))
+            validate_document(document, source_map)
             identity = (document["source_code"], document["document_hash"])
             if identity in identities:
                 raise ValueError("Repeated source/document observation")
@@ -216,7 +209,7 @@ def hosted_state(ftp: FTP_TLS, remote: str = "auto") -> tuple[str, bytes, dict]:
 
 
 def previous_metadata(previous: Path) -> dict:
-    return json.loads(previous.with_name(previous.name + ".fetch-meta.json").read_text(encoding="utf-8"))
+    return parse_json(previous.with_name(previous.name + ".fetch-meta.json").read_text(encoding="utf-8"))
 
 
 def assert_previous(remote: str, raw: bytes, previous: Path) -> None:

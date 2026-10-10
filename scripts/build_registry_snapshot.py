@@ -6,10 +6,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from build_seed import CADASTRAL_ID, CERTIFICATES_DEFAULT, PERMITS_DEFAULT, ROOT, VISAS_DEFAULT, source_documents
@@ -21,42 +23,157 @@ MAX_SHARD_BYTES = 1024 * 1024
 MAX_INDEX_BYTES = 4 * 1024 * 1024
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_DOCUMENTS = 60000
+MAX_INDEX_PARCELS = 50000
+SOURCE_CODES = {"coordinates", *SOURCES}
 KNOWN_DATES = {"building_permits": "2025-05-20", "exploitation_certificates": "2025-05-21", "projecting_visas": "2025-05-12", "exploitation_certificates_legacy": None}
+
+
+def parse_json(payload: str | bytes):
+    """Reject JSON extensions/encoding/depth that the hosted PHP decoder rejects."""
+    def invalid_number(token):
+        raise ValueError(f"Non-standard JSON numeric constant: {token}")
+
+    value = json.loads(payload, parse_constant=invalid_number)
+
+    def inspect(item, depth=0):
+        if isinstance(item, (dict, list)):
+            if depth >= 31:
+                raise ValueError("JSON exceeds the hosted decoder's depth limit")
+            for child in (item.values() if isinstance(item, dict) else item):
+                inspect(child, depth + 1)
+            if isinstance(item, dict):
+                for key in item:
+                    key.encode("utf-8")
+        elif isinstance(item, str):
+            item.encode("utf-8")
+        elif isinstance(item, float) and not math.isfinite(item):
+            raise ValueError("JSON contains an overflowing numeric value")
+
+    inspect(value)
+    return value
 
 
 def read_json(path: Path, limit: int = MAX_BYTES) -> dict:
     if path.stat().st_size > limit:
         raise ValueError(f"JSON file exceeds its {limit:,}-byte limit: {path}")
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = parse_json(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError("Snapshot must be a JSON object")
     return value
 
 
-def validate_snapshot(snapshot: dict) -> None:
-    if snapshot.get("version") != 1 or not isinstance(snapshot.get("sources"), list) or not isinstance(snapshot.get("documents"), list):
-        raise ValueError("Unsupported registry snapshot contract")
-    codes = {item.get("code") for item in snapshot["sources"]}
-    if not set(CORE_CODES).issubset(codes):
+def string_valid(value, limit: int, nullable: bool = False) -> bool:
+    return (nullable and value is None) or (isinstance(value, str) and len(value) <= limit)
+
+
+def date_valid(value) -> bool:
+    if value is None:
+        return True
+    if not isinstance(value, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
+        return False
+    try:
+        date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
+def timestamp_valid(value, allow_sql: bool = False) -> bool:
+    if not isinstance(value, str):
+        return False
+    iso = re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})", value)
+    sql = allow_sql and re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", value)
+    if not iso and not sql:
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
+
+
+def validate_sources(rows) -> dict:
+    if not isinstance(rows, list) or len(rows) > 5:
+        raise ValueError("Registry source list is invalid")
+    sources = {}
+    for source in rows:
+        if not isinstance(source, dict) or not isinstance(source.get("code"), str) or source["code"] not in SOURCE_CODES or source["code"] in sources:
+            raise ValueError("Unknown or repeated registry source")
+        if not string_valid(source.get("label_bg"), 190) or not string_valid(source.get("label_en"), 190) or "source_url" not in source or not string_valid(source["source_url"], 500, True) or "snapshot_date" not in source or not date_valid(source["snapshot_date"]) or not string_valid(source.get("snapshot_file"), 255, True):
+            raise ValueError("Registry source metadata exceeds the API bounds")
+        url = source["source_url"]
+        legacy = source["code"] == "exploitation_certificates_legacy" and url in ("http://up.gis-sofia.bg/", "https://up.gis-sofia.bg/")
+        if url is not None and not legacy:
+            try:
+                parts = urlsplit(url)
+                port = parts.port
+                if not url.startswith("https://") or parts.scheme != "https" or parts.netloc.split("@")[-1].split(":")[0] != "nag.sofia.bg" or any(ord(char) <= 32 for char in url) or parts.username is not None or parts.password is not None or (port is not None and not 1 <= port <= 65535):
+                    raise ValueError("Registry source URL is outside the official HTTPS host")
+            except ValueError as error:
+                raise ValueError("Registry source URL is invalid") from error
+        sources[source["code"]] = source
+    if not set(CORE_CODES).issubset(sources):
         raise ValueError("Snapshot is missing a core register")
+    return sources
+
+
+def validate_completion(completion) -> None:
+    if not isinstance(completion, dict) or completion.get("status") != "complete" or not isinstance(completion.get("sources"), list):
+        raise ValueError("Snapshot lacks a completed core-source manifest")
+    if any(not isinstance(code, str) or code not in SOURCE_CODES for code in completion["sources"]) or not set(CORE_CODES).issubset(completion["sources"]):
+        raise ValueError("Completion manifest contains an unknown or missing source")
+    if not date_valid(completion.get("start_date")) or (completion.get("finished_at") is not None and not timestamp_valid(completion["finished_at"])):
+        raise ValueError("Completion manifest has an invalid date or timestamp")
+
+
+def validate_imports(rows, sources: dict) -> None:
+    if not isinstance(rows, list) or len(rows) > 10000:
+        raise ValueError("Registry import list exceeds the API bounds")
+    for item in rows:
+        if not isinstance(item, dict) or not isinstance(item.get("source_code"), str) or item["source_code"] not in sources or not string_valid(item.get("source_file"), 255, True) or not timestamp_valid(item.get("imported_at"), allow_sql=True):
+            raise ValueError("Registry import metadata is invalid")
+        count = item.get("records_loaded")
+        if not isinstance(count, int) or isinstance(count, bool) or not 0 <= count <= 9223372036854775807 or not date_valid(item.get("snapshot_date")):
+            raise ValueError("Registry import count or snapshot date is invalid")
+
+
+def validate_document(document, sources: dict) -> None:
+    if not isinstance(document, dict) or not isinstance(document.get("source_code"), str) or document["source_code"] not in sources or document["source_code"] == "coordinates" or not isinstance(document.get("document_hash"), str) or re.fullmatch(r"[a-f0-9]{64}", document["document_hash"]) is None:
+        raise ValueError("Invalid source or document hash")
+    fields = document.get("raw_fields")
+    ids = document.get("cadastral_ids")
+    if not string_valid(document.get("record_key"), 190, True) or not isinstance(fields, dict) or len(fields) > 100 or not isinstance(ids, list) or len(ids) > 10000 or not string_valid(document.get("snapshot_file"), 255, True) or not date_valid(document.get("snapshot_date")) or not date_valid(document.get("issued_at")):
+        raise ValueError("Registry observation metadata exceeds the API bounds")
+    for field, value in fields.items():
+        if not string_valid(field, 200) or (value is not None and not isinstance(value, (str, int, float, bool))) or (isinstance(value, str) and len(value.encode("utf-8")) > 500000) or (isinstance(value, float) and not math.isfinite(value)):
+            raise ValueError("Registry fields exceed the scalar/key/value API bounds")
+    if any(not isinstance(plot_id, str) or CADASTRAL_ID.fullmatch(plot_id) is None for plot_id in ids):
+        raise ValueError("Snapshot contains a malformed parcel identifier")
+    if len(ids) != len(set(ids)):
+        raise ValueError("Snapshot repeats a parcel identifier within an observation")
+
+
+def validate_snapshot(snapshot: dict) -> None:
+    if not isinstance(snapshot, dict) or type(snapshot.get("version")) is not int or snapshot["version"] != 1 or not isinstance(snapshot.get("documents"), list):
+        raise ValueError("Unsupported registry snapshot contract")
+    if not timestamp_valid(snapshot.get("generated_at")):
+        raise ValueError("Snapshot has an invalid generation timestamp")
+    sources = validate_sources(snapshot.get("sources"))
+    validate_completion(snapshot.get("completion"))
+    validate_imports(snapshot.get("imports"), sources)
     if len(snapshot["documents"]) > MAX_DOCUMENTS:
         raise ValueError("Snapshot exceeds the API document limit")
+    seen = set()
     for document in snapshot["documents"]:
-        if document.get("source_code") not in SOURCES or not re.fullmatch(r"[a-f0-9]{64}", document.get("document_hash", "")):
-            raise ValueError("Invalid source or document hash")
-        if not isinstance(document.get("raw_fields"), dict) or not isinstance(document.get("cadastral_ids"), list):
-            raise ValueError("Invalid document fields or identifier list")
-        if any(not isinstance(plot_id, str) or CADASTRAL_ID.fullmatch(plot_id) is None for plot_id in document["cadastral_ids"]):
-            raise ValueError("Snapshot contains a malformed parcel identifier")
-        if len(document["cadastral_ids"]) != len(set(document["cadastral_ids"])):
-            raise ValueError("Snapshot repeats a parcel identifier within an observation")
-    completion = snapshot.get("completion", {})
-    if completion.get("status") != "complete" or not set(CORE_CODES).issubset(completion.get("sources", [])):
-        raise ValueError("Snapshot lacks a completed core-source manifest")
+        validate_document(document, sources)
+        identity = (document["source_code"], document["document_hash"])
+        if identity in seen:
+            raise ValueError("Snapshot repeats a source/document observation")
+        seen.add(identity)
 
 
 def json_bytes(value: dict) -> bytes:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 def write_atomic(path: Path, payload: bytes) -> None:
@@ -111,6 +228,8 @@ def write_sharded_snapshot(snapshot: dict, output: Path) -> tuple[dict, int]:
     if payload:
         shards.append((f"documents-{len(shards):03d}.jsonl", bytes(payload), records))
     index["parcels"] = dict(sorted(index["parcels"].items()))
+    if len(index["parcels"]) > MAX_INDEX_PARCELS:
+        raise ValueError("Parcel lookup index exceeds the API limit of 50,000 identifiers")
     index_payload = json_bytes(index)
     if len(index_payload) > MAX_INDEX_BYTES:
         raise ValueError("Parcel lookup index exceeds 4 MiB; retain the hosted snapshot and review storage")
