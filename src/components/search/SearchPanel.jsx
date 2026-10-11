@@ -4,7 +4,7 @@ import { useI18n } from '@/lib/i18n';
 import SearchResults from '@/components/search/SearchResults';
 
 export default function SearchPanel({
-  query = '', onQueryChange, onSubmit, onClear, loading, results = [], resultQuery, onSelectResult,
+  panelRef, query = '', onQueryChange, onSubmit, onClear, loading, results = [], resultQuery, onSelectResult,
   searchTerms = [], searchMatch = 'all', onRemoveTerm, onClearTerms, onSearchMatchChange,
   resultTotal, resultMappedTotal, resultUnmappedTotal, resultsTruncated, searchError,
 }) {
@@ -13,7 +13,7 @@ export default function SearchPanel({
   const termTooLong = Array.from(query.trim()).length > 120;
   const canSubmit = !loading && query.trim().length > 0 && searchTerms.length < 8;
   return (
-    <section className="search-panel">
+    <section className="search-panel" ref={panelRef}>
       <p className="eyebrow">{t('search.eyebrow')}</p>
       <h1>{t('search.heading')}</h1>
       <p className="search-description">{t('search.description')}</p>

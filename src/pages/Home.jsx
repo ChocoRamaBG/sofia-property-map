@@ -48,6 +48,7 @@ export default function Home() {
   const [bounds, setBounds] = useState(null);
   const [map, setMap] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [canReturnToSearch, setCanReturnToSearch] = useState(false);
   const [hoveredKey, setHoveredKey] = useState(null);
   const [baseLayer, setBaseLayer] = useState('standard');
   const [query, setQuery] = useState('');
@@ -63,17 +64,81 @@ export default function Home() {
   const mapRef = useRef(null);
   mapRef.current = map;
   const filterPanel = useRef(null);
+  const searchPanel = useRef(null);
+  const sidebarScroll = useRef(null);
+  const searchReturn = useRef(null);
+  const pendingSearchReturn = useRef(null);
+  const returningToSearch = useRef(false);
   const activeCount = activeFilterCount(filters);
   const { parcels, isLoading, truncated, total, apiError, filterError } = useViewportParcels(bounds, filters);
 
   useEffect(() => { let active = true; realEstateApi.meta().then((data) => { if (active) setMeta(data); }).catch(() => {}); return () => { active = false; }; }, []);
   useEffect(() => { writePropertyFilters(filters); }, [filters]);
-  const handleSelect = useCallback((plot) => { trackEvent('property_open', { entry_point: 'map' }); setSelected(plot); setSearchOpen(false); }, []);
+  const rememberSearchView = useCallback((plot) => {
+    pendingSearchReturn.current = null;
+    returningToSearch.current = false;
+    if (!filters.searchTerms.length) return;
+    const list = searchPanel.current?.querySelector('.search-results ul');
+    if (searchReturn.current) {
+      searchReturn.current.resultId = plot.cadastral_id;
+      if (sidebarScroll.current) searchReturn.current.scrollTop = sidebarScroll.current.scrollTop;
+      if (list) searchReturn.current.listScrollTop = list.scrollTop;
+      return;
+    }
+    const currentMap = mapRef.current;
+    currentMap?.stop();
+    const center = currentMap?.getCenter();
+    searchReturn.current = {
+      center: center ? [center.lat, center.lng] : null,
+      zoom: currentMap?.getZoom(),
+      scrollTop: sidebarScroll.current?.scrollTop || 0,
+      listScrollTop: list?.scrollTop || 0,
+      resultId: plot.cadastral_id,
+    };
+    setCanReturnToSearch(true);
+  }, [filters.searchTerms]);
+  const handleReturnToSearch = useCallback(() => {
+    const saved = searchReturn.current;
+    if (!saved) return;
+    searchReturn.current = null;
+    pendingSearchReturn.current = saved;
+    returningToSearch.current = true;
+    setCanReturnToSearch(false); setSelected(null); setHoveredKey(null);
+    if (isMobile) setSearchOpen(true);
+  }, [isMobile]);
+  const handleCloseDetails = useCallback(() => {
+    if (searchReturn.current) handleReturnToSearch();
+    else setSelected(null);
+  }, [handleReturnToSearch]);
+  useEffect(() => {
+    const saved = pendingSearchReturn.current;
+    if (!saved || selected || (isMobile && !searchOpen)) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (pendingSearchReturn.current !== saved) return;
+      pendingSearchReturn.current = null;
+      const currentMap = mapRef.current;
+      if (currentMap && saved.center && Number.isFinite(saved.zoom)) {
+        currentMap.stop();
+        currentMap.invalidateSize({ pan: false });
+        currentMap.setView(saved.center, saved.zoom, { animate: false });
+      }
+      sidebarScroll.current?.scrollTo({ top: saved.scrollTop, behavior: 'instant' });
+      const list = searchPanel.current?.querySelector('.search-results ul');
+      list?.scrollTo({ top: saved.listScrollTop, behavior: 'instant' });
+      const resultButton = Array.from(list?.querySelectorAll('[data-search-result-id]') || [])
+        .find((button) => button.dataset.searchResultId === saved.resultId);
+      (resultButton || searchPanel.current?.querySelector('input'))?.focus({ preventScroll: true });
+      if (!isMobile) returningToSearch.current = false;
+    });
+    return () => { window.cancelAnimationFrame(frame); };
+  }, [selected, isMobile, searchOpen, map]);
+  const handleSelect = useCallback((plot) => { trackEvent('property_open', { entry_point: 'map' }); rememberSearchView(plot); setSelected(plot); setSearchOpen(false); }, [rememberSearchView]);
   const handleClear = useCallback(() => { setQuery(''); }, []);
   const handleQueryChange = useCallback((value) => { setQuery(value); }, []);
   const handleFilterChange = useCallback((value) => {
     const next = normalizePropertyFilters(value);
     trackEvent('filter_change', { filter_count: activeFilterCount(next), record_type_count: next.recordTypes.length });
+    searchReturn.current = null; pendingSearchReturn.current = null; returningToSearch.current = false; setCanReturnToSearch(false);
     searchRequest.current += 1; setFilters(next); setSearchResponse(null); setSearchError(false); setSelected(null);
   }, []);
   const clearFilters = useCallback(() => handleFilterChange({}), [handleFilterChange]);
@@ -138,9 +203,10 @@ export default function Home() {
   }, [filters]);
   const handleSelectResult = useCallback((result) => {
     trackEvent('property_open', { entry_point: 'search' });
+    rememberSearchView(result);
     setSearchOpen(false); setSelected(result);
     if (map && result.lat != null && result.lng != null) map.flyTo([Number(result.lat), Number(result.lng)], 18);
-  }, [map]);
+  }, [map, rememberSearchView]);
   const handleLocate = useCallback(() => {
     if (!map || !navigator.geolocation) { toast({ title: t('map.locateError'), variant: 'destructive' }); return; }
     navigator.geolocation.getCurrentPosition((position) => { const point = { lat: position.coords.latitude, lng: position.coords.longitude }; setUserLocation(point); map.flyTo([point.lat, point.lng], 17); }, () => toast({ title: t('map.locateError'), variant: 'destructive' }));
@@ -156,7 +222,7 @@ export default function Home() {
   }, [map]);
 
   const sidebar = <>
-    <SearchPanel query={query} onQueryChange={handleQueryChange} onSubmit={handleSearch} onClear={handleClear} loading={searching}
+    <SearchPanel panelRef={searchPanel} query={query} onQueryChange={handleQueryChange} onSubmit={handleSearch} onClear={handleClear} loading={searching}
       searchTerms={filters.searchTerms} searchMatch={filters.searchMatch} onRemoveTerm={handleRemoveTerm} onClearTerms={handleClearTerms} onSearchMatchChange={handleSearchMatchChange}
       results={(searchResponse?.items || []).map((item) => ({ ...item, secondary: t('panel.linkedRecords', { n: item.document_count }) }))}
       resultQuery={filters.searchTerms.join(' · ')} resultTotal={searchResponse?.total} resultMappedTotal={searchResponse?.mapped_total} resultUnmappedTotal={searchResponse?.unmapped_total}
@@ -170,18 +236,21 @@ export default function Home() {
     <div className="map-app">
       <AppHeader /><DataNotice />
       <main className={`map-workspace ${selected ? 'has-selected' : ''}`}>
-        {!isMobile && <aside className="workspace-sidebar" aria-label={t('search.title')}>{sidebar}</aside>}
+        {!isMobile && <aside ref={sidebarScroll} className="workspace-sidebar" aria-label={t('search.title')}>{sidebar}</aside>}
         <div className="map-stage">
           <MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} userLocation={userLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} />
           {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{t('search.mobile')}<SlidersHorizontal size={16} />{activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : <button className="map-context" onClick={editFilters} aria-label={t('filter.edit')}><span className="context-dot" />{t('map.city')}<span className="map-context-divider" /><SlidersHorizontal size={13} />{activeCount ? t('filter.activeCount', { n: activeCount }) : t('filter.all')}</button>}
           <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} />
           <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={isLoading} truncated={truncated} apiError={apiError} filterError={filterError} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} />
         </div>
-        {!isMobile && selected && <aside className="workspace-details" aria-label={t('panel.title')}><DetailsPanel parcel={selected} onClose={() => setSelected(null)} /></aside>}
+        {!isMobile && selected && <aside className="workspace-details" aria-label={t('panel.title')}><DetailsPanel parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} /></aside>}
       </main>
       {isMobile && <>
-        <Sheet open={searchOpen} onOpenChange={setSearchOpen}><SheetContent side="bottom" className="mobile-sidebar-sheet overflow-y-auto p-0" aria-describedby={undefined}><SheetTitle className="sr-only">{t('search.mobile')}</SheetTitle>{sidebar}</SheetContent></Sheet>
-        <Sheet open={Boolean(selected)} onOpenChange={(open) => !open && setSelected(null)}><SheetContent side="bottom" className="mobile-details-sheet overflow-hidden p-0" aria-describedby={undefined}><SheetTitle className="sr-only">{t('panel.title')}</SheetTitle><DetailsPanel parcel={selected} onClose={() => setSelected(null)} /></SheetContent></Sheet>
+        <Sheet open={searchOpen} onOpenChange={setSearchOpen}><SheetContent ref={sidebarScroll} side="bottom" className="mobile-sidebar-sheet overflow-y-auto p-0" aria-describedby={undefined}
+          onOpenAutoFocus={(event) => { if (pendingSearchReturn.current) event.preventDefault(); }}
+          onCloseAutoFocus={(event) => { if (searchReturn.current || returningToSearch.current) event.preventDefault(); }}><SheetTitle className="sr-only">{t('search.mobile')}</SheetTitle>{sidebar}</SheetContent></Sheet>
+        <Sheet open={Boolean(selected)} onOpenChange={(open) => { if (!open) handleCloseDetails(); }}><SheetContent side="bottom" className="mobile-details-sheet overflow-hidden p-0" aria-describedby={undefined}
+          onCloseAutoFocus={(event) => { if (returningToSearch.current) { event.preventDefault(); returningToSearch.current = false; } }}><SheetTitle className="sr-only">{t('panel.title')}</SheetTitle><DetailsPanel parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} /></SheetContent></Sheet>
       </>}
     </div>
   );

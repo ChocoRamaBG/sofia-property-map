@@ -363,6 +363,10 @@ button.map-context:hover { background: white; border-color: #a8c7b1; color: #2e7
 .map-filter-callout span { display: block; font-size: 9px; margin-top: 3px; white-space: nowrap; color: #6f8f7c; }
 .workspace-details { width: 420px; flex-shrink: 0; background: #fff; border-left: 1px solid #e2e8e3; z-index: 2; min-height: 0; }
 .details-panel { height: 100%; display: flex; flex-direction: column; background: #fcfdfb; }
+.details-back-search { flex-shrink: 0; display: flex; align-items: center; gap: 9px; width: 100%; min-height: 48px; padding: 10px 22px; border-bottom: 1px solid #dce8e0; background: #f0f7f2; color: #2d6953; font-size: 12px; font-weight: 600; line-height: 1.5; text-align: left; }
+.details-back-search > svg { flex-shrink: 0; }
+.details-back-search:hover { background: #e4f1e8; color: #1c513e; }
+.details-back-search:focus-visible { outline: 2px solid #2e9276; outline-offset: -3px; }
 .details-header { display: flex; align-items: start; justify-content: space-between; gap: 8px; padding: 22px 22px 18px; border-bottom: 1px solid #e6ece5; flex-shrink: 0; background: #fff; }
 .details-header h2 { font-size: 21px; font-weight: 650; color: #203e47; letter-spacing: -.4px; margin-top: 5px; overflow-wrap: anywhere; }
 .details-coordinate-type { margin-top: 7px; display: flex; align-items: center; gap: 5px; color: #8a9994; font-size: 10px; }

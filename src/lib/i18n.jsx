@@ -225,6 +225,7 @@ const DICT = {
   'panel.title': { bg: 'Информация за имота', en: 'Plot information' },
   'panel.empty': { bg: 'Изберете кадастрална точка на картата, за да видите наличните регистрови записи и техните източници.', en: 'Select a cadastral point on the map to see available register records and their sources.' },
   'panel.close': { bg: 'Затвори', en: 'Close' },
+  'panel.backToSearch': { bg: 'Назад към търсенето', en: 'Back to search results' },
   'panel.loading': { bg: 'Зареждане на данните…', en: 'Loading data…' },
   'panel.copyId': { bg: 'Копирай идентификатора', en: 'Copy identifier' },
   'panel.coordinateMarker': { bg: 'Кадастрална точка', en: 'Cadastral point' },

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUpRight, Check, Copy, FileCheck2, FileText, Info, Link2, Loader2, MapPin, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUpRight, Check, Copy, FileCheck2, FileText, Info, Link2, Loader2, MapPin, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { displayDate, fieldLabel, fieldValue, REGISTER_COLORS } from '@/lib/registerUi';
 import { realEstateApi } from '@/api/realEstateApi';
@@ -90,7 +90,7 @@ function RegisterDocument({ source, document, lang, t }) {
   </article>;
 }
 
-export default function DetailsPanel({ parcel, onClose }) {
+export default function DetailsPanel({ parcel, onClose, onBackToSearch }) {
   const { t, lang } = useI18n();
   const [state, setState] = useState({ key: null, loading: false, data: null, error: null });
   const [copied, setCopied] = useState(false);
@@ -125,6 +125,7 @@ export default function DetailsPanel({ parcel, onClose }) {
   const navigationCodes = [...new Set([...REGISTER_GROUPS, ...sources.map((source) => source.code)])];
   return (
     <div className="details-panel">
+      {onBackToSearch && <button className="details-back-search" type="button" onClick={onBackToSearch}><ArrowLeft size={17} aria-hidden="true" /><span>{t('panel.backToSearch')}</span></button>}
       <div className="details-header">
         <div><p className="eyebrow">{t('panel.title')}</p><h2>{plot.cadastral_id}</h2><span className="details-coordinate-type"><MapPin size={12} />{locationAvailable ? t('panel.coordinateMarker') : t('panel.noCoordinate')}</span></div>
         <div className="details-header-actions"><button onClick={copyId} aria-label={t('panel.copyId')} title={copied ? t('panel.copied') : t('panel.copyId')}>{copied ? <Check size={17} className="text-emerald-700" /> : <Copy size={17} />}</button>{onClose && <button onClick={onClose} aria-label={t('panel.close')}><X size={19} /></button>}</div>
