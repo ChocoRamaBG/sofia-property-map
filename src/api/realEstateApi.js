@@ -19,6 +19,9 @@ async function request(action, params = {}, signal) {
 export const realEstateApi = {
   meta: () => request('meta'),
   viewport: (bounds, filters = {}, signal) => request('viewport', { ...bounds, ...propertyFilterParams(filters) }, signal),
-  search: (query, filters = {}) => request('search', { q: query, ...propertyFilterParams(filters) }),
+  search: (query, filters = {}, signal) => {
+    const params = propertyFilterParams(filters);
+    return request('search', { ...(!params.search_terms && query ? { q: query } : {}), ...params }, signal);
+  },
   plot: (id) => request('plot', { id }),
 };

@@ -2,9 +2,9 @@ import React, { useId, useState } from 'react';
 import { Check, ChevronDown, FileCheck2, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { REGISTER_FILTERS, REGISTER_COLORS, displayCount, displayDate } from '@/lib/registerUi';
-import { invalidFilterArea } from '@/lib/propertyFilters';
+import { activeFilterCount, invalidFilterArea } from '@/lib/propertyFilters';
 
-const EMPTY_FILTERS = { recordTypes: [], match: 'any', district: '', descriptionTag: '', dateFrom: '', dateTo: '', hasAddress: false, areaMin: '', areaMax: '', cadastreDistricts: [], cadastrePurposes: [], cadastreUses: [], cadastrePropertyTypes: [] };
+const EMPTY_FILTERS = { searchTerms: [], searchMatch: 'all', recordTypes: [], match: 'any', district: '', descriptionTag: '', dateFrom: '', dateTo: '', hasAddress: false, areaMin: '', areaMax: '', cadastreDistricts: [], cadastrePurposes: [], cadastreUses: [], cadastrePropertyTypes: [] };
 const DOCUMENT_TYPES = REGISTER_FILTERS.filter((code) => code !== 'all' && code !== 'no_records');
 const CADASTRAL_FACETS = [
   { field: 'cadastreDistricts', options: 'districts', label: 'filter.cadastreDistrict' },
@@ -63,7 +63,7 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
   const selectedTypes = filters.recordTypes.filter((code) => code !== 'no_records');
   const advancedCount = Number(Boolean(filters.district)) + Number(Boolean(filters.descriptionTag)) + Number(Boolean(filters.dateFrom || filters.dateTo)) + Number(filters.hasAddress) + scopedDateCount + Number(hasAreaRange);
   const cadastralCount = CADASTRAL_FACETS.filter(({ field }) => filters[field].length > 0).length;
-  const activeCount = filters.recordTypes.length + advancedCount + cadastralCount;
+  const activeCount = activeFilterCount(filters);
   const cadastralOptions = options?.cadastre;
   const cadastralAvailable = cadastralOptions?.available === true;
   const advancedAvailable = options?.available === true;
@@ -88,7 +88,7 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
   };
   const toggleType = (code) => {
     if (code === 'no_records') {
-      onChange({ ...EMPTY_FILTERS, recordTypes: noRecords ? [] : ['no_records'], documentDates: emptyDocumentDates(), areaMin: filters.areaMin, areaMax: filters.areaMax, ...Object.fromEntries(CADASTRAL_FACETS.map(({ field }) => [field, filters[field]])) });
+      onChange({ ...EMPTY_FILTERS, searchTerms: filters.searchTerms, searchMatch: filters.searchMatch, recordTypes: noRecords ? [] : ['no_records'], documentDates: emptyDocumentDates(), areaMin: filters.areaMin, areaMax: filters.areaMax, ...Object.fromEntries(CADASTRAL_FACETS.map(({ field }) => [field, filters[field]])) });
       return;
     }
     const next = selectedTypes.includes(code) ? selectedTypes.filter((type) => type !== code) : [...selectedTypes, code];

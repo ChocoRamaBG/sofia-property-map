@@ -1,9 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { realEstateApi } from '@/api/realEstateApi';
-import { invalidFilterArea, invalidFilterDates, propertyFilterParams } from '@/lib/propertyFilters';
+import { invalidFilterArea, invalidFilterDates, invalidFilterSearch, propertyFilterParams } from '@/lib/propertyFilters';
 
 export default function useViewportParcels(bounds, filters = {}) {
-  const filterError = invalidFilterDates(filters) ? 'filter.dateRangeError' : invalidFilterArea(filters) ? 'filter.areaRangeError' : null;
+  const filterError = invalidFilterDates(filters) ? 'filter.dateRangeError' : invalidFilterArea(filters) ? 'filter.areaRangeError' : invalidFilterSearch(filters) ? 'search.limitError' : null;
   const filterParams = propertyFilterParams(filters);
   const viewKey = bounds
     ? [bounds.north, bounds.south, bounds.east, bounds.west, bounds.zoom]

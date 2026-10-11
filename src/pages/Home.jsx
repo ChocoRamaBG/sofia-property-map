@@ -6,7 +6,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useI18n } from '@/lib/i18n';
 import { trackEvent } from '@/lib/analytics';
 import { displayCount, displayDate } from '@/lib/registerUi';
-import { activeFilterCount, invalidFilterArea, invalidFilterDates, normalizePropertyFilters, readPropertyFilters, writePropertyFilters } from '@/lib/propertyFilters';
+import { activeFilterCount, invalidFilterArea, invalidFilterDates, invalidFilterSearch, normalizePropertyFilters, readPropertyFilters, SEARCH_TERM_LIMIT, SEARCH_TERM_LENGTH_LIMIT, writePropertyFilters } from '@/lib/propertyFilters';
 import { realEstateApi } from '@/api/realEstateApi';
 import AppHeader from '@/components/AppHeader';
 import DataNotice from '@/components/DemoNotice';
@@ -51,14 +51,17 @@ export default function Home() {
   const [hoveredKey, setHoveredKey] = useState(null);
   const [baseLayer, setBaseLayer] = useState('standard');
   const [query, setQuery] = useState('');
-  const [searchedFor, setSearchedFor] = useState('');
-  const [results, setResults] = useState([]);
+  const [searchResponse, setSearchResponse] = useState(null);
+  const [searchError, setSearchError] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [filters, setFilters] = useState(readPropertyFilters);
   const [meta, setMeta] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const searchRequest = useRef(0);
+  const fitSearchResults = useRef(filters.searchTerms.length > 0);
+  const mapRef = useRef(null);
+  mapRef.current = map;
   const filterPanel = useRef(null);
   const activeCount = activeFilterCount(filters);
   const { parcels, isLoading, truncated, total, apiError, filterError } = useViewportParcels(bounds, filters);
@@ -66,38 +69,76 @@ export default function Home() {
   useEffect(() => { let active = true; realEstateApi.meta().then((data) => { if (active) setMeta(data); }).catch(() => {}); return () => { active = false; }; }, []);
   useEffect(() => { writePropertyFilters(filters); }, [filters]);
   const handleSelect = useCallback((plot) => { trackEvent('property_open', { entry_point: 'map' }); setSelected(plot); setSearchOpen(false); }, []);
-  const handleClear = useCallback(() => { searchRequest.current += 1; setQuery(''); setSearchedFor(''); setResults([]); setSearching(false); }, []);
-  const handleQueryChange = useCallback((value) => { searchRequest.current += 1; setQuery(value); setSearchedFor(''); setResults([]); setSearching(false); }, []);
+  const handleClear = useCallback(() => { setQuery(''); }, []);
+  const handleQueryChange = useCallback((value) => { setQuery(value); }, []);
   const handleFilterChange = useCallback((value) => {
     const next = normalizePropertyFilters(value);
     trackEvent('filter_change', { filter_count: activeFilterCount(next), record_type_count: next.recordTypes.length });
-    searchRequest.current += 1; setFilters(next); setSearchedFor(''); setResults([]); setSearching(false); setSelected(null);
+    searchRequest.current += 1; setFilters(next); setSearchResponse(null); setSearchError(false); setSelected(null);
   }, []);
   const clearFilters = useCallback(() => handleFilterChange({}), [handleFilterChange]);
   const editFilters = useCallback(() => {
     if (isMobile) setSearchOpen(true);
     else filterPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [isMobile]);
-  const handleSearch = useCallback(async () => {
+  const handleSearch = useCallback(() => {
     const term = query.trim();
     if (!term) return;
     if (invalidFilterDates(filters)) { toast({ title: t('filter.dateRangeError'), variant: 'destructive' }); return; }
     if (invalidFilterArea(filters)) { toast({ title: t('filter.areaRangeError'), variant: 'destructive' }); return; }
+    if (Array.from(term).length > SEARCH_TERM_LENGTH_LIMIT || filters.searchTerms.length >= SEARCH_TERM_LIMIT) {
+      toast({ title: t('search.limitError'), variant: 'destructive' }); return;
+    }
+    if (filters.searchTerms.some((value) => value.toLocaleLowerCase('bg') === term.toLocaleLowerCase('bg'))) {
+      setQuery(''); return;
+    }
     trackEvent('search_submit');
+    fitSearchResults.current = true;
+    handleFilterChange({ ...filters, searchTerms: [...filters.searchTerms, term] });
+    setQuery('');
+  }, [query, filters, handleFilterChange, t, toast]);
+  const handleRemoveTerm = useCallback((term) => {
+    fitSearchResults.current = true;
+    handleFilterChange({ ...filters, searchTerms: filters.searchTerms.filter((value) => value !== term) });
+  }, [filters, handleFilterChange]);
+  const handleClearTerms = useCallback(() => {
+    fitSearchResults.current = false;
+    handleFilterChange({ ...filters, searchTerms: [], searchMatch: 'all' });
+  }, [filters, handleFilterChange]);
+  const handleSearchMatchChange = useCallback((searchMatch) => {
+    fitSearchResults.current = true;
+    handleFilterChange({ ...filters, searchMatch });
+  }, [filters, handleFilterChange]);
+  useEffect(() => {
     const request = ++searchRequest.current;
-    setSearching(true);
-    try {
-      const response = await realEstateApi.search(term, filters);
+    if (!filters.searchTerms.length) {
+      setSearchResponse(null); setSearching(false); setSearchError(false); fitSearchResults.current = false;
+      return;
+    }
+    if (invalidFilterDates(filters) || invalidFilterArea(filters) || invalidFilterSearch(filters)) {
+      setSearchResponse(null); setSearching(false); setSearchError(true); fitSearchResults.current = false;
+      return;
+    }
+    const controller = new AbortController();
+    const shouldFit = fitSearchResults.current;
+    fitSearchResults.current = false;
+    setSearching(true); setSearchResponse(null); setSearchError(false);
+    realEstateApi.search('', filters, controller.signal).then((response) => {
       if (request !== searchRequest.current) return;
-      setResults((response.items || []).map((item) => ({ ...item, secondary: t('panel.linkedRecords', { n: item.document_count }) })));
-      setSearchedFor(term);
-    } catch (error) {
-      if (request === searchRequest.current) toast({ title: t('error.request'), description: error.message, variant: 'destructive' });
-    } finally { if (request === searchRequest.current) setSearching(false); }
-  }, [query, filters, t, toast]);
+      setSearchResponse(response);
+      const extent = response.bounds;
+      const coordinates = ['south', 'north', 'west', 'east'].map((key) => Number(extent?.[key]));
+      if (shouldFit && extent && coordinates.every(Number.isFinite) && coordinates[0] <= coordinates[1] && coordinates[2] <= coordinates[3]) {
+        mapRef.current?.fitBounds([[coordinates[0], coordinates[2]], [coordinates[1], coordinates[3]]], { padding: [48, 48], maxZoom: 17 });
+      }
+    }).catch((error) => {
+      if (request === searchRequest.current && error.name !== 'AbortError') setSearchError(true);
+    }).finally(() => { if (request === searchRequest.current) setSearching(false); });
+    return () => { controller.abort(); };
+  }, [filters]);
   const handleSelectResult = useCallback((result) => {
     trackEvent('property_open', { entry_point: 'search' });
-    setQuery(result.cadastral_id); setSearchedFor(''); setResults([]); setSearchOpen(false); setSelected(result);
+    setSearchOpen(false); setSelected(result);
     if (map && result.lat != null && result.lng != null) map.flyTo([Number(result.lat), Number(result.lng)], 18);
   }, [map]);
   const handleLocate = useCallback(() => {
@@ -115,7 +156,11 @@ export default function Home() {
   }, [map]);
 
   const sidebar = <>
-    <SearchPanel query={query} onQueryChange={handleQueryChange} onSubmit={handleSearch} onClear={handleClear} loading={searching} results={results} resultQuery={searchedFor} onSelectResult={handleSelectResult} />
+    <SearchPanel query={query} onQueryChange={handleQueryChange} onSubmit={handleSearch} onClear={handleClear} loading={searching}
+      searchTerms={filters.searchTerms} searchMatch={filters.searchMatch} onRemoveTerm={handleRemoveTerm} onClearTerms={handleClearTerms} onSearchMatchChange={handleSearchMatchChange}
+      results={(searchResponse?.items || []).map((item) => ({ ...item, secondary: t('panel.linkedRecords', { n: item.document_count }) }))}
+      resultQuery={filters.searchTerms.join(' · ')} resultTotal={searchResponse?.total} resultMappedTotal={searchResponse?.mapped_total} resultUnmappedTotal={searchResponse?.unmapped_total}
+      resultsTruncated={searchResponse?.truncated} searchError={searchError} onSelectResult={handleSelectResult} />
     <div ref={filterPanel}><RegisterFilters value={filters} onChange={handleFilterChange} counts={meta?.counts} options={meta?.filter_options} /></div>
     <div className="map-instructions"><span><MapPin size={18} /></span><div><strong>{t('map.howTitle')}</strong><p>{t('map.howHelp')}</p></div></div>
     <DatasetSummary meta={meta} />

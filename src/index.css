@@ -128,15 +128,40 @@
 .search-submit:hover { background: #24575c; }
 .search-submit:disabled { opacity: .57; cursor: default; }
 .search-hint { font-size: 10px; color: #7e8b8b; line-height: 1.6; margin-top: 9px; }
+.search-active-terms { margin-top: 13px; padding: 11px; border: 1px solid #dce8e0; border-radius: 9px; background: #f6faf7; }
+.search-terms-heading { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.search-terms-heading h2 { color: #365b50; font-size: 11px; font-weight: 600; }
+.search-term-count { color: #7e9588; font-size: 10px; font-variant-numeric: tabular-nums; }
+.search-terms-heading > button { margin-left: auto; min-height: 36px; padding: 4px 2px; font-size: 10px; line-height: 1.5; color: #39745b; text-decoration: underline; text-underline-offset: 3px; }
+.search-term-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.search-term-list > li { max-width: 100%; }
+.search-term-chip { display: flex; align-items: center; justify-content: space-between; gap: 8px; max-width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid #bdd9c9; border-radius: 7px; color: #2b6550; background: #eaf5ee; font-size: 11px; line-height: 1.5; text-align: left; }
+.search-term-chip > span { overflow-wrap: anywhere; min-width: 0; }
+.search-term-chip > svg { flex-shrink: 0; }
+.search-term-chip:hover { border-color: #8aba9f; background: #e0f0e6; }
+.search-term-limit { margin-top: 8px; color: #8b7350; font-size: 10px; line-height: 1.6; }
+.search-match { min-width: 0; margin: 13px 0 0; padding: 0; border: none; }
+.search-match > legend { color: #557361; font-size: 10px; font-weight: 550; line-height: 1.6; }
+.search-match-options { display: flex; gap: 3px; margin-top: 6px; padding: 3px; border: 1px solid #dce5dc; border-radius: 7px; background: #eff4ef; }
+.search-match-options > label { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 7px 5px; text-align: center; border-radius: 5px; cursor: pointer; color: #758c7b; font-size: 10px; line-height: 1.5; }
+.search-match-options > label.is-active { color: #245d46; background: #fff; box-shadow: 0 1px 4px #234b2e12; font-weight: 600; }
+.search-match-options input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.search-match > p, .search-map-help { color: #728679; font-size: 10px; line-height: 1.7; margin-top: 7px; }
+.search-term-chip:focus-visible, .search-terms-heading > button:focus-visible, .search-match-options > label:focus-within, .search-submit:focus-visible, .search-input-wrap button:focus-visible { outline: 2px solid #2e9276; outline-offset: 2px; }
 .search-results { margin-top: 16px; border-top: 1px solid #edf0ed; }
-.search-results-title { display: flex; justify-content: space-between; padding: 12px 0 8px; font-size: 10px; color: #7a8a8b; }
+.search-results-title { display: flex; justify-content: space-between; gap: 8px; padding: 12px 0 8px; font-size: 10px; color: #7a8a8b; }
 .search-results-title > span:first-child { color: #2f4c51; font-weight: 600; }
+.search-preview-note { margin: 0 0 7px; color: #7b8e83; font-size: 10px; line-height: 1.6; }
+.search-status { display: flex; align-items: center; gap: 7px; padding: 5px 0; color: #587d6b; font-size: 11px; line-height: 1.6; }
+.search-status > svg { flex-shrink: 0; }
+.search-error { color: #a25f47; }
 .search-results ul { max-height: 225px; overflow-y: auto; margin: 0 -8px; }
 .search-results li > button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 8px; border-radius: 7px; text-align: left; }
 .search-results li > button:hover { background: #f0f6f2; }
 .result-icon { display: grid; place-items: center; width: 30px; height: 32px; flex-shrink: 0; background: #f0f4f0; border-radius: 7px; }
 .search-results strong { display: block; font-size: 12px; color: #28464c; font-weight: 650; }
 .search-results small { display: block; margin-top: 3px; font-size: 10px; color: #718486; }
+.search-results .search-result-unmapped { color: #92774d; }
 .search-empty { font-size: 11px; line-height: 1.5; color: #778486; padding: 5px 0; }
 .register-filters { padding: 19px 18px 20px; }
 .section-heading { display: flex; align-items: center; gap: 8px; padding: 0 5px; color: #26494d; }

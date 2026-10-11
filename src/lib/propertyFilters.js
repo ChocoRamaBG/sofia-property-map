@@ -1,4 +1,6 @@
 export const DOCUMENT_FILTERS = ['exploitation_certificates', 'building_permits', 'projecting_visas', 'no_records'];
+export const SEARCH_TERM_LIMIT = 8;
+export const SEARCH_TERM_LENGTH_LIMIT = 120;
 export const DOCUMENT_DATE_FILTERS = {
   building_permits: 'permits',
   projecting_visas: 'visas',
@@ -17,7 +19,7 @@ const CADASTRE_KEY_PATTERNS = {
   cadastrePropertyTypes: /^property-[a-f0-9]{16}$/,
 };
 const DESCRIPTION_TAGS = ['housing', 'business', 'infrastructure', 'public', 'parking'];
-const FILTER_QUERY_KEYS = ['record_type', 'record_types', 'match', 'district', 'date_from', 'date_to', 'has_address', 'description_tag', 'area_min_m2', 'area_max_m2',
+const FILTER_QUERY_KEYS = ['record_type', 'record_types', 'match', 'district', 'date_from', 'date_to', 'has_address', 'description_tag', 'area_min_m2', 'area_max_m2', 'search_terms', 'search_match',
   ...Object.values(CADASTRE_FILTERS),
   ...Object.values(DOCUMENT_DATE_FILTERS).flatMap((prefix) => [prefix + '_date_from', prefix + '_date_to'])];
 
@@ -25,6 +27,17 @@ function validDate(input) {
   if (typeof input !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input) || input.slice(0, 4) === '0000') return '';
   const parsed = new Date(input + 'T00:00:00Z');
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === input ? input : '';
+}
+
+export function normalizeSearchTerms(value) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : []).filter((term) => {
+    if (typeof term !== 'string' || !term.trim()) return false;
+    const key = term.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).map((term) => term.trim());
 }
 
 export function normalizePropertyFilters(value = {}) {
@@ -38,6 +51,8 @@ export function normalizePropertyFilters(value = {}) {
   // A period always requires a document of its named type.
   const requiredTypes = Object.keys(documentDates).filter((type) => documentDates[type].from || documentDates[type].to);
   return {
+    searchTerms: normalizeSearchTerms(value.searchTerms),
+    searchMatch: value.searchMatch === 'any' ? 'any' : 'all',
     recordTypes: noRecords ? ['no_records'] : DOCUMENT_FILTERS.filter((type) => recordTypes.includes(type) || requiredTypes.includes(type)),
     match: value.match === 'all' ? 'all' : 'any',
     district: noRecords ? '' : String(value.district || '').trim(),
@@ -57,6 +72,8 @@ export function normalizePropertyFilters(value = {}) {
 export function propertyFilterParams(value) {
   const filters = normalizePropertyFilters(value);
   return {
+    ...(filters.searchTerms.length ? { search_terms: JSON.stringify(filters.searchTerms) } : {}),
+    ...(filters.searchMatch === 'any' && filters.searchTerms.length > 1 ? { search_match: 'any' } : {}),
     ...(filters.recordTypes.length ? { record_types: filters.recordTypes.join(',') } : {}),
     ...(filters.match === 'all' && filters.recordTypes.length > 1 ? { match: 'all' } : {}),
     ...(filters.district ? { district: filters.district } : {}),
@@ -79,7 +96,13 @@ export function activeFilterCount(value) {
   return filters.recordTypes.length + Number(Boolean(filters.district)) + Number(Boolean(filters.dateFrom || filters.dateTo)) + Number(filters.hasAddress) + Number(Boolean(filters.descriptionTag))
     + Object.values(filters.documentDates).filter((range) => range.from || range.to).length
     + Number(filters.areaMin !== '' || filters.areaMax !== '')
-    + Object.keys(CADASTRE_FILTERS).filter((field) => filters[field].length).length;
+    + Object.keys(CADASTRE_FILTERS).filter((field) => filters[field].length).length
+    + filters.searchTerms.length;
+}
+
+export function invalidFilterSearch(value) {
+  const terms = normalizeSearchTerms(value?.searchTerms);
+  return terms.length > SEARCH_TERM_LIMIT || terms.some((term) => Array.from(term).length > SEARCH_TERM_LENGTH_LIMIT);
 }
 
 export function invalidFilterDates(value) {
@@ -98,7 +121,10 @@ export function invalidFilterArea(value) {
 export function readPropertyFilters() {
   const params = new URLSearchParams(window.location.search);
   const types = params.get('record_types') || params.get('record_type') || '';
+  let searchTerms = [];
+  try { searchTerms = JSON.parse(params.get('search_terms') || '[]'); } catch { /* Malformed URL data is not a submitted phrase. */ }
   return normalizePropertyFilters({
+    searchTerms, searchMatch: params.get('search_match'),
     recordTypes: types.split(','), match: params.get('match'), district: params.get('district'),
     dateFrom: params.get('date_from'), dateTo: params.get('date_to'),
     documentDates: Object.fromEntries(Object.entries(DOCUMENT_DATE_FILTERS).map(([type, prefix]) => [type, {

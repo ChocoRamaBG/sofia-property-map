@@ -15,6 +15,8 @@ An InfinityFree-compatible React + PHP + MySQL website for looking up cadastral 
 
 ## Map and search filters
 
+Submitting a search phrase adds a removable map condition. Up to eight phrases (120 Unicode characters each) can be combined with **All phrases** (the default) or **Any phrase**. Company names, addresses and other original scalar register-field values are searched case-insensitively, together with cadastral identifiers and available official cadastral district/purpose/use/property-category labels and codes. Phrases stay intact; spaces and commas do not split company names. Every matching mapped plot enters the viewport and normal cluster aggregation; the list is a forty-result preview, not the map's limit. Search totals distinguish matches with and without coordinates. Adding or removing phrases or changing their mode fits the map to all mapped matches. Draft typing does not replace submitted conditions, and opening a result retains them. Search phrases combine with the other selected filters and survive the no-linked-record choice; that choice cannot match construction-register text. Search values are kept in the shareable page URL and are never sent to analytics.
+
 Document types are independent selections. The default mode matches at least one selected type; **All selected** requires each selected type. District, a stated address and construction-description keywords can be combined with those selections. These conditions must match one original observation; in All selected mode, each document type must have a qualifying observation. The no-linked-records choice is exclusive and clears conditions that require a document.
 
 Each document type has its own issue-date period: `permits_date_from/to`, `visas_date_from/to`, and `certificates_date_from/to`. Every active period is a required condition, even in **Any selected type** mode. Its matching observation must also meet the shared district/address/description conditions. Unknown document dates cannot satisfy a period. Certificates include the retained legacy source. Metadata exposes the available dates of unique observations linked by exact cadastral IDs, rather than claiming dates for the full original register. Old shared `date_from/to` links remain supported and show a visibly removable common period; editing a new scoped period clears that old period.
@@ -154,9 +156,12 @@ The Vite output is static HTML/JS/CSS; PHP runs separately on the host for the r
 - GET api.php?action=meta
 - GET api.php?action=viewport&north=...&south=...&east=...&west=...&zoom=...
 - GET api.php?action=search&q=...
+- GET api.php?action=search&search_terms=["phrase one","phrase two"]&search_match=all
 - GET api.php?action=plot&id=...
 
 No write endpoint or public administrator screen is included.
+
+`search_terms` is a URL-encoded JSON string array, accepted by both search and viewport actions; `search_match` is `all` or `any`. Legacy search `q` remains a single-phrase shorthand when `search_terms` is absent. The search response includes the forty-item preview, `total`, `mapped_total`, `unmapped_total`, `truncated` and the complete mapped-result `bounds`. Search and viewport apply the same phrase semantics; multiple phrases can match different observations of one parcel while document-specific conditions keep their existing same-observation requirements. Reading terms streams validated registry shards and uses the cadastral TSV/facet dictionaries without downloading all cadastral details. No new snapshot migration is required; monthly publication continues supplying the same complete evidence files.
 
 ## Search indexing and optional Analytics
 

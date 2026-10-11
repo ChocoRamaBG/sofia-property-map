@@ -81,6 +81,38 @@ function cadastre_selection_params(string $key, string $pattern): array {
     return $values;
 }
 
+function keyword_search_params(): array {
+    $match = optional_filter_string('search_match', 10) ?? 'all';
+    if (!in_array($match, ['all', 'any'], true)) throw new InvalidArgumentException('Invalid search matching mode.');
+    $raw = $_GET['search_terms'] ?? null;
+    if (array_key_exists('search_terms', $_GET)) {
+        if (!is_string($raw) || strlen($raw) > 4096 || !preg_match('/^\s*\[/', $raw)) throw new InvalidArgumentException('Invalid search terms.');
+        try {
+            $terms = json_decode($raw, true, 4, JSON_THROW_ON_ERROR);
+        } catch (JsonException $error) {
+            throw new InvalidArgumentException('Invalid search terms.');
+        }
+        if (!snapshot_list($terms) || count($terms) > 8) throw new InvalidArgumentException('Choose at most eight search terms.');
+    } else {
+        // Old clients send q only to search. An explicit empty array clears it.
+        $legacy = $_GET['q'] ?? '';
+        if (!is_string($legacy) || strlen($legacy) > 4096) throw new InvalidArgumentException('Invalid search term.');
+        $terms = [$legacy];
+    }
+    $unique = [];
+    foreach ($terms as $term) {
+        if (!is_string($term) || !preg_match('//u', $term)) throw new InvalidArgumentException('Invalid search term.');
+        $term = preg_replace('/^\s+|\s+$/u', '', $term);
+        if ($term === '') continue;
+        // Count Unicode characters even when mbstring is unavailable on the host.
+        if (preg_match_all('/./us', $term) > 120) throw new InvalidArgumentException('Search terms may contain at most 120 characters.');
+        $folded = cadastre_fold_text($term);
+        if (!isset($unique[$folded])) $unique[$folded] = $term;
+    }
+    return ['search_terms' => array_values($unique), 'search_folded_terms' => array_map('strval', array_keys($unique)),
+        'search_match' => $match, 'search_active' => $unique !== []];
+}
+
 function map_filter_params(): array {
     // The legacy singleton parameter remains compatible with previously cached clients.
     $raw = optional_filter_string(array_key_exists('record_types', $_GET) ? 'record_types' : 'record_type', 200) ?? 'all';
@@ -131,7 +163,7 @@ function map_filter_params(): array {
         'has_address' => $address === '1', 'advanced' => $advanced,
         'area_min_m2' => $areaMin, 'area_max_m2' => $areaMax, 'area_active' => $areaActive,
         'cadastre_facets' => $cadastreFacets, 'cadastre_attributes_active' => $cadastreAttributesActive,
-        'cadastre_active' => $areaActive || $cadastreAttributesActive];
+        'cadastre_active' => $areaActive || $cadastreAttributesActive] + keyword_search_params();
 }
 
 function record_filter(array $filter): string {
@@ -675,7 +707,7 @@ function cadastre_fold_text(string $text): string {
     if (function_exists('mb_strtolower')) return mb_strtolower($text, 'UTF-8');
     return strtolower(strtr($text, ['А' => 'а', 'Б' => 'б', 'В' => 'в', 'Г' => 'г', 'Д' => 'д', 'Е' => 'е', 'Ж' => 'ж', 'З' => 'з', 'И' => 'и', 'Й' => 'й',
         'К' => 'к', 'Л' => 'л', 'М' => 'м', 'Н' => 'н', 'О' => 'о', 'П' => 'п', 'Р' => 'р', 'С' => 'с', 'Т' => 'т', 'У' => 'у',
-        'Ф' => 'ф', 'Х' => 'х', 'Ц' => 'ц', 'Ч' => 'ч', 'Ш' => 'ш', 'Щ' => 'щ', 'Ъ' => 'ъ', 'Ь' => 'ь', 'Ю' => 'ю', 'Я' => 'я']));
+        'Ф' => 'ф', 'Х' => 'х', 'Ц' => 'ц', 'Ч' => 'ч', 'Ш' => 'ш', 'Щ' => 'щ', 'Ъ' => 'ъ', 'Ь' => 'ь', 'Ю' => 'ю', 'Я' => 'я', 'Ѝ' => 'ѝ']));
 }
 
 function cadastre_label_known(?string $label): bool {
@@ -1137,18 +1169,26 @@ function registry_id_matches_filter(string $id, array $registry, array $filter):
     return qualifying_types_match($present, $filter);
 }
 
-function registry_document_iterator(array $registry, ?string $parcelId = null): Generator {
+function registry_document_iterator(array $registry, ?string $parcelId = null, ?array $candidateIds = null): Generator {
     if (($registry['format'] ?? 1) === 1) {
         if ($parcelId === null) {
-            foreach ($registry['documents'] as $document) yield $document;
+            foreach ($registry['documents'] as $document) {
+                if ($candidateIds !== null && !keyword_document_has_candidate($document, $candidateIds)) continue;
+                yield $document;
+            }
         } else {
             foreach ($registry['by_id'][$parcelId] ?? [] as $index) yield $registry['documents'][$index];
         }
         return;
     }
     $shardNames = [];
-    if ($parcelId === null) {
+    if ($parcelId === null && $candidateIds === null) {
         $shardNames = array_fill_keys(array_keys($registry['shards']), true);
+    } elseif ($candidateIds !== null) {
+        foreach ($registry['by_id'] as $id => $refs) {
+            if (!isset($candidateIds[$id])) continue;
+            foreach ($refs as $shardName) $shardNames[$shardName] = true;
+        }
     } else {
         foreach ($registry['by_id'][$parcelId] ?? [] as $shardName) $shardNames[$shardName] = true;
     }
@@ -1192,7 +1232,8 @@ function registry_document_iterator(array $registry, ?string $parcelId = null): 
                 $records++;
                 if ($records > $shard['records']) throw new RuntimeException('Registry shard document count is inconsistent.');
                 $sourceCounts[$document['source_code']]++;
-                if ($parcelId === null || isset($registry['by_id'][$parcelId][$key])) yield $document;
+                if (($parcelId === null || isset($registry['by_id'][$parcelId][$key]))
+                    && ($candidateIds === null || keyword_document_has_candidate($document, $candidateIds))) yield $document;
                 unset($document, $ids);
             }
             if (!feof($handle) || $records !== $shard['records'] || $bytes !== $shard['bytes']
@@ -1208,73 +1249,217 @@ function registry_document_iterator(array $registry, ?string $parcelId = null): 
     foreach ($registry['doc_refs'] as $key => $ref) {
         if (isset($shardNames[$ref[0]]) && !isset($seen[$key])) throw new RuntimeException('Registry referenced document is missing.');
     }
-    if ($parcelId === null && $sourceCounts !== $registry['document_counts']) throw new RuntimeException('Registry source document totals are inconsistent.');
+    if (count($shardNames) === count($registry['shards']) && $sourceCounts !== $registry['document_counts']) throw new RuntimeException('Registry source document totals are inconsistent.');
 }
 
-function contains_text(string $haystack, string $needle): bool {
-    return function_exists('mb_stripos') ? mb_stripos($haystack, $needle, 0, 'UTF-8') !== false : stripos($haystack, $needle) !== false;
+function keyword_document_has_candidate(array $document, array $candidateIds): bool {
+    foreach ($document['cadastral_ids'] as $id) if (isset($candidateIds[$id])) return true;
+    return false;
 }
 
-function registry_search(PDO $pdo, array $registry, string $term, array $filter, ?array $areaIds = null): array {
-    if ($filter['advanced'] && ($registry['qualified_ids'] ?? []) === []) return [];
-    if ($areaIds === []) return [];
-    // Exact parcel lookups use the validated index and the coordinate primary key;
-    // address and partial-ID searches continue through the full-text path below.
-    if (preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $term)) {
-        if (!registry_id_matches_filter($term, $registry, $filter) || ($areaIds !== null && !isset($areaIds[$term]))) return [];
-        $stmt = $pdo->prepare('SELECT cadastral_id, latitude AS lat, longitude AS lng FROM parcels WHERE cadastral_id = :id LIMIT 1');
-        $stmt->execute(['id' => $term]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row === false) {
-            if (!isset($registry['by_id'][$term])) return [];
-            $row = ['cadastral_id' => $term, 'lat' => null, 'lng' => null];
+function keyword_value_mask($value, array $terms): int {
+    if ($value === null || !is_scalar($value)) return 0;
+    $text = cadastre_fold_text(is_bool($value) ? ($value ? 'true' : 'false') : (string)$value);
+    $mask = 0;
+    foreach ($terms as $position => $term) if (strpos($text, $term) !== false) $mask |= 1 << $position;
+    return $mask;
+}
+
+function keyword_exact_ids(array $terms): array {
+    $ids = [];
+    foreach ($terms as $term) if (preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $term)) $ids[$term] = true;
+    return $ids;
+}
+
+function keyword_id_mask(string $id, array $terms): int {
+    $mask = 0;
+    foreach ($terms as $position => $term) {
+        $matches = preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $term) ? $id === $term : strpos($id, $term) !== false;
+        if ($matches) $mask |= 1 << $position;
+    }
+    return $mask;
+}
+
+function keyword_document_mask(array $rawFields, array $terms): int {
+    $mask = 0;
+    $complete = 0;
+    foreach ($terms as $position => $_) $complete |= 1 << $position;
+    // Search values individually: field names, source metadata and workbook
+    // filenames cannot create matches or join phrases across field boundaries.
+    foreach ($rawFields as $value) {
+        $mask |= keyword_value_mask($value, $terms);
+        if ($mask === $complete) break;
+    }
+    return $mask;
+}
+
+function keyword_database_masks(PDO $pdo, array $candidateIds, array $terms, array &$masks): void {
+    // The original MySQL-only installation has no sharded private snapshot.
+    // Keyset pages keep decoded fields bounded and search the same scalar values.
+    $lastCode = '';
+    $lastHash = '';
+    $documents = 0;
+    $bytes = 0;
+    $sources = array_fill_keys(registry_source_codes(), true);
+    do {
+        $stmt = $pdo->prepare('SELECT source_code, document_hash, record_key, OCTET_LENGTH(raw_fields) AS raw_bytes,
+            CASE WHEN OCTET_LENGTH(raw_fields) <= 1048576 THEN raw_fields ELSE NULL END AS raw_fields FROM source_documents
+            WHERE source_code > :last_code OR (source_code = :same_code AND document_hash > :last_hash)
+            ORDER BY source_code, document_hash LIMIT 20');
+        $stmt->execute(['last_code' => $lastCode, 'same_code' => $lastCode, 'last_hash' => $lastHash]);
+        $page = $stmt->fetchAll();
+        $stmt = null;
+        foreach ($page as $document) {
+            $lastCode = $document['source_code'];
+            $lastHash = $document['document_hash'];
+            $documents++;
+            $bytes += (int)$document['raw_bytes'];
+            if ($documents > REGISTRY_MAX_DOCUMENTS || $bytes > REGISTRY_MAX_DATASET_BYTES || !is_string($document['raw_fields'])) {
+                throw new RuntimeException('Database search exceeds its processing limit.');
+            }
+            $document['raw_fields'] = json_decode($document['raw_fields'], true, 32, JSON_THROW_ON_ERROR);
+            $document['cadastral_ids'] = [];
+            $document['snapshot_file'] = null;
+            validate_registry_document($document, $sources);
+            $mask = keyword_document_mask($document['raw_fields'], $terms);
+            if ($mask === 0) continue;
+            $links = $pdo->prepare('SELECT parcel_cadastral_id FROM parcel_documents WHERE source_code = :code AND document_hash = :hash LIMIT 10001');
+            $links->execute(['code' => $lastCode, 'hash' => $lastHash]);
+            $count = 0;
+            while (($id = $links->fetchColumn()) !== false) {
+                if (++$count > 10000 || !preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $id)) throw new RuntimeException('Database document links are invalid.');
+                if (isset($candidateIds[$id])) $masks[$id] = ($masks[$id] ?? 0) | $mask;
+            }
         }
-        $plot = registry_plot($row, $registry);
-        return [array_merge($plot, ['primary' => $plot['cadastral_id'], 'secondary' => $plot['document_count'] . ' linked register records'])];
+    } while (count($page) === 20);
+}
+
+function keyword_matching_ids(PDO $pdo, ?array $registry, ?array $cadastre, array $candidateIds, array $filter): array {
+    if (!$filter['search_active'] || $candidateIds === []) return $candidateIds;
+    $terms = $filter['search_folded_terms'];
+    $textTerms = $terms;
+    foreach ($textTerms as $position => $term) {
+        // A complete identifier navigates to its own parcel. An observation
+        // naming several IDs must not make those other parcels match that ID.
+        if (preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $term)) unset($textTerms[$position]);
     }
-    $candidateIds = [];
-    foreach ($registry['by_id'] as $id => $_) {
-        if (($areaIds === null || isset($areaIds[$id])) && registry_id_matches_filter($id, $registry, $filter) && contains_text($id, $term)) $candidateIds[$id] = true;
+    $complete = (1 << count($terms)) - 1;
+    $masks = [];
+    foreach ($candidateIds as $id => $_) {
+        $mask = keyword_id_mask($id, $terms);
+        if ($mask !== 0) $masks[$id] = $mask;
     }
-    // A property without linked records cannot match register text. Partial
-    // cadastral-ID matching still uses the coordinate query below.
-    if ($filter['record_types'] !== ['no_records']) {
-        foreach (registry_document_iterator($registry) as $document) {
-            $text = json_encode($document['raw_fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if ($text === false || !contains_text($text, $term)) continue;
-            foreach ($document['cadastral_ids'] as $id) {
-                if (($areaIds === null || isset($areaIds[$id])) && registry_id_matches_filter($id, $registry, $filter)) $candidateIds[$id] = true;
+    if ($textTerms !== [] && $cadastre !== null && $cadastre['version'] === 2) {
+        // These official label/code dictionaries are bounded by the manifest.
+        // Addresses and approval orders stay in details; do not scan 84 MB of
+        // cadastral details for every map move or claim to search their content.
+        $facetMasks = [];
+        foreach ($cadastre['facets'] as $dimension => $rows) {
+            foreach ($rows as $position => $row) {
+                $mask = keyword_value_mask($row['label_bg'], $textTerms) | keyword_value_mask($row['code'], $textTerms);
+                if ($mask !== 0) $facetMasks[$dimension][$position] = $mask;
+            }
+        }
+        if ($facetMasks !== []) {
+            // Complete the stream to verify its hash, row totals and ordinals.
+            foreach (cadastre_index_iterator($cadastre) as $entry) {
+                $id = $entry['cadastral_id'];
+                if (!isset($candidateIds[$id])) continue;
+                $mask = 0;
+                foreach ($facetMasks as $dimension => $positions) {
+                    $position = $dimension === 'districts' ? $entry['source_index'] : $entry['facet_indices'][$dimension];
+                    $mask |= $positions[$position] ?? 0;
+                }
+                if ($mask !== 0) $masks[$id] = ($masks[$id] ?? 0) | $mask;
             }
         }
     }
-    unset($document, $text);
-    // Only the first forty candidates can enter the ordered forty-result response.
-    // Avoid fetching thousands of coordinate rows for a broad register-text search.
-    $candidateIdList = array_keys($candidateIds);
-    usort($candidateIdList, static function (string $a, string $b) use ($term): int {
-        if (($a === $term) !== ($b === $term)) return $a === $term ? -1 : 1;
-        return strcmp($a, $b);
-    });
-    $candidateIds = array_fill_keys(array_slice($candidateIdList, 0, 40), true);
-    unset($candidateIdList);
-    $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $term) . '%';
-    $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng FROM parcels p WHERE p.cadastral_id LIKE :term' . registry_filter($pdo, $registry, $filter) . cadastre_area_filter($pdo, $areaIds) . ' ORDER BY (p.cadastral_id = :exact_term) DESC, p.cadastral_id LIMIT 40');
-    $stmt->execute(['term' => $like, 'exact_term' => $term]);
-    $rows = [];
-    foreach ($stmt->fetchAll() as $row) $rows[$row['cadastral_id']] = registry_plot($row, $registry);
-    if ($candidateIds !== []) {
-        foreach (array_keys($candidateIds) as $id) $rows[$id] = registry_plot(['cadastral_id' => $id, 'lat' => null, 'lng' => null], $registry);
-        $stmt = $pdo->query('SELECT cadastral_id, latitude AS lat, longitude AS lng FROM parcels WHERE cadastral_id IN (' . quoted_ids($pdo, array_keys($candidateIds)) . ')');
-        foreach ($stmt->fetchAll() as $row) $rows[$row['cadastral_id']] = registry_plot($row, $registry);
+    if ($textTerms !== [] && $filter['record_types'] !== ['no_records']) {
+        if ($registry !== null) {
+            foreach (registry_document_iterator($registry, null, $candidateIds) as $document) {
+                $mask = keyword_document_mask($document['raw_fields'], $textTerms);
+                if ($mask === 0) continue;
+                foreach ($document['cadastral_ids'] as $id) {
+                    if (isset($candidateIds[$id])) $masks[$id] = ($masks[$id] ?? 0) | $mask;
+                }
+            }
+        } else {
+            keyword_database_masks($pdo, $candidateIds, $textTerms, $masks);
+        }
     }
-    $rows = array_values($rows);
-    usort($rows, static function (array $a, array $b) use ($term): int {
-        if (($a['cadastral_id'] === $term) !== ($b['cadastral_id'] === $term)) return $a['cadastral_id'] === $term ? -1 : 1;
-        return strcmp($a['cadastral_id'], $b['cadastral_id']);
-    });
-    return array_map(static function (array $row): array {
-        return array_merge($row, ['primary' => $row['cadastral_id'], 'secondary' => $row['document_count'] . ' linked register records']);
-    }, array_slice($rows, 0, 40));
+    // A term can be satisfied by any observation of the parcel. Existing
+    // document and cadastral filters have already qualified the parcel itself.
+    foreach ($masks as $id => $mask) {
+        if ($filter['search_match'] === 'all' && $mask !== $complete) unset($masks[$id]);
+        else $masks[$id] = true;
+    }
+    return $masks;
+}
+
+function matching_plot_ids(PDO $pdo, ?array $registry, ?array $cadastre, array $filter, string $where, array $params, bool $includeUnmapped = false): array {
+    $exactIds = keyword_exact_ids($filter['search_terms']);
+    $exactOnly = $exactIds !== [] && ($filter['search_match'] === 'all' || count($exactIds) === count($filter['search_terms']));
+    if ($exactOnly) {
+        if ($filter['search_match'] === 'all' && count($exactIds) > 1) return [];
+        $where .= cadastre_area_filter($pdo, $exactIds);
+    }
+    $ids = cadastre_candidate_ids($pdo, $where, $params, $includeUnmapped && !$exactOnly ? $registry : null, $includeUnmapped && !$exactOnly ? $filter : null);
+    if ($includeUnmapped && $exactOnly && $registry !== null) {
+        foreach ($exactIds as $id => $_) {
+            if (isset($registry['by_id'][$id]) && registry_id_matches_filter($id, $registry, $filter)) $ids[$id] = true;
+        }
+    }
+    if ($filter['cadastre_active']) $ids = cadastre_matching_ids($cadastre, $ids, $filter);
+    return keyword_matching_ids($pdo, $registry, $cadastre, $ids, $filter);
+}
+
+function keyword_search_response(PDO $pdo, ?array $registry, array $ids, array $filter): array {
+    $empty = ['items' => [], 'total' => 0, 'mapped_total' => 0, 'unmapped_total' => 0, 'truncated' => false, 'bounds' => null];
+    if ($ids === []) return $empty;
+    $where = '1 = 1' . cadastre_area_filter($pdo, $ids);
+    $mappedWhere = $where . ' AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL';
+    $summary = $pdo->query('SELECT COUNT(*) AS total, MIN(p.latitude) AS south, MAX(p.latitude) AS north,
+        MIN(p.longitude) AS west, MAX(p.longitude) AS east FROM parcels p WHERE ' . $mappedWhere)->fetch();
+    $mappedTotal = (int)$summary['total'];
+    $exactIds = [];
+    foreach ($filter['search_terms'] as $term) {
+        if (preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $term) && isset($ids[$term])) $exactIds[$term] = true;
+    }
+    $order = $exactIds === [] ? '' : '(p.cadastral_id IN (' . quoted_ids($pdo, array_keys($exactIds)) . ')) DESC, ';
+    $rows = [];
+    $stmt = $pdo->query('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng'
+        . ($registry === null ? ', ' . document_flags_select() : '') . ' FROM parcels p '
+        . ($registry === null ? document_flags_join() : '') . ' WHERE ' . $mappedWhere . ' ORDER BY ' . $order . 'p.cadastral_id LIMIT 40');
+    foreach ($stmt->fetchAll() as $row) $rows[$row['cadastral_id']] = $registry !== null ? registry_plot($row, $registry) : serialize_plot($row);
+    // Preserve discoverability of exact linked IDs without a coordinate point.
+    foreach ($exactIds as $id => $_) {
+        if (!isset($rows[$id])) $rows = [$id => $registry !== null ? registry_plot(['cadastral_id' => $id, 'lat' => null, 'lng' => null], $registry)
+            : serialize_plot(['cadastral_id' => $id, 'lat' => null, 'lng' => null] + empty_document_flags())] + $rows;
+    }
+    if ($mappedTotal < 40 && count($rows) < 40) {
+        $remaining = array_keys(array_diff_key($ids, $rows));
+        sort($remaining, SORT_STRING);
+        foreach (array_slice($remaining, 0, 40 - count($rows)) as $id) {
+            $rows[$id] = $registry !== null ? registry_plot(['cadastral_id' => $id, 'lat' => null, 'lng' => null], $registry)
+                : serialize_plot(['cadastral_id' => $id, 'lat' => null, 'lng' => null] + empty_document_flags());
+        }
+    }
+    if ($registry === null) {
+        foreach ($rows as $row) {
+            if ($row['lat'] !== null && $row['lng'] !== null) continue;
+            $stmt = $pdo->query('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng, ' . document_flags_select()
+                . ' FROM parcels p ' . document_flags_join() . ' WHERE p.cadastral_id IN (' . quoted_ids($pdo, array_keys($rows)) . ')');
+            foreach ($stmt->fetchAll() as $databaseRow) $rows[$databaseRow['cadastral_id']] = serialize_plot($databaseRow);
+            break;
+        }
+    }
+    $items = array_map(static function (array $row): array {
+        return $row + ['primary' => $row['cadastral_id'], 'secondary' => $row['document_count'] . ' linked register records'];
+    }, array_slice(array_values($rows), 0, 40));
+    return ['items' => $items, 'total' => count($ids), 'mapped_total' => $mappedTotal,
+        'unmapped_total' => count($ids) - $mappedTotal, 'truncated' => count($ids) > count($items),
+        'bounds' => $mappedTotal === 0 ? null : ['south' => (float)$summary['south'], 'north' => (float)$summary['north'],
+            'west' => (float)$summary['west'], 'east' => (float)$summary['east']]];
 }
 
 function registry_plot_sources(string $id, array $registry): array {
@@ -1363,12 +1548,10 @@ try {
         $where = 'p.latitude BETWEEN :south AND :north AND p.longitude BETWEEN :west AND :east'
             . ($registry !== null ? registry_filter($pdo, $registry, $filter) : record_filter($filter));
         $bounds = ['south' => $south, 'north' => $north, 'west' => $west, 'east' => $east];
-        if ($filter['cadastre_active']) {
-            $candidateIds = cadastre_candidate_ids($pdo, $where, $bounds);
-            $areaIds = cadastre_matching_ids($cadastre, $candidateIds, $filter);
-            unset($candidateIds);
-            $where .= cadastre_area_filter($pdo, $areaIds);
-            unset($areaIds);
+        if ($filter['cadastre_active'] || $filter['search_active']) {
+            $matchingIds = matching_plot_ids($pdo, $registry, $cadastre, $filter, $where, $bounds);
+            $where .= cadastre_area_filter($pdo, $matchingIds);
+            unset($matchingIds);
         }
         $countStmt = $pdo->prepare('SELECT COUNT(*) FROM parcels p WHERE ' . $where);
         $countStmt->execute($bounds);
@@ -1440,38 +1623,10 @@ try {
     }
 
     if ($action === 'search') {
-        $term = trim((string)($_GET['q'] ?? ''));
-        if ($term === '' || text_length($term) > 120) {
-            respond(['items' => []]);
-        }
-        $areaIds = null;
-        if ($filter['cadastre_active']) {
-            $where = '1 = 1' . ($registry !== null ? registry_filter($pdo, $registry, $filter) : record_filter($filter));
-            $candidateIds = cadastre_candidate_ids($pdo, $where, [], $registry, $filter);
-            $areaIds = cadastre_matching_ids($cadastre, $candidateIds, $filter);
-            unset($candidateIds);
-        }
-        if ($registry !== null) respond(['items' => registry_search($pdo, $registry, $term, $filter, $areaIds)]);
-        $like = '%' . str_replace(['%', '_'], ['\%', '\_'], $term) . '%';
-        $stmt = $pdo->prepare(
-            'SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng, ' . document_flags_select() . '
-             FROM parcels p ' . document_flags_join() . '
-             WHERE (p.cadastral_id LIKE :id_term
-                OR EXISTS (
-                    SELECT 1 FROM parcel_documents pd
-                    JOIN source_documents sd ON sd.source_code = pd.source_code AND sd.document_hash = pd.document_hash
-                    WHERE pd.parcel_cadastral_id = p.cadastral_id AND sd.raw_fields LIKE :raw_term
-                ))' . record_filter($filter) . cadastre_area_filter($pdo, $areaIds) . '
-             ORDER BY (p.cadastral_id = :exact_term) DESC, p.cadastral_id LIMIT 40'
-        );
-        $stmt->execute(['id_term' => $like, 'raw_term' => $like, 'exact_term' => $term]);
-        $items = array_map(static function (array $row): array {
-            return array_merge(serialize_plot($row), [
-                'primary' => $row['cadastral_id'],
-                'secondary' => ((int)$row['document_count']) . ' linked register records',
-            ]);
-        }, $stmt->fetchAll());
-        respond(['items' => $items]);
+        if (!$filter['search_active']) respond(keyword_search_response($pdo, $registry, [], $filter));
+        $where = '1 = 1' . ($registry !== null ? registry_filter($pdo, $registry, $filter) : record_filter($filter));
+        $matchingIds = matching_plot_ids($pdo, $registry, $cadastre, $filter, $where, [], true);
+        respond(keyword_search_response($pdo, $registry, $matchingIds, $filter));
     }
 
     if ($action === 'plot') {
