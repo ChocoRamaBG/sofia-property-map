@@ -28,6 +28,9 @@ from refresh_cadastre import (
 PRIVATE = "/htdocs/private"
 ACTIVE = f"{PRIVATE}/cadastre-active.json"
 SNAPSHOTS = f"{PRIVATE}/cadastre-snapshots"
+# The envelope contains parsed JSON and the exact original JSON string. Quotes
+# and escapes in that string can expand it beyond twice the pointer byte count.
+MAX_POINTER_STATE_BYTES = MAX_MANIFEST_BYTES * 4
 
 
 def pointer(ftp: FTP_TLS) -> bytes | None:
@@ -46,7 +49,7 @@ def assert_pointer(ftp: FTP_TLS, expected: bytes | None) -> None:
 
 
 def previous_state(path: Path) -> tuple[bytes | None, dict | None]:
-    state = read_json(path, MAX_MANIFEST_BYTES * 2)
+    state = read_json(path, MAX_POINTER_STATE_BYTES)
     if not isinstance(state, dict) or type(state.get("version")) is not int or state["version"] != 1 or state.get("remote") != ACTIVE or type(state.get("present")) is not bool:
         raise ValueError("Invalid previously fetched cadastral pointer state")
     if not state["present"]:
@@ -57,6 +60,8 @@ def previous_state(path: Path) -> tuple[bytes | None, dict | None]:
     if not isinstance(raw, str):
         raise ValueError("Previous pointer state lacks its exact original bytes")
     payload = raw.encode("utf-8")
+    if len(payload) > MAX_MANIFEST_BYTES:
+        raise ValueError("Previous cadastral pointer exceeds its manifest byte limit")
     manifest = check_manifest(json.loads(raw))
     if state.get("bytes") != len(payload) or state.get("sha256") != digest(payload) or state.get("manifest") != manifest:
         raise ValueError("Previously fetched cadastral state failed its hash check")
@@ -145,6 +150,8 @@ def main():
             assert_capture_continuity(earlier, candidate)
         print(f"Validated {candidate['parcel_count']:,} exact cadastral area references and all immutable detail shards")
         return
+    if candidate is not None and candidate["version"] != 2:
+        raise ValueError("Publication requires a v2 facet snapshot; upgrade a legacy v1 snapshot first")
     previous, previous_manifest = previous_state(args.previous) if args.operation == "publish" else (None, None)
     if candidate is not None:
         assert_capture_continuity(previous_manifest, candidate)
@@ -164,7 +171,10 @@ def main():
             raw = pointer(ftp)
             manifest = check_manifest(json.loads(raw.decode("utf-8"))) if raw is not None else None
             state = {"version": 1, "remote": ACTIVE, "present": raw is not None, "bytes": len(raw) if raw is not None else 0, "sha256": digest(raw) if raw is not None else None, "manifest": manifest, "raw_manifest": raw.decode("utf-8") if raw is not None else None}
-            write_new(args.output, json_bytes(state))
+            payload = json_bytes(state)
+            if len(payload) > MAX_POINTER_STATE_BYTES:
+                raise ValueError("Fetched cadastral pointer envelope exceeds its byte limit")
+            write_new(args.output, payload)
             print("Fetched verified cadastral pointer" if raw is not None else "Confirmed no cadastral snapshot is active yet")
             return
         assert_pointer(ftp, previous)

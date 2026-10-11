@@ -28,7 +28,8 @@ from uuid import uuid4
 from zipfile import ZipFile
 
 CATALOGUE_URL = "https://kais.cadastre.bg/bg/OpenData"
-REFERENCE_FORMAT = "area-source-shard-tsv-v1"
+LEGACY_REFERENCE_FORMAT = "area-source-shard-tsv-v1"
+REFERENCE_FORMAT = "area-source-shard-facets-tsv-v2"
 AREA_METHOD = "published_AREA_BGS2005_LCC"
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_INDEX_BYTES = 16 * 1024 * 1024
@@ -36,6 +37,7 @@ MAX_SHARD_BYTES = 1024 * 1024
 MAX_DATASET_BYTES = 128 * 1024 * 1024
 MAX_PARCELS = 500000
 MAX_AMBIGUOUS_PARCELS = 5000
+MAX_FACET_ENTRIES = 1000
 MAX_ZIP_BYTES = 64 * 1024 * 1024
 MAX_DBF_BYTES = 512 * 1024 * 1024
 MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
@@ -57,6 +59,11 @@ DETAIL_FIELDS = {
     "use_code": "usecode", "use": "usetype",
     "property_type_code": "propcode", "property_type": "proptype",
     "approval_act": "validate",
+}
+FACET_FIELDS = {
+    "purposes": ("purpose", "purpose_code", "purpose"),
+    "uses": ("use", "use_code", "use"),
+    "property_types": ("property_type", "property_type_code", "property"),
 }
 
 
@@ -266,8 +273,89 @@ def integer(value, low: int, high: int) -> bool:
     return type(value) is int and low <= value <= high
 
 
+def facet_identity(record: dict, group: str) -> tuple[str | None, str] | None:
+    """Unknown official values stay in details, but are not selectable facets."""
+    label_field, code_field, _ = FACET_FIELDS[group]
+    label, code = record[label_field], record[code_field]
+    if label is None:
+        return None
+    if not isinstance(label, str) or len(label) > 2000 or (code is not None and (not isinstance(code, str) or len(code) > 50)):
+        raise ValueError("Cadastral facet label or code exceeds its text bounds")
+    if not label.strip() or label.strip().casefold() == "няма данни":
+        return None
+    return code, label
+
+
+def facet_key(group: str, identity: tuple[str | None, str]) -> str:
+    # Exact labels remain distinct even if the authority reuses the same code.
+    return FACET_FIELDS[group][2] + "-" + digest(json_bytes(list(identity)))[:16]
+
+
+def source_district_label(source: dict) -> str:
+    prefix = "гр. София (68134) - "
+    if not source["label_bg"].startswith(prefix + "район "):
+        raise ValueError("Official district caption lacks its Sofia district label")
+    return source["label_bg"][len(prefix):]
+
+
+def build_facets(records, sources: list[dict]) -> tuple[dict, dict]:
+    counts = {group: Counter() for group in FACET_FIELDS}
+    districts = {}
+    for record in records:
+        source = record["source_index"]
+        label = record["district_name"]
+        if not isinstance(label, str) or label.casefold() != source_district_label(sources[source]).casefold():
+            raise ValueError("Cadastral district differs from its official source")
+        if source in districts and districts[source] != label:
+            raise ValueError("One source contains conflicting exact district labels")
+        districts[source] = label
+        for group in FACET_FIELDS:
+            identity = facet_identity(record, group)
+            if identity is not None:
+                counts[group][identity] += 1
+    facets = {"districts": [{"key": source["code"], "label_bg": districts.get(position, source_district_label(source)), "code": None, "count": source["usable_parcel_count"]} for position, source in enumerate(sources)]}
+    lookups = {}
+    for group, observed in counts.items():
+        if len(observed) > MAX_FACET_ENTRIES:
+            raise ValueError("Cadastral facet dictionary exceeds 1,000 exact code/label pairs")
+        ordered = sorted(observed, key=lambda identity: facet_key(group, identity))
+        keys = [facet_key(group, identity) for identity in ordered]
+        if len(set(keys)) != len(keys):
+            raise ValueError("Cadastral facet key hash collision requires format review")
+        facets[group] = [{"key": key, "label_bg": identity[1], "code": identity[0], "count": observed[identity]} for key, identity in zip(keys, ordered)]
+        lookups[group] = {identity: position for position, identity in enumerate(ordered)}
+    return facets, lookups
+
+
+def check_facets(manifest: dict) -> None:
+    facets = manifest.get("facets")
+    if not isinstance(facets, dict) or set(facets) != {"districts", *FACET_FIELDS}:
+        raise ValueError("Cadastral v2 manifest lacks its four facet dictionaries")
+    districts = facets["districts"]
+    if not isinstance(districts, list) or len(districts) != 24:
+        raise ValueError("Cadastral district facets must preserve all 24 source positions")
+    for position, row in enumerate(districts):
+        source = manifest["sources"][position]
+        if not isinstance(row, dict) or set(row) != {"key", "label_bg", "code", "count"} or row["key"] != source["code"] or not isinstance(row["label_bg"], str) or row["label_bg"].casefold() != source_district_label(source).casefold() or row["code"] is not None or not integer(row["count"], 0, manifest["parcel_count"]) or row["count"] != source["usable_parcel_count"]:
+            raise ValueError("Invalid cadastral district facet or usable count")
+    for group in FACET_FIELDS:
+        rows = facets[group]
+        if not isinstance(rows, list) or len(rows) > MAX_FACET_ENTRIES:
+            raise ValueError("Invalid bounded cadastral facet dictionary")
+        previous = ""
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {"key", "label_bg", "code", "count"} or not isinstance(row["label_bg"], str) or not row["label_bg"].strip() or len(row["label_bg"]) > 2000 or row["label_bg"].strip().casefold() == "няма данни" or (row["code"] is not None and (not isinstance(row["code"], str) or len(row["code"]) > 50)) or not integer(row["count"], 1, manifest["parcel_count"]):
+                raise ValueError("Invalid cadastral facet label, code or usable count")
+            key = facet_key(group, (row["code"], row["label_bg"]))
+            if row["key"] != key or key <= previous:
+                raise ValueError("Cadastral facets must have sorted unique exact code/label keys")
+            previous = key
+        if sum(row["count"] for row in rows) > manifest["parcel_count"]:
+            raise ValueError("Cadastral facet counts exceed usable unambiguous parcels")
+
+
 def check_manifest(value: dict) -> dict:
-    if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1 or not isinstance(value.get("snapshot_id"), str) or HEX32.fullmatch(value["snapshot_id"]) is None or not timestamp_valid(value.get("generated_at")) or value.get("reference_format") != REFERENCE_FORMAT or value.get("area_unit") != "m2" or value.get("area_method") != AREA_METHOD:
+    if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] not in (1, 2) or not isinstance(value.get("snapshot_id"), str) or HEX32.fullmatch(value["snapshot_id"]) is None or not timestamp_valid(value.get("generated_at")) or value.get("reference_format") != (REFERENCE_FORMAT if value["version"] == 2 else LEGACY_REFERENCE_FORMAT) or value.get("area_unit") != "m2" or value.get("area_method") != AREA_METHOD:
         raise ValueError("Invalid cadastral snapshot identity or area method")
     completion = value.get("completion")
     if not isinstance(completion, dict) or completion.get("status") != "complete" or completion.get("district_count") != 24 or not isinstance(completion.get("catalogue_sha256"), str) or HEX64.fullmatch(completion["catalogue_sha256"]) is None:
@@ -319,6 +407,8 @@ def check_manifest(value: dict) -> dict:
             raise ValueError("Invalid cadastral shard order or row count")
     if sum(row["records"] for row in shards) != value["parcel_count"] or sum(row["bytes"] for row in shards) + value["index"]["bytes"] + (conflict_descriptor["bytes"] if conflict_descriptor else 0) > MAX_DATASET_BYTES:
         raise ValueError("Cadastral snapshot exceeds or disagrees with its format bounds")
+    if value["version"] == 2:
+        check_facets(value)
     return value
 
 
@@ -333,22 +423,38 @@ def validate_publish_tree(root: Path) -> dict:
             raise ValueError("Cadastral file failed its byte count or SHA-256 check")
         return path
     refs, source_counts = {}, Counter()
+    v2 = manifest["version"] == 2
+    facet_counts = {group: Counter() for group in FACET_FIELDS}
     previous = ""
     with checked_path(manifest["index"]).open("r", encoding="ascii", newline="") as handle:
         for line in handle:
-            if not line.endswith("\n") or "\r" in line or len(line) > 120:
+            if not line.endswith("\n") or "\r" in line or len(line) > (160 if v2 else 120):
                 raise ValueError("Malformed cadastral TSV line")
             cells = line[:-1].split("\t")
-            if len(cells) != 4 or CADASTRAL_ID.fullmatch(cells[0]) is None or cells[0] <= previous or AREA_DECIMAL.fullmatch(cells[1]) is None or not cells[2].isdigit() or not cells[3].isdigit():
+            if len(cells) != (7 if v2 else 4) or CADASTRAL_ID.fullmatch(cells[0]) is None or cells[0] <= previous or AREA_DECIMAL.fullmatch(cells[1]) is None or not cells[2].isdigit() or not cells[3].isdigit():
                 raise ValueError("Cadastral TSV is not sorted, unique and correctly typed")
             area, source, shard = Decimal(cells[1]), int(cells[2]), int(cells[3])
             if not 0 < area <= MAX_AREA or not 0 <= source < 24 or not 0 <= shard < len(manifest["records"]):
                 raise ValueError("Cadastral TSV area or file reference is invalid")
+            facet_indices = ()
+            if v2:
+                if any(re.fullmatch(r"-1|[0-9]+", cell) is None for cell in cells[4:]):
+                    raise ValueError("Malformed cadastral facet index")
+                facet_indices = tuple(int(cell) for cell in cells[4:])
+                for group, position in zip(FACET_FIELDS, facet_indices):
+                    if not -1 <= position < len(manifest["facets"][group]):
+                        raise ValueError("Cadastral facet index is outside its dictionary")
+                    if position >= 0:
+                        facet_counts[group][position] += 1
             previous = cells[0]
-            refs[cells[0]] = (area, source, shard)
+            refs[cells[0]] = (area, source, shard, *facet_indices)
             source_counts[source] += 1
+            if len(refs) > MAX_PARCELS:
+                raise ValueError("Cadastral TSV exceeds its parcel count bound")
     if len(refs) != manifest["parcel_count"] or any(source_counts[position] != source["usable_parcel_count"] for position, source in enumerate(manifest["sources"])) or set(refs).intersection(manifest["ambiguous_ids"]):
         raise ValueError("Cadastral TSV counts disagree with source provenance")
+    if v2 and any(facet_counts[group][position] != row["count"] for group in FACET_FIELDS for position, row in enumerate(manifest["facets"][group])):
+        raise ValueError("Cadastral TSV facet counts disagree with their dictionaries")
     seen = set()
     for position, descriptor in enumerate(manifest["records"]):
         rows = read_json(checked_path(descriptor), MAX_SHARD_BYTES)
@@ -360,6 +466,16 @@ def validate_publish_tree(root: Path) -> dict:
                 raise ValueError("Cadastral detail row disagrees with its exact index reference")
             if any(row[field] is not None and (not isinstance(row[field], str) or len(row[field]) > 2000) for field in DETAIL_FIELDS):
                 raise ValueError("Cadastral attribute exceeds its stated text bounds")
+            if v2:
+                if row["district_name"] != manifest["facets"]["districts"][ref[1]]["label_bg"]:
+                    raise ValueError("Cadastral district facet differs from its original record")
+                for group, facet_index in zip(FACET_FIELDS, ref[3:]):
+                    identity = facet_identity(row, group)
+                    if identity is None:
+                        if facet_index != -1:
+                            raise ValueError("Unknown cadastral attribute acquired a selectable facet")
+                    elif facet_index == -1 or (manifest["facets"][group][facet_index]["code"], manifest["facets"][group][facet_index]["label_bg"]) != identity:
+                        raise ValueError("Cadastral facet differs from its exact original code and label")
             seen.add(cadastral_id)
     if len(seen) != len(refs) or float(min(row[0] for row in refs.values())) != manifest["area_min_m2"] or float(max(row[0] for row in refs.values())) != manifest["area_max_m2"]:
         raise ValueError("Cadastral detail coverage or area bounds disagree with the TSV")
@@ -425,6 +541,15 @@ def create_snapshot(catalogue_path: Path, archives: Path, output: Path, reuse: b
         source["usable_parcel_count"] = usable_counts[position]
     if len(rows) < 1000:
         raise ValueError("Complete Sofia capture has an unexpectedly small parcel count")
+    completion = {"status": "complete", "district_count": 24, "catalogue_sha256": catalogue_sha}
+    return write_snapshot(rows, conflicts, sources, completion, output)
+
+
+def write_snapshot(rows: dict, conflicts: dict, sources: list[dict], completion: dict, output: Path) -> dict:
+    """Write an immutable v2 derivative without altering source capture evidence."""
+    if (output / "cadastre-active.json").exists():
+        raise ValueError("Use a fresh output directory; existing snapshots are immutable")
+    facets, facet_lookups = build_facets((record for _, record in rows.values()), sources)
     snapshot_id, generated_at = uuid4().hex, utc_now()
     directory = output / "cadastre-snapshots" / snapshot_id
     directory.mkdir(parents=True, exist_ok=False)
@@ -446,7 +571,8 @@ def create_snapshot(catalogue_path: Path, archives: Path, output: Path, reuse: b
         if entries and size + 1 + len(entry) > MAX_SHARD_BYTES:
             flush()
         shard = len(descriptors)
-        tsv.append(f"{cadastral_id}\t{area_text}\t{record['source_index']}\t{shard}\n".encode("ascii"))
+        indices = [facet_lookups[group].get(facet_identity(record, group), -1) for group in FACET_FIELDS]
+        tsv.append((f"{cadastral_id}\t{area_text}\t{record['source_index']}\t{shard}\t" + "\t".join(str(position) for position in indices) + "\n").encode("ascii"))
         size += len(entry) + int(bool(entries))
         entries.append(entry)
     flush()
@@ -462,7 +588,7 @@ def create_snapshot(catalogue_path: Path, archives: Path, output: Path, reuse: b
         write_new(directory / "conflicts.json", conflict_payload)
         conflict_descriptor = {"file": "conflicts.json", "bytes": len(conflict_payload), "sha256": digest(conflict_payload), "records": len(conflicts)}
     areas = [Decimal(row[0]) for row in rows.values()]
-    manifest = {"version": 1, "snapshot_id": snapshot_id, "generated_at": generated_at, "reference_format": REFERENCE_FORMAT, "area_unit": "m2", "area_method": AREA_METHOD, "completion": {"status": "complete", "district_count": 24, "catalogue_sha256": catalogue_sha}, "sources": sources, "source_record_total": sum(source["record_count"] for source in sources), "parcel_count": len(rows), "ambiguous_parcel_count": len(conflicts), "ambiguous_ids": sorted(conflicts), "conflicts": conflict_descriptor, "area_min_m2": float(min(areas)), "area_max_m2": float(max(areas)), "index": {"file": "index.tsv", "bytes": len(index_payload), "sha256": digest(index_payload)}, "records": descriptors}
+    manifest = {"version": 2, "snapshot_id": snapshot_id, "generated_at": generated_at, "reference_format": REFERENCE_FORMAT, "area_unit": "m2", "area_method": AREA_METHOD, "completion": completion, "sources": sources, "source_record_total": sum(source["record_count"] for source in sources), "parcel_count": len(rows), "ambiguous_parcel_count": len(conflicts), "ambiguous_ids": sorted(conflicts), "conflicts": conflict_descriptor, "area_min_m2": float(min(areas)), "area_max_m2": float(max(areas)), "index": {"file": "index.tsv", "bytes": len(index_payload), "sha256": digest(index_payload)}, "records": descriptors, "facets": facets}
     check_manifest(manifest)
     payload = json_bytes(manifest)
     if len(payload) > MAX_MANIFEST_BYTES:
@@ -472,18 +598,62 @@ def create_snapshot(catalogue_path: Path, archives: Path, output: Path, reuse: b
     return manifest
 
 
+def upgrade_existing(existing: Path, output: Path) -> dict:
+    """Derive current-format facets from a fully verified v1/v2 private snapshot.
+
+    Source timestamps, ZIP hashes/counts and the historical catalogue evidence
+    are copied exactly. generated_at describes this derivative, not a download.
+    The original Decimal text in the TSV is kept without float round-tripping.
+    """
+    if existing.resolve() == output.resolve():
+        raise ValueError("An upgrade requires a separate fresh output directory")
+    original_pointer = existing / "cadastre-active.json"
+    if not original_pointer.is_file() or original_pointer.is_symlink() or original_pointer.stat().st_size > MAX_MANIFEST_BYTES:
+        raise ValueError("Original cadastral pointer is absent, linked, or exceeds its byte limit")
+    original_payload = original_pointer.read_bytes()
+    manifest = validate_publish_tree(existing)
+    directory = existing / "cadastre-snapshots" / manifest["snapshot_id"]
+    def original_path(descriptor):
+        path = directory / descriptor["file"]
+        if not path.is_file() or path.is_symlink() or path.stat().st_size != descriptor["bytes"] or file_digest(path) != descriptor["sha256"]:
+            raise ValueError("Original cadastral snapshot changed during upgrade")
+        return path
+    areas = {}
+    with original_path(manifest["index"]).open("r", encoding="ascii", newline="") as handle:
+        for line in handle:
+            cells = line[:-1].split("\t")
+            areas[cells[0]] = cells[1]
+    rows = {}
+    for descriptor in manifest["records"]:
+        records = read_json(original_path(descriptor), MAX_SHARD_BYTES)
+        for cadastral_id, record in records.items():
+            rows[cadastral_id] = (areas[cadastral_id], record)
+    conflicts = read_json(original_path(manifest["conflicts"]), MAX_SHARD_BYTES) if manifest["conflicts"] is not None else {}
+    if (existing / "cadastre-active.json").read_bytes() != original_payload:
+        raise ValueError("Original cadastral pointer changed during upgrade")
+    return write_snapshot(rows, conflicts, manifest["sources"], manifest["completion"], output)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalogue", type=Path, default=Path(__file__).with_name("cadastre-sofia-sources.json"))
-    parser.add_argument("--archives", type=Path, required=True)
+    parser.add_argument("--archives", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--upgrade-existing", type=Path, help="Upgrade a fully validated private snapshot without downloading or changing its source capture evidence")
     parser.add_argument("--reuse-cache", action="store_true", help="Reuse only archives whose URL, bytes, hash and capture sidecar all agree")
     parser.add_argument("--delay", type=float, default=1.0, help="Seconds between the 24 sequential published ZIP downloads (minimum 1)")
     args = parser.parse_args()
     if not math.isfinite(args.delay) or args.delay < 1:
         parser.error("--delay must be at least one second")
-    manifest = create_snapshot(args.catalogue, args.archives, args.output, args.reuse_cache, args.delay)
-    print(f"Prepared complete private cadastre snapshot: {manifest['parcel_count']:,} parcels, {len(manifest['records'])} bounded detail shards, {manifest['index']['bytes']:,} TSV bytes")
+    if args.upgrade_existing is not None:
+        if args.archives is not None or args.reuse_cache:
+            parser.error("--upgrade-existing cannot be combined with archive download/cache options")
+        manifest = upgrade_existing(args.upgrade_existing, args.output)
+    else:
+        if args.archives is None:
+            parser.error("--archives is required for a fresh official capture")
+        manifest = create_snapshot(args.catalogue, args.archives, args.output, args.reuse_cache, args.delay)
+    print(f"Prepared complete private cadastre v2 snapshot: {manifest['parcel_count']:,} parcels, {len(manifest['records'])} bounded detail shards, {manifest['index']['bytes']:,} TSV bytes; " + ", ".join(f"{group}={len(options)}" for group, options in manifest['facets'].items()))
 
 
 if __name__ == "__main__":

@@ -4,25 +4,68 @@ import { useI18n } from '@/lib/i18n';
 import { REGISTER_FILTERS, REGISTER_COLORS, displayCount, displayDate } from '@/lib/registerUi';
 import { invalidFilterArea } from '@/lib/propertyFilters';
 
-const EMPTY_FILTERS = { recordTypes: [], match: 'any', district: '', descriptionTag: '', dateFrom: '', dateTo: '', hasAddress: false, areaMin: '', areaMax: '' };
+const EMPTY_FILTERS = { recordTypes: [], match: 'any', district: '', descriptionTag: '', dateFrom: '', dateTo: '', hasAddress: false, areaMin: '', areaMax: '', cadastreDistricts: [], cadastrePurposes: [], cadastreUses: [], cadastrePropertyTypes: [] };
 const DOCUMENT_TYPES = REGISTER_FILTERS.filter((code) => code !== 'all' && code !== 'no_records');
+const CADASTRAL_FACETS = [
+  { field: 'cadastreDistricts', options: 'districts', label: 'filter.cadastreDistrict' },
+  { field: 'cadastrePurposes', options: 'purposes', label: 'filter.cadastrePurpose' },
+  { field: 'cadastreUses', options: 'uses', label: 'filter.cadastreUse' },
+  { field: 'cadastrePropertyTypes', options: 'property_types', label: 'filter.cadastrePropertyType' },
+];
 const emptyDocumentDates = () => Object.fromEntries(DOCUMENT_TYPES.map((type) => [type, { from: '', to: '' }]));
 
 function inputDate(date) {
   return String(date.getFullYear()) + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
 }
 
+function cadastralOptionLabel(option) {
+  return String(option?.label_bg || option?.label || option?.key || '');
+}
+
+function cadastralChipValue(option, key, t) {
+  const label = cadastralOptionLabel(option) || t('filter.cadastreValueUnavailable');
+  return option?.code !== null && option?.code !== undefined && String(option.code) !== '' ? t('filter.cadastreValueWithCode', { label, code: option.code }) : label;
+}
+
+function CadastralFacetSelect({ id, label, selected, options, available, onChange, t, lang }) {
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLocaleLowerCase('bg-BG');
+  const visible = [...options].sort((left, right) => cadastralOptionLabel(left).localeCompare(cadastralOptionLabel(right), 'bg-BG', { numeric: true })
+    || String(left.code ?? '').localeCompare(String(right.code ?? ''), 'bg-BG', { numeric: true })
+    || String(left.key).localeCompare(String(right.key), 'bg-BG', { numeric: true }))
+    .filter((option) => !query || `${cadastralOptionLabel(option)} ${option.code ?? ''} ${option.key}`.toLocaleLowerCase('bg-BG').includes(query));
+  const limitReached = selected.length >= 100;
+  const toggle = (key) => onChange(selected.includes(key) ? selected.filter((item) => item !== key) : limitReached ? selected : [...selected, key]);
+  return <details className={'cadastre-filter-select ' + (selected.length ? 'is-active ' : '') + (!available ? 'is-unavailable' : '')} onToggle={(event) => { if (!event.currentTarget.open) setSearch(''); }}>
+    <summary id={id + '-heading'} className="cadastre-filter-summary" aria-disabled={!available || undefined} onClick={(event) => { if (!available) event.preventDefault(); }}><span>{label}</span><small>{selected.length ? t('filter.cadastreSelected', { n: selected.length }) : t('filter.cadastreAny')}</small><ChevronDown size={15} aria-hidden="true" /></summary>
+    <div className="cadastre-filter-panel">
+      <label className="cadastre-filter-search" htmlFor={id + '-search'}><span className="sr-only">{t('filter.cadastreSearch', { field: label })}</span><input id={id + '-search'} type="search" autoComplete="off" placeholder={t('filter.cadastreSearchPlaceholder')} value={search} disabled={!available} onChange={(event) => setSearch(event.target.value)} /></label>
+      {selected.length > 0 && <button type="button" className="cadastre-filter-clear" onClick={() => onChange([])} aria-label={t('filter.cadastreClearField', { field: label })}>{t('filter.cadastreClearSelection')}</button>}
+      {limitReached && <p className="filter-field-help">{t('filter.cadastreSelectionLimit')}</p>}
+      <div className="cadastre-filter-options" role="group" aria-labelledby={id + '-heading'}>{visible.map((option) => <label className={'cadastre-filter-option ' + (selected.includes(String(option.key)) ? 'is-active' : '')} key={option.key}>
+        <input type="checkbox" checked={selected.includes(String(option.key))} disabled={!available || (limitReached && !selected.includes(String(option.key)))} onChange={() => toggle(String(option.key))} />
+        <span className="cadastre-filter-option-label"><span>{cadastralOptionLabel(option)}</span>{option.code !== null && option.code !== undefined && String(option.code) !== '' && <small>{t('filter.cadastreCode', { code: option.code })}</small>}</span>
+        {option.count != null && <span className="filter-count" title={t('filter.cadastreCountHint')}>{displayCount(option.count, lang)}</span>}
+      </label>)}</div>
+      {visible.length === 0 && <p className="cadastre-filter-empty">{t('filter.cadastreNoOptions')}</p>}
+    </div>
+  </details>;
+}
+
 export default function RegisterFilters({ value, onChange, counts, options }) {
   const { t, lang } = useI18n();
   const id = useId();
-  const filters = { ...EMPTY_FILTERS, ...value, recordTypes: Array.isArray(value?.recordTypes) ? value.recordTypes : [], documentDates: Object.fromEntries(DOCUMENT_TYPES.map((type) => [type, { from: '', to: '', ...value?.documentDates?.[type] }])) };
+  const filters = { ...EMPTY_FILTERS, ...value, ...Object.fromEntries(CADASTRAL_FACETS.map(({ field }) => [field, Array.isArray(value?.[field]) ? value[field] : []])), recordTypes: Array.isArray(value?.recordTypes) ? value.recordTypes : [], documentDates: Object.fromEntries(DOCUMENT_TYPES.map((type) => [type, { from: '', to: '', ...value?.documentDates?.[type] }])) };
   const scopedDateCount = DOCUMENT_TYPES.filter((type) => filters.documentDates[type].from || filters.documentDates[type].to).length;
   const hasAreaRange = filters.areaMin !== '' || filters.areaMax !== '';
   const [expanded, setExpanded] = useState(Boolean(filters.district || filters.descriptionTag || filters.dateFrom || filters.dateTo || filters.hasAddress || scopedDateCount || hasAreaRange));
   const noRecords = filters.recordTypes.includes('no_records');
   const selectedTypes = filters.recordTypes.filter((code) => code !== 'no_records');
   const advancedCount = Number(Boolean(filters.district)) + Number(Boolean(filters.descriptionTag)) + Number(Boolean(filters.dateFrom || filters.dateTo)) + Number(filters.hasAddress) + scopedDateCount + Number(hasAreaRange);
-  const activeCount = filters.recordTypes.length + advancedCount;
+  const cadastralCount = CADASTRAL_FACETS.filter(({ field }) => filters[field].length > 0).length;
+  const activeCount = filters.recordTypes.length + advancedCount + cadastralCount;
+  const cadastralOptions = options?.cadastre;
+  const cadastralAvailable = cadastralOptions?.available === true;
   const advancedAvailable = options?.available === true;
   const scopedDatesAvailable = options?.scoped_dates_available === true;
   const advancedDisabled = noRecords || !advancedAvailable;
@@ -45,7 +88,7 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
   };
   const toggleType = (code) => {
     if (code === 'no_records') {
-      onChange({ ...EMPTY_FILTERS, recordTypes: noRecords ? [] : ['no_records'], documentDates: emptyDocumentDates(), areaMin: filters.areaMin, areaMax: filters.areaMax });
+      onChange({ ...EMPTY_FILTERS, recordTypes: noRecords ? [] : ['no_records'], documentDates: emptyDocumentDates(), areaMin: filters.areaMin, areaMax: filters.areaMax, ...Object.fromEntries(CADASTRAL_FACETS.map(({ field }) => [field, filters[field]])) });
       return;
     }
     const next = selectedTypes.includes(code) ? selectedTypes.filter((type) => type !== code) : [...selectedTypes, code];
@@ -62,6 +105,7 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
     </label>
   );
   const chips = [
+    ...CADASTRAL_FACETS.flatMap((facet) => filters[facet.field].map((key) => ({ key: facet.field + '-' + key, label: t('filter.cadastreChip', { field: t(facet.label), value: cadastralChipValue(cadastralOptions?.[facet.options]?.find((option) => String(option.key) === key), key, t) }), remove: () => update({ [facet.field]: filters[facet.field].filter((item) => item !== key) }) }))),
     ...filters.recordTypes.map((code) => ({ key: code, label: t('filter.chip.' + code), remove: () => toggleType(code) })),
     ...(filters.district ? [{ key: 'district', label: t('filter.districtChip', { district: districts.find((item) => item.key === filters.district)?.label || filters.district }), remove: () => update({ district: '' }) }] : []),
     ...(filters.descriptionTag ? [{ key: 'description', label: descriptions.find((item) => item.key === filters.descriptionTag)?.label || filters.descriptionTag, remove: () => update({ descriptionTag: '' }) }] : []),
@@ -86,6 +130,14 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
       <button type="button" className={'filter-all-preset ' + (activeCount === 0 ? 'is-active' : '')} onClick={reset}>
         <span>{t('filter.all')}</span>{counts?.plots != null && <span className="filter-count">{displayCount(counts.plots, lang)}</span>}{activeCount === 0 && <Check size={14} aria-hidden="true" />}
       </button>
+      <section className="cadastre-filters" aria-labelledby={id + '-cadastre-heading'}>
+        <div className="cadastre-filters-heading"><h3 id={id + '-cadastre-heading'}>{t('filter.cadastreTitle')}</h3>{cadastralCount > 0 && <span className="filter-active-count">{cadastralCount}</span>}</div>
+        {!cadastralAvailable && <p className="filter-selection-help">{options ? t('filter.cadastreUnavailable') : t('filter.cadastreLoading')}</p>}
+        <div className="cadastre-filter-controls">{CADASTRAL_FACETS.map((facet) => <CadastralFacetSelect key={facet.field} id={id + '-' + facet.field} label={t(facet.label)} selected={filters[facet.field]} options={Array.isArray(cadastralOptions?.[facet.options]) ? cadastralOptions[facet.options] : []} available={cadastralAvailable} onChange={(selected) => update({ [facet.field]: selected })} t={t} lang={lang} />)}</div>
+        <p className="filter-field-help">{t('filter.cadastreCombineHelp')}</p>
+        <p className="filter-field-help">{t('filter.cadastreEvidenceHelp')}</p>
+        {cadastralAvailable && cadastralOptions.source_url && <a className="filter-area-source" href={cadastralOptions.source_url} target="_blank" rel="noreferrer">{t('filter.parcelAreaSource')}</a>}
+      </section>
       <fieldset className="filter-types">
         <legend>{t('filter.documentTypes')}</legend>
         <div className="filter-options">{DOCUMENT_TYPES.map(typeOption)}</div>

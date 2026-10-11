@@ -4,8 +4,21 @@ export const DOCUMENT_DATE_FILTERS = {
   projecting_visas: 'visas',
   exploitation_certificates: 'certificates',
 };
+export const CADASTRE_FILTERS = {
+  cadastreDistricts: 'cadastre_districts',
+  cadastrePurposes: 'cadastre_purposes',
+  cadastreUses: 'cadastre_uses',
+  cadastrePropertyTypes: 'cadastre_property_types',
+};
+const CADASTRE_KEY_PATTERNS = {
+  cadastreDistricts: /^sofia-district-\d{2}$/,
+  cadastrePurposes: /^purpose-[a-f0-9]{16}$/,
+  cadastreUses: /^use-[a-f0-9]{16}$/,
+  cadastrePropertyTypes: /^property-[a-f0-9]{16}$/,
+};
 const DESCRIPTION_TAGS = ['housing', 'business', 'infrastructure', 'public', 'parking'];
 const FILTER_QUERY_KEYS = ['record_type', 'record_types', 'match', 'district', 'date_from', 'date_to', 'has_address', 'description_tag', 'area_min_m2', 'area_max_m2',
+  ...Object.values(CADASTRE_FILTERS),
   ...Object.values(DOCUMENT_DATE_FILTERS).flatMap((prefix) => [prefix + '_date_from', prefix + '_date_to'])];
 
 function validDate(input) {
@@ -33,6 +46,9 @@ export function normalizePropertyFilters(value = {}) {
     documentDates,
     areaMin: String(value.areaMin ?? '').trim().slice(0, 40),
     areaMax: String(value.areaMax ?? '').trim().slice(0, 40),
+    ...Object.fromEntries(Object.keys(CADASTRE_FILTERS).map((field) => [field,
+      [...new Set((Array.isArray(value[field]) ? value[field] : []).filter((key) => typeof key === 'string' && CADASTRE_KEY_PATTERNS[field].test(key)))].sort().slice(0, 100),
+    ])),
     hasAddress: !noRecords && Boolean(value.hasAddress),
     descriptionTag: !noRecords && DESCRIPTION_TAGS.includes(value.descriptionTag) ? value.descriptionTag : '',
   };
@@ -54,6 +70,7 @@ export function propertyFilterParams(value) {
     ...(filters.descriptionTag ? { description_tag: filters.descriptionTag } : {}),
     ...(filters.areaMin !== '' ? { area_min_m2: filters.areaMin } : {}),
     ...(filters.areaMax !== '' ? { area_max_m2: filters.areaMax } : {}),
+    ...Object.fromEntries(Object.entries(CADASTRE_FILTERS).filter(([field]) => filters[field].length).map(([field, param]) => [param, filters[field].join(',')])),
   };
 }
 
@@ -61,7 +78,8 @@ export function activeFilterCount(value) {
   const filters = normalizePropertyFilters(value);
   return filters.recordTypes.length + Number(Boolean(filters.district)) + Number(Boolean(filters.dateFrom || filters.dateTo)) + Number(filters.hasAddress) + Number(Boolean(filters.descriptionTag))
     + Object.values(filters.documentDates).filter((range) => range.from || range.to).length
-    + Number(filters.areaMin !== '' || filters.areaMax !== '');
+    + Number(filters.areaMin !== '' || filters.areaMax !== '')
+    + Object.keys(CADASTRE_FILTERS).filter((field) => filters[field].length).length;
 }
 
 export function invalidFilterDates(value) {
@@ -88,6 +106,7 @@ export function readPropertyFilters() {
     }])),
     hasAddress: params.get('has_address') === '1', descriptionTag: params.get('description_tag'),
     areaMin: params.get('area_min_m2'), areaMax: params.get('area_max_m2'),
+    ...Object.fromEntries(Object.entries(CADASTRE_FILTERS).map(([field, param]) => [field, (params.get(param) || '').split(',')])),
   });
 }
 

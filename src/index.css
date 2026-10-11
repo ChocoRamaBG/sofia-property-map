@@ -152,6 +152,39 @@
 .filter-all-preset > span:first-child { flex: 1; }
 .filter-all-preset.is-active { color: #235b46; background: #eff6f1; border-color: #d2e6d8; }
 .filter-all-preset:hover { background: #f0f5ed; }
+.cadastre-filters { margin-top: 15px; padding: 12px; border: 1px solid #d4e4dc; border-radius: 10px; background: #f4f9f6; }
+.cadastre-filters h3 { color: #2e594c; font-size: 12px; line-height: 1.5; font-weight: 650; }
+.cadastre-filters > p { margin: 6px 0 10px; color: #6b857a; font-size: 10px; line-height: 1.7; }
+.cadastre-filters > a { display: inline-flex; align-items: center; min-height: 36px; color: #3a755b; font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
+.cadastre-filter-select { margin-top: 8px; border: 1px solid #d8e3dc; border-radius: 7px; background: #fff; }
+.cadastre-filter-select[open] { border-color: #9cc5b2; }
+.cadastre-filter-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 9px 10px; cursor: pointer; list-style: none; color: #375f51; font-size: 11px; line-height: 1.5; }
+.cadastre-filter-summary::-webkit-details-marker { display: none; }
+.cadastre-filter-summary > span { min-width: 0; flex: 1; }
+.cadastre-filter-summary > small { flex-shrink: 0; font-size: 10px; color: #7d9186; }
+.cadastre-filter-select.is-active { border-color: #a6ccb7; background: #f6fbf7; }
+.cadastre-filter-select.is-unavailable { opacity: .6; }
+.cadastre-filter-select.is-unavailable > summary { cursor: not-allowed; }
+.cadastre-filter-summary > svg { flex-shrink: 0; transition: transform .15s; }
+.cadastre-filter-select[open] > .cadastre-filter-summary > svg { transform: rotate(180deg); }
+.cadastre-filter-summary:focus-visible { outline: 2px solid #2e9276; outline-offset: 2px; border-radius: 6px; }
+.cadastre-filter-panel { padding: 0 8px 8px; border-top: 1px solid #e7eee9; }
+.cadastre-filter-search { display: block; margin: 8px 0; }
+.cadastre-filter-search > input { display: block; width: 100%; min-height: 44px; padding: 8px; border: 1px solid #d8e4dc; border-radius: 6px; color: #375f51; background: #fbfdfb; font-size: 11px; }
+.cadastre-filter-search > input:focus-visible { outline: 2px solid #2e9276; outline-offset: 2px; }
+.cadastre-filters-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cadastre-filter-controls { display: grid; gap: 0; }
+.cadastre-filter-clear { min-height: 40px; color: #3e7559; font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
+.cadastre-filter-options { max-height: 200px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.cadastre-filter-option { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 3px; cursor: pointer; color: #49685b; font-size: 11px; line-height: 1.55; border-bottom: 1px solid #f0f4f0; }
+.cadastre-filter-option:hover { background: #f3f8f3; }
+.cadastre-filter-option > input { flex-shrink: 0; width: 16px; height: 16px; accent-color: #168064; }
+.cadastre-filter-option > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.cadastre-filter-option small { display: block; color: #7f9186; font-size: 10px; }
+.cadastre-filter-option .filter-count { flex: 0 0 auto; }
+.cadastre-filter-option:focus-within { outline: 2px solid #2e9276; outline-offset: -2px; border-radius: 4px; }
+.cadastre-filter-empty { padding: 13px 3px; color: #839085; font-size: 11px; line-height: 1.6; }
+.cadastre-filter-panel > button { min-height: 36px; margin-top: 5px; padding: 5px 3px; color: #3e7559; text-decoration: underline; text-underline-offset: 3px; font-size: 10px; }
 .filter-types { min-width: 0; margin: 16px 0 0; padding: 0; border: none; }
 .filter-types > legend { padding: 0 5px; color: #738a7b; font-size: 10px; font-weight: 550; }
 .filter-options { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }

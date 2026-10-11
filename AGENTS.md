@@ -8,6 +8,7 @@ This is a static React/Vite frontend with a PHP JSON API and MySQL database for 
 - Preserve workbook names internally for import audit. Public plot provenance shows the official register name/URL, snapshot date when known, and exact-ID matching method, without Excel filenames (user preference).
 - Do not join documents by address or geographic proximity.
 - Cadastral area and basic attributes come from the 24 official Sofia land-parcel ZIP exports in KAIS Open Data and join only by exact ID. Preserve published AREA as geometry area in m²; never substitute a building area or claim certified sketch area. Do not import owner names. Preserve conflicting IDs with all safe variants and exclude them from area filters.
+- Cadastral district, purpose, permanent use and property category are separate from document district and description keywords. Facet selections are OR within one field and AND across fields, area and document conditions. Preserve exact official labels/codes with stable keys; exclude unknown values only in an actively constrained field. Cadastral conditions remain usable with no linked construction record.
 - Do not describe workbook snapshots as live or complete government data.
 - Do not add credentials to frontend code, generated SQL, source control, or public files. Use public/private/config.php only on the host; it is excluded from git.
 
