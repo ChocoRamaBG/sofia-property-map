@@ -47,6 +47,8 @@ artifacts/
 public/private/registry-data*.json*
 public/private/registry-active*.json*
 public/private/registry-snapshots/
+public/private/cadastre-active*.json*
+public/private/cadastre-snapshots/
 
 # Local link to a Base44 app, written by `base44 link`
 base44/.app.jsonc

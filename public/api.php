@@ -8,6 +8,12 @@ header('Cache-Control: no-store');
 const REGISTRY_MAX_INDEX_BYTES = 8 * 1024 * 1024;
 const REGISTRY_MAX_DATASET_BYTES = 128 * 1024 * 1024;
 const REGISTRY_MAX_DOCUMENTS = 100000;
+const CADASTRE_MAX_INDEX_BYTES = 16 * 1024 * 1024;
+const CADASTRE_MAX_DATASET_BYTES = 128 * 1024 * 1024;
+const CADASTRE_MAX_PARCELS = 500000;
+const CADASTRE_MAX_ZIP_BYTES = 64 * 1024 * 1024;
+const CADASTRE_AREA_METHOD = 'published_AREA_BGS2005_LCC';
+const CADASTRE_CATALOGUE_URL = 'https://kais.cadastre.bg/bg/OpenData';
 
 function respond(array $body, int $status = 200): void {
     http_response_code($status);
@@ -41,6 +47,28 @@ function optional_filter_string(string $key, int $limit): ?string {
     return $value === '' ? null : $value;
 }
 
+function document_date_range_params(string $fromKey, string $toKey): array {
+    $from = optional_filter_string($fromKey, 10);
+    $to = optional_filter_string($toKey, 10);
+    if (!snapshot_date_valid($from) || !snapshot_date_valid($to) || ($from !== null && $to !== null && $from > $to)) {
+        throw new InvalidArgumentException('Invalid document date range.');
+    }
+    return ['from' => $from, 'to' => $to];
+}
+
+function optional_area_param(string $key): ?float {
+    $raw = optional_filter_string($key, 40);
+    if ($raw === null) return null;
+    if (!preg_match('/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/', $raw)) {
+        throw new InvalidArgumentException('Invalid parcel area range.');
+    }
+    $value = (float)$raw;
+    if (!is_finite($value) || $value < 0 || $value > 1000000000) {
+        throw new InvalidArgumentException('Invalid parcel area range.');
+    }
+    return $value;
+}
+
 function map_filter_params(): array {
     // The legacy singleton parameter remains compatible with previously cached clients.
     $raw = optional_filter_string(array_key_exists('record_types', $_GET) ? 'record_types' : 'record_type', 200) ?? 'all';
@@ -58,19 +86,27 @@ function map_filter_params(): array {
     if ($descriptionTag !== null && !in_array($descriptionTag, ['housing', 'business', 'infrastructure', 'public', 'parking'], true)) {
         throw new InvalidArgumentException('Invalid construction description filter.');
     }
-    $dateFrom = optional_filter_string('date_from', 10);
-    $dateTo = optional_filter_string('date_to', 10);
-    if (!snapshot_date_valid($dateFrom) || !snapshot_date_valid($dateTo) || ($dateFrom !== null && $dateTo !== null && $dateFrom > $dateTo)) {
-        throw new InvalidArgumentException('Invalid document date range.');
+    // Keep the old shared period for existing links. New periods explicitly
+    // name the document type and are required together, irrespective of any/all.
+    $legacyDateRange = document_date_range_params('date_from', 'date_to');
+    $documentDates = [];
+    foreach (['building_permits' => 'permits', 'projecting_visas' => 'visas', 'exploitation_certificates' => 'certificates'] as $type => $prefix) {
+        $range = document_date_range_params($prefix . '_date_from', $prefix . '_date_to');
+        if ($range['from'] !== null || $range['to'] !== null) $documentDates[$type] = $range;
     }
     $address = optional_filter_string('has_address', 5);
     if ($address !== null && !in_array($address, ['0', '1'], true)) throw new InvalidArgumentException('Invalid address filter.');
-    $advanced = $district !== null || $descriptionTag !== null || $dateFrom !== null || $dateTo !== null || $address === '1';
+    $areaMin = optional_area_param('area_min_m2');
+    $areaMax = optional_area_param('area_max_m2');
+    if ($areaMin !== null && $areaMax !== null && $areaMin > $areaMax) throw new InvalidArgumentException('Invalid parcel area range.');
+    $advanced = $district !== null || $descriptionTag !== null || $legacyDateRange['from'] !== null || $legacyDateRange['to'] !== null || $documentDates !== [] || $address === '1';
     if (in_array('no_records', $types, true) && (count($types) !== 1 || $advanced)) {
         throw new InvalidArgumentException('Properties without linked records cannot be combined with document filters.');
     }
     return ['record_types' => $types, 'match' => $match, 'district' => $district, 'description_tag' => $descriptionTag,
-        'date_from' => $dateFrom, 'date_to' => $dateTo, 'has_address' => $address === '1', 'advanced' => $advanced];
+        'date_from' => $legacyDateRange['from'], 'date_to' => $legacyDateRange['to'], 'document_dates' => $documentDates,
+        'has_address' => $address === '1', 'advanced' => $advanced,
+        'area_min_m2' => $areaMin, 'area_max_m2' => $areaMax, 'area_active' => $areaMin !== null || $areaMax !== null];
 }
 
 function record_filter(array $filter): string {
@@ -323,10 +359,17 @@ function validate_filter_facets($facets, int $records): ?array {
     return $facets;
 }
 
-function filter_options(?array $facets): array {
-    if ($facets === null) return ['available' => false, 'districts' => [], 'description_tags' => [], 'date_min' => null, 'date_max' => null, 'coverage' => []];
+function empty_document_date_ranges(): array {
+    return array_fill_keys(['building_permits', 'projecting_visas', 'exploitation_certificates'],
+        ['date_min' => null, 'date_max' => null, 'dated_document_count' => 0]);
+}
+
+function filter_options(?array $facets, ?array $documentDateRanges = null): array {
+    $dateOptions = ['scoped_dates_available' => $facets !== null,
+        'document_date_ranges' => $documentDateRanges ?? empty_document_date_ranges(), 'date_range_coverage' => 'linked_documents'];
+    if ($facets === null) return array_merge(['available' => false, 'districts' => [], 'description_tags' => [], 'date_min' => null, 'date_max' => null, 'coverage' => []], $dateOptions);
     return ['available' => true, 'districts' => $facets['districts'], 'description_tags' => $facets['description_tags'],
-        'date_min' => $facets['date_min'] ?? null, 'date_max' => $facets['date_max'] ?? null, 'coverage' => $facets['coverage'] ?? []];
+        'date_min' => $facets['date_min'] ?? null, 'date_max' => $facets['date_max'] ?? null, 'coverage' => $facets['coverage'] ?? []] + $dateOptions;
 }
 
 function filter_facet_matches(array $value, array $facets, array $filter): bool {
@@ -348,6 +391,18 @@ function qualifying_types_match(array $types, array $filter): bool {
         if ($filter['match'] === 'any' && isset($types[$type])) return true;
     }
     return $filter['match'] === 'all';
+}
+
+function scoped_document_date_matches(?string $issuedAt, array $range): bool {
+    if ($issuedAt === null) return false;
+    return ($range['from'] === null || $issuedAt >= $range['from']) && ($range['to'] === null || $issuedAt <= $range['to']);
+}
+
+function qualifying_document_dates_match(array $types, array $filter): bool {
+    foreach ($filter['document_dates'] as $type => $_) {
+        if (!isset($types[$type])) return false;
+    }
+    return true;
 }
 
 function load_registry_v2(string $activePath, ?array $filter = null): array {
@@ -418,6 +473,7 @@ function load_registry_v2(string $activePath, ?array $filter = null): array {
     $docRefs = [];
     $indexedCounts = array_fill_keys(array_keys($sources), 0);
     $certificateDocuments = [];
+    $documentDateRanges = empty_document_date_ranges();
     // Release decoded references as each parcel is indexed. Retain a compact
     // shard lookup rather than a second copy of every reference array.
     $parcelIds = array_keys($index['parcels']);
@@ -429,6 +485,7 @@ function load_registry_v2(string $activePath, ?array $filter = null): array {
             || count($parcel['documents']) > REGISTRY_MAX_DOCUMENTS) throw new RuntimeException('Registry parcel index is invalid.');
         $flags[$id] = empty_document_flags();
         $qualifyingTypes = [];
+        $qualifyingDateTypes = [];
         foreach ($parcel['documents'] as $ref) {
             $facetPosition = null;
             if ($referenceFormat === 'tuple-v1' || $referenceFormat === 'tuple-v2-facets') {
@@ -450,6 +507,7 @@ function load_registry_v2(string $activePath, ?array $filter = null): array {
             if (!is_string($code) || !isset($sources[$code]) || $code === 'coordinates'
                 || !is_string($documentHash) || !preg_match('/^[a-f0-9]{64}$/', $documentHash)
                 || !is_string($shardName) || !isset($shards[$shardName])) throw new RuntimeException('Registry document reference is invalid.');
+            $documentType = source_is_certificate($code) ? 'exploitation_certificates' : $code;
             $key = $code . ':' . $documentHash;
             if (isset($byId[$id][$key]) || (isset($docRefs[$key]) && ($docRefs[$key][0] !== $shardName || ($docRefs[$key][2] ?? null) !== $facetPosition))) {
                 throw new RuntimeException('Registry document reference is duplicated or inconsistent.');
@@ -460,6 +518,16 @@ function load_registry_v2(string $activePath, ?array $filter = null): array {
             if (!isset($docRefs[$key])) {
                 $indexedCounts[$code]++;
                 $docRefs[$key] = [$shardName, $id . "\n", $facetPosition];
+                // Count one observation once, even when it names several plots.
+                // These ranges describe dated records linked by an exact ID.
+                if ($facetPosition !== null && $facets['values'][$facetPosition][1] !== null) {
+                    $issuedAt = $facets['values'][$facetPosition][1];
+                    $dateRange = &$documentDateRanges[$documentType];
+                    $dateRange['dated_document_count']++;
+                    if ($dateRange['date_min'] === null || $issuedAt < $dateRange['date_min']) $dateRange['date_min'] = $issuedAt;
+                    if ($dateRange['date_max'] === null || $issuedAt > $dateRange['date_max']) $dateRange['date_max'] = $issuedAt;
+                    unset($dateRange);
+                }
             } else {
                 $docRefs[$key][1] .= $id . "\n";
             }
@@ -475,17 +543,22 @@ function load_registry_v2(string $activePath, ?array $filter = null): array {
                 $flags[$id]['has_projecting_visa'] = true;
             }
             if ($advanced && filter_facet_matches($facets['values'][$facetPosition], $facets, $filter)) {
-                $qualifyingTypes[source_is_certificate($code) ? 'exploitation_certificates' : $code] = true;
+                $qualifyingTypes[$documentType] = true;
+                if (isset($filter['document_dates'][$documentType])
+                    && scoped_document_date_matches($facets['values'][$facetPosition][1], $filter['document_dates'][$documentType])) {
+                    $qualifyingDateTypes[$documentType] = true;
+                }
             }
         }
-        if ($advanced && qualifying_types_match($qualifyingTypes, $filter)) $qualifiedIds[$id] = true;
+        if ($advanced && qualifying_types_match($qualifyingTypes, $filter)
+            && qualifying_document_dates_match($qualifyingDateTypes, $filter)) $qualifiedIds[$id] = true;
     }
     if (count($docRefs) > $records) throw new RuntimeException('Registry indexed document total is invalid.');
     foreach ($indexedCounts as $code => $count) {
         if ($count > $documentCounts[$code]) throw new RuntimeException('Registry indexed source total is invalid.');
     }
     $generatedAt = $manifest['generated_at'];
-    $filterOptions = filter_options($facets);
+    $filterOptions = filter_options($facets, $documentDateRanges);
     unset($facets);
     unset($index, $manifest, $parcelIds, $parcel, $ref);
     return [
@@ -551,6 +624,299 @@ function load_registry_snapshot(?array $filter = null): ?array {
         'certificate_ids' => $certificateIds, 'linked_certificates' => $linkedCertificates,
         'filter_options' => filter_options(null), 'qualified_ids' => null,
     ];
+}
+
+function cadastre_area_valid($value): bool {
+    return (is_int($value) || is_float($value)) && is_finite((float)$value) && $value > 0 && $value <= 1000000000;
+}
+
+function cadastre_area_equal(float $a, float $b): bool {
+    // Both JSON and TSV are emitted from the same published decimal AREA.
+    return $a === $b;
+}
+
+function cadastre_source_url_valid($value): bool {
+    if (!snapshot_string($value, 4096) || !filter_var($value, FILTER_VALIDATE_URL)) return false;
+    $url = parse_url($value);
+    if (($url['scheme'] ?? null) !== 'https' || ($url['host'] ?? null) !== 'kais.cadastre.bg'
+        || ($url['path'] ?? null) !== '/bg/OpenData/Download' || isset($url['user']) || isset($url['pass'])
+        || isset($url['port']) || isset($url['fragment'])) return false;
+    if (!preg_match('/^path=[^&]+$/', $url['query'] ?? '')) return false;
+    parse_str($url['query'], $query);
+    return count($query) === 1 && snapshot_string($query['path'] ?? null, 4096) && $query['path'] !== '';
+}
+
+function load_cadastre_snapshot(): ?array {
+    $activePath = __DIR__ . '/private/cadastre-active.json';
+    if (!file_exists($activePath) && !is_link($activePath)) return null;
+    $manifest = bounded_registry_json($activePath, 256 * 1024);
+    if (($manifest['version'] ?? null) !== 1 || !is_string($manifest['snapshot_id'] ?? null)
+        || !preg_match('/^[a-f0-9]{32}$/', $manifest['snapshot_id']) || !snapshot_timestamp_valid($manifest['generated_at'] ?? null)
+        || ($manifest['reference_format'] ?? null) !== 'area-source-shard-tsv-v1' || ($manifest['area_unit'] ?? null) !== 'm2'
+        || ($manifest['area_method'] ?? null) !== CADASTRE_AREA_METHOD
+        || !is_int($manifest['parcel_count'] ?? null) || $manifest['parcel_count'] < 1 || $manifest['parcel_count'] > CADASTRE_MAX_PARCELS
+        || !cadastre_area_valid($manifest['area_min_m2'] ?? null) || !cadastre_area_valid($manifest['area_max_m2'] ?? null)
+        || $manifest['area_min_m2'] > $manifest['area_max_m2']) throw new RuntimeException('Cadastre manifest format is invalid.');
+    $completion = $manifest['completion'] ?? null;
+    if (!is_array($completion) || ($completion['status'] ?? null) !== 'complete' || ($completion['district_count'] ?? null) !== 24
+        || !is_string($completion['catalogue_sha256'] ?? null) || !preg_match('/^[a-f0-9]{64}$/', $completion['catalogue_sha256'])) {
+        throw new RuntimeException('Cadastre snapshot is incomplete.');
+    }
+    if (!is_int($manifest['source_record_total'] ?? null) || $manifest['source_record_total'] < $manifest['parcel_count']
+        || $manifest['source_record_total'] > CADASTRE_MAX_PARCELS
+        || !is_int($manifest['ambiguous_parcel_count'] ?? null) || $manifest['ambiguous_parcel_count'] < 0 || $manifest['ambiguous_parcel_count'] > 5000
+        || !snapshot_list($manifest['ambiguous_ids'] ?? null) || count($manifest['ambiguous_ids']) !== $manifest['ambiguous_parcel_count']) {
+        throw new RuntimeException('Cadastre ambiguity metadata is invalid.');
+    }
+    $ambiguousLookup = [];
+    $previousAmbiguousId = null;
+    foreach ($manifest['ambiguous_ids'] as $id) {
+        if (!is_string($id) || !preg_match('/^68134\.[0-9]{1,6}\.[0-9]{1,6}$/', $id)
+            || ($previousAmbiguousId !== null && strcmp($previousAmbiguousId, $id) >= 0)) throw new RuntimeException('Cadastre ambiguous identifier is invalid.');
+        $ambiguousLookup[$id] = true;
+        $previousAmbiguousId = $id;
+    }
+    $conflicts = $manifest['conflicts'] ?? null;
+    if ($manifest['ambiguous_parcel_count'] > 0) {
+        validate_registry_file_descriptor($conflicts, '/^conflicts\.json$/', 1024 * 1024);
+        if (($conflicts['records'] ?? null) !== $manifest['ambiguous_parcel_count']) throw new RuntimeException('Cadastre conflict total is inconsistent.');
+    } elseif ($conflicts !== null) {
+        throw new RuntimeException('Cadastre conflicts are inconsistent.');
+    }
+    if (!snapshot_list($manifest['sources'] ?? null) || count($manifest['sources']) !== 24) throw new RuntimeException('Cadastre sources are invalid.');
+    $sourceRecords = 0;
+    $usableParcels = 0;
+    $sourceUrls = [];
+    foreach ($manifest['sources'] as $position => $source) {
+        if (!is_array($source) || ($source['code'] ?? null) !== sprintf('sofia-district-%02d', $position)
+            || !snapshot_string($source['label_bg'] ?? null, 200) || $source['label_bg'] === ''
+            || !cadastre_source_url_valid($source['source_url'] ?? null) || isset($sourceUrls[$source['source_url']])
+            || ($source['catalogue_url'] ?? null) !== CADASTRE_CATALOGUE_URL
+            || !array_key_exists('published_at', $source) || ($source['published_at'] !== null && !snapshot_timestamp_valid($source['published_at']))
+            || (isset($source['catalogue_published_at']) && !snapshot_string($source['catalogue_published_at'], 80))
+            || !snapshot_timestamp_valid($source['captured_at'] ?? null)
+            || !is_string($source['zip_sha256'] ?? null) || !preg_match('/^[a-f0-9]{64}$/', $source['zip_sha256'])
+            || !is_int($source['zip_bytes'] ?? null) || $source['zip_bytes'] < 1 || $source['zip_bytes'] > CADASTRE_MAX_ZIP_BYTES
+            || !is_int($source['record_count'] ?? null) || $source['record_count'] < 0 || $source['record_count'] > CADASTRE_MAX_PARCELS
+            || !is_int($source['usable_parcel_count'] ?? null) || $source['usable_parcel_count'] < 0 || $source['usable_parcel_count'] > $source['record_count']) {
+            throw new RuntimeException('Cadastre source metadata is invalid.');
+        }
+        $sourceUrls[$source['source_url']] = true;
+        $sourceRecords += $source['record_count'];
+        $usableParcels += $source['usable_parcel_count'];
+    }
+    if ($sourceRecords !== $manifest['source_record_total'] || $usableParcels !== $manifest['parcel_count']) throw new RuntimeException('Cadastre source totals are inconsistent.');
+    validate_registry_file_descriptor($manifest['index'] ?? null, '/^index\.tsv$/', CADASTRE_MAX_INDEX_BYTES);
+    if (!snapshot_list($manifest['records'] ?? null) || count($manifest['records']) < 1 || count($manifest['records']) > 1000) {
+        throw new RuntimeException('Cadastre detail descriptors are invalid.');
+    }
+    $root = __DIR__ . '/private/cadastre-snapshots';
+    $directory = $root . '/' . $manifest['snapshot_id'];
+    if (is_link($root) || is_link($directory) || !is_dir($directory)) throw new RuntimeException('Cadastre snapshot directory is unavailable.');
+    $indexPath = $directory . '/index.tsv';
+    if (!is_file($indexPath) || is_link($indexPath) || filesize($indexPath) !== $manifest['index']['bytes']) {
+        throw new RuntimeException('Cadastre index is unavailable.');
+    }
+    $files = [];
+    $recordTotal = 0;
+    $totalBytes = $manifest['index']['bytes'] + ($conflicts['bytes'] ?? 0);
+    if ($conflicts !== null) {
+        $path = $directory . '/conflicts.json';
+        if (!is_file($path) || is_link($path) || filesize($path) !== $conflicts['bytes']) throw new RuntimeException('Cadastre conflict file is unavailable.');
+    }
+    foreach ($manifest['records'] as $position => $descriptor) {
+        validate_registry_file_descriptor($descriptor, '/^parcels-[0-9]{3}\.json$/', 1024 * 1024);
+        if ($descriptor['file'] !== sprintf('parcels-%03d.json', $position) || isset($files[$descriptor['file']]) || !is_int($descriptor['records'] ?? null) || $descriptor['records'] < 1
+            || $descriptor['records'] > CADASTRE_MAX_PARCELS) throw new RuntimeException('Cadastre detail descriptor is invalid.');
+        $files[$descriptor['file']] = true;
+        $recordTotal += $descriptor['records'];
+        $totalBytes += $descriptor['bytes'];
+        $path = $directory . '/' . $descriptor['file'];
+        if (!is_file($path) || is_link($path) || filesize($path) !== $descriptor['bytes']) throw new RuntimeException('Cadastre detail shard is unavailable.');
+    }
+    if ($recordTotal !== $manifest['parcel_count'] || $totalBytes > CADASTRE_MAX_DATASET_BYTES) {
+        throw new RuntimeException('Cadastre snapshot totals are invalid.');
+    }
+    $manifest['directory'] = $directory;
+    $manifest['index_path'] = $indexPath;
+    $manifest['ambiguous_lookup'] = $ambiguousLookup;
+    return $manifest;
+}
+
+function cadastre_filter_options(?array $cadastre): array {
+    return ['available' => $cadastre !== null, 'min_m2' => $cadastre['area_min_m2'] ?? null,
+        'max_m2' => $cadastre['area_max_m2'] ?? null, 'parcel_count' => $cadastre['parcel_count'] ?? 0,
+        'source_url' => CADASTRE_CATALOGUE_URL, 'area_method' => $cadastre['area_method'] ?? null,
+        'ambiguous_parcel_count' => $cadastre['ambiguous_parcel_count'] ?? 0];
+}
+
+function cadastre_metadata(?array $cadastre): ?array {
+    if ($cadastre === null) return null;
+    return ['label_bg' => 'Кадастрални данни на АГКК', 'label_en' => 'AGCC cadastral open data',
+        'source_url' => CADASTRE_CATALOGUE_URL, 'captured_at' => $cadastre['generated_at'],
+        'parcel_count' => $cadastre['parcel_count'], 'source_record_total' => $cadastre['source_record_total'],
+        'ambiguous_parcel_count' => $cadastre['ambiguous_parcel_count'], 'area_method' => CADASTRE_AREA_METHOD];
+}
+
+function cadastre_index_iterator(array $cadastre): Generator {
+    $descriptor = $cadastre['index'];
+    $path = $cadastre['index_path'];
+    if (!is_file($path) || is_link($path) || filesize($path) !== $descriptor['bytes']) throw new RuntimeException('Cadastre index is unavailable.');
+    $handle = fopen($path, 'rb');
+    if ($handle === false) throw new RuntimeException('Cadastre index cannot be read.');
+    $hash = hash_init('sha256');
+    $bytes = 0;
+    $records = 0;
+    $previousId = null;
+    $minArea = null;
+    $maxArea = null;
+    $sourceCounts = array_fill(0, count($cadastre['sources']), 0);
+    $shardCounts = array_fill(0, count($cadastre['records']), 0);
+    try {
+        while (($line = fgets($handle, 256)) !== false) {
+            $bytes += strlen($line);
+            if ($bytes > $descriptor['bytes'] || strlen($line) > 120 || substr($line, -1) !== "\n") throw new RuntimeException('Cadastre index row is invalid.');
+            hash_update($hash, $line);
+            $parts = explode("\t", substr($line, 0, -1));
+            if (count($parts) !== 4 || !preg_match('/^68134\.[0-9]{1,6}\.[0-9]{1,6}$/', $parts[0])
+                || ($previousId !== null && strcmp($previousId, $parts[0]) >= 0)
+                || !preg_match('/^[0-9]+(?:\.[0-9]+)?$/', $parts[1])
+                || !preg_match('/^(?:0|[1-9][0-9]{0,2})$/', $parts[2]) || !preg_match('/^(?:0|[1-9][0-9]{0,2})$/', $parts[3])) {
+                throw new RuntimeException('Cadastre index row is invalid.');
+            }
+            $area = (float)$parts[1];
+            $sourceIndex = (int)$parts[2];
+            $shardIndex = (int)$parts[3];
+            if (!cadastre_area_valid($area) || !isset($cadastre['sources'][$sourceIndex]) || !isset($cadastre['records'][$shardIndex])
+                || isset($cadastre['ambiguous_lookup'][$parts[0]])) {
+                throw new RuntimeException('Cadastre index reference is invalid.');
+            }
+            $records++;
+            if ($records > $cadastre['parcel_count']) throw new RuntimeException('Cadastre index contains too many parcels.');
+            $sourceCounts[$sourceIndex]++;
+            $shardCounts[$shardIndex]++;
+            $minArea = $minArea === null ? $area : min($minArea, $area);
+            $maxArea = $maxArea === null ? $area : max($maxArea, $area);
+            $previousId = $parts[0];
+            yield ['cadastral_id' => $parts[0], 'area_m2' => $area, 'source_index' => $sourceIndex, 'shard_index' => $shardIndex];
+        }
+        if (!feof($handle) || $bytes !== $descriptor['bytes'] || $records !== $cadastre['parcel_count']
+            || !hash_equals($descriptor['sha256'], hash_final($hash))
+            || !cadastre_area_equal((float)$minArea, (float)$cadastre['area_min_m2'])
+            || !cadastre_area_equal((float)$maxArea, (float)$cadastre['area_max_m2'])) {
+            throw new RuntimeException('Cadastre index integrity check failed.');
+        }
+        foreach ($sourceCounts as $position => $count) {
+            if ($count !== $cadastre['sources'][$position]['usable_parcel_count']) throw new RuntimeException('Cadastre indexed source total is inconsistent.');
+        }
+        foreach ($shardCounts as $position => $count) {
+            if ($count !== $cadastre['records'][$position]['records']) throw new RuntimeException('Cadastre indexed shard total is inconsistent.');
+        }
+    } finally {
+        fclose($handle);
+    }
+}
+
+function cadastre_candidate_ids(PDO $pdo, string $where, array $params, ?array $registry = null, ?array $filter = null): array {
+    $stmt = $pdo->prepare('SELECT p.cadastral_id FROM parcels p WHERE ' . $where);
+    $stmt->execute($params);
+    $ids = [];
+    while (($row = $stmt->fetch(PDO::FETCH_NUM)) !== false) $ids[$row[0]] = true;
+    $stmt = null;
+    // Search can return exact-ID-linked register plots without a coordinate row.
+    if ($registry !== null && $filter !== null) {
+        foreach ($registry['by_id'] as $id => $_) {
+            if (registry_id_matches_filter($id, $registry, $filter)) $ids[$id] = true;
+        }
+    }
+    return $ids;
+}
+
+function cadastre_matching_ids(array $cadastre, array $candidateIds, array $filter): array {
+    $ids = [];
+    foreach (cadastre_index_iterator($cadastre) as $entry) {
+        if (!isset($candidateIds[$entry['cadastral_id']])) continue;
+        if ($filter['area_min_m2'] !== null && $entry['area_m2'] < $filter['area_min_m2']) continue;
+        if ($filter['area_max_m2'] !== null && $entry['area_m2'] > $filter['area_max_m2']) continue;
+        $ids[$entry['cadastral_id']] = true;
+    }
+    return $ids;
+}
+
+function cadastre_area_filter(PDO $pdo, ?array $ids): string {
+    if ($ids === null) return '';
+    return $ids === [] ? ' AND 0 = 1' : ' AND p.cadastral_id IN (' . quoted_ids($pdo, array_keys($ids)) . ')';
+}
+
+function cadastre_detail_fields(): array {
+    return ['address', 'district_name', 'purpose_code', 'purpose', 'use_code', 'use', 'property_type_code', 'property_type', 'approval_act'];
+}
+
+function validate_cadastre_record($row, string $id, array $cadastre): void {
+    $fields = cadastre_detail_fields();
+    if (!preg_match('/^68134\.[0-9]{1,6}\.[0-9]{1,6}$/', $id) || !is_array($row) || count($row) !== count($fields) + 3
+        || ($row['cadastral_id'] ?? null) !== $id || !cadastre_area_valid($row['area_m2'] ?? null)
+        || !is_int($row['source_index'] ?? null) || !isset($cadastre['sources'][$row['source_index']])) {
+        throw new RuntimeException('Cadastre detail record is invalid.');
+    }
+    foreach ($fields as $field) {
+        if (!array_key_exists($field, $row) || !snapshot_string($row[$field], 2000, true)) throw new RuntimeException('Cadastre detail attribute is invalid.');
+    }
+}
+
+function public_cadastre_record(array $row, array $cadastre): array {
+    $result = ['cadastral_id' => $row['cadastral_id'], 'area_m2' => (float)$row['area_m2']];
+    foreach (cadastre_detail_fields() as $field) $result[$field] = $row[$field];
+    $source = $cadastre['sources'][$row['source_index']];
+    $publicSource = [];
+    foreach (['code', 'label_bg', 'source_url', 'catalogue_url', 'published_at', 'captured_at', 'zip_sha256', 'zip_bytes', 'record_count', 'usable_parcel_count'] as $field) {
+        $publicSource[$field] = $source[$field];
+    }
+    $publicSource['catalogue_published_at'] = $source['catalogue_published_at'] ?? null;
+    return $result + ['area_unit' => 'm2', 'area_method' => CADASTRE_AREA_METHOD, 'matching_method' => 'exact_cadastral_id',
+        'generated_at' => $cadastre['generated_at'], 'source' => $publicSource];
+}
+
+function cadastre_ambiguous_plot(string $id, array $cadastre): array {
+    $descriptor = $cadastre['conflicts'];
+    $rows = bounded_registry_json($cadastre['directory'] . '/conflicts.json', 1024 * 1024, $descriptor['bytes'], $descriptor['sha256']);
+    if (count($rows) !== $cadastre['ambiguous_parcel_count']) throw new RuntimeException('Cadastre conflict total is inconsistent.');
+    foreach ($rows as $rowId => $variants) {
+        if (!is_string($rowId) || !isset($cadastre['ambiguous_lookup'][$rowId]) || !snapshot_list($variants)
+            || count($variants) < 2 || count($variants) > 10000) throw new RuntimeException('Cadastre conflict record is invalid.');
+        foreach ($variants as $row) validate_cadastre_record($row, $rowId, $cadastre);
+    }
+    if (!isset($rows[$id])) throw new RuntimeException('Cadastre ambiguous identifier is inconsistent.');
+    $variants = array_map(static function (array $row) use ($cadastre): array { return public_cadastre_record($row, $cadastre); }, $rows[$id]);
+    return ['status' => 'ambiguous', 'cadastral_id' => $id, 'variants' => $variants,
+        'area_unit' => 'm2', 'area_method' => CADASTRE_AREA_METHOD, 'matching_method' => 'exact_cadastral_id', 'generated_at' => $cadastre['generated_at']];
+}
+
+function cadastre_plot(string $id, ?array $cadastre): ?array {
+    if ($cadastre === null) return null;
+    if (isset($cadastre['ambiguous_lookup'][$id])) return cadastre_ambiguous_plot($id, $cadastre);
+    $match = null;
+    // Consume the complete stream to verify its hash and totals before use.
+    foreach (cadastre_index_iterator($cadastre) as $entry) {
+        if ($entry['cadastral_id'] === $id) $match = $entry;
+    }
+    if ($match === null) return null;
+    $descriptor = $cadastre['records'][$match['shard_index']];
+    $rows = bounded_registry_json($cadastre['directory'] . '/' . $descriptor['file'], 1024 * 1024, $descriptor['bytes'], $descriptor['sha256']);
+    if (count($rows) !== $descriptor['records']) throw new RuntimeException('Cadastre detail total is inconsistent.');
+    foreach ($rows as $rowId => $row) {
+        if (!is_string($rowId) || isset($cadastre['ambiguous_lookup'][$rowId])) throw new RuntimeException('Cadastre detail identifier is invalid.');
+        validate_cadastre_record($row, $rowId, $cadastre);
+    }
+    $row = $rows[$id] ?? null;
+    if ($row === null || $row['source_index'] !== $match['source_index'] || !cadastre_area_equal((float)$row['area_m2'], $match['area_m2'])) {
+        throw new RuntimeException('Cadastre exact-ID index is inconsistent.');
+    }
+    return public_cadastre_record($row, $cadastre) + ['status' => 'matched'];
+}
+
+function cadastre_plot_status(?array $record, ?array $cadastre): string {
+    return $record['status'] ?? ($cadastre === null ? 'unavailable' : 'not_matched');
 }
 
 function quoted_ids(PDO $pdo, array $ids): string {
@@ -682,12 +1048,13 @@ function contains_text(string $haystack, string $needle): bool {
     return function_exists('mb_stripos') ? mb_stripos($haystack, $needle, 0, 'UTF-8') !== false : stripos($haystack, $needle) !== false;
 }
 
-function registry_search(PDO $pdo, array $registry, string $term, array $filter): array {
+function registry_search(PDO $pdo, array $registry, string $term, array $filter, ?array $areaIds = null): array {
     if ($filter['advanced'] && ($registry['qualified_ids'] ?? []) === []) return [];
+    if ($areaIds === []) return [];
     // Exact parcel lookups use the validated index and the coordinate primary key;
     // address and partial-ID searches continue through the full-text path below.
     if (preg_match('/^[0-9]{5}\.[0-9]{1,6}\.[0-9]{1,6}$/', $term)) {
-        if (!registry_id_matches_filter($term, $registry, $filter)) return [];
+        if (!registry_id_matches_filter($term, $registry, $filter) || ($areaIds !== null && !isset($areaIds[$term]))) return [];
         $stmt = $pdo->prepare('SELECT cadastral_id, latitude AS lat, longitude AS lng FROM parcels WHERE cadastral_id = :id LIMIT 1');
         $stmt->execute(['id' => $term]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -700,7 +1067,7 @@ function registry_search(PDO $pdo, array $registry, string $term, array $filter)
     }
     $candidateIds = [];
     foreach ($registry['by_id'] as $id => $_) {
-        if (registry_id_matches_filter($id, $registry, $filter) && contains_text($id, $term)) $candidateIds[$id] = true;
+        if (($areaIds === null || isset($areaIds[$id])) && registry_id_matches_filter($id, $registry, $filter) && contains_text($id, $term)) $candidateIds[$id] = true;
     }
     // A property without linked records cannot match register text. Partial
     // cadastral-ID matching still uses the coordinate query below.
@@ -709,7 +1076,7 @@ function registry_search(PDO $pdo, array $registry, string $term, array $filter)
             $text = json_encode($document['raw_fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($text === false || !contains_text($text, $term)) continue;
             foreach ($document['cadastral_ids'] as $id) {
-                if (registry_id_matches_filter($id, $registry, $filter)) $candidateIds[$id] = true;
+                if (($areaIds === null || isset($areaIds[$id])) && registry_id_matches_filter($id, $registry, $filter)) $candidateIds[$id] = true;
             }
         }
     }
@@ -724,7 +1091,7 @@ function registry_search(PDO $pdo, array $registry, string $term, array $filter)
     $candidateIds = array_fill_keys(array_slice($candidateIdList, 0, 40), true);
     unset($candidateIdList);
     $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $term) . '%';
-    $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng FROM parcels p WHERE p.cadastral_id LIKE :term' . registry_filter($pdo, $registry, $filter) . ' ORDER BY (p.cadastral_id = :exact_term) DESC, p.cadastral_id LIMIT 40');
+    $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng FROM parcels p WHERE p.cadastral_id LIKE :term' . registry_filter($pdo, $registry, $filter) . cadastre_area_filter($pdo, $areaIds) . ' ORDER BY (p.cadastral_id = :exact_term) DESC, p.cadastral_id LIMIT 40');
     $stmt->execute(['term' => $like, 'exact_term' => $term]);
     $rows = [];
     foreach ($stmt->fetchAll() as $row) $rows[$row['cadastral_id']] = registry_plot($row, $registry);
@@ -775,6 +1142,10 @@ try {
         PDO::ATTR_EMULATE_PREPARES => false,
     ]);
     $registry = load_registry_snapshot($filter);
+    $cadastre = load_cadastre_snapshot();
+    if ($filter !== null && $filter['area_active'] && $cadastre === null) {
+        throw new FilterUnavailableException('Parcel area filters are unavailable until the cadastral open-data snapshot has been published.');
+    }
     if ($action === 'meta') {
         $counts = [
             'plots' => (int)$pdo->query('SELECT COUNT(*) FROM parcels WHERE latitude IS NOT NULL AND longitude IS NOT NULL')->fetchColumn(),
@@ -789,7 +1160,8 @@ try {
             }
             $counts['plots_with_exploitation_certificate'] = coordinate_backed_id_count($pdo, array_keys($registry['certificate_ids']));
             $counts['linked_exploitation_certificates'] = $registry['linked_certificates'];
-            respond(['counts' => $counts, 'imports' => $registry['imports'], 'registry_generated_at' => $registry['generated_at'], 'filter_options' => $registry['filter_options']]);
+            respond(['counts' => $counts, 'imports' => $registry['imports'], 'registry_generated_at' => $registry['generated_at'],
+                'filter_options' => $registry['filter_options'] + ['parcel_area' => cadastre_filter_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre)]);
         }
         $counts['documents_by_source'] = [];
         $counts['plots_by_source'] = [];
@@ -810,7 +1182,7 @@ try {
             unset($row['source_file'], $row['source_snapshot']);
             return $row;
         }, $imports);
-        respond(['counts' => $counts, 'imports' => $imports, 'filter_options' => filter_options(null)]);
+        respond(['counts' => $counts, 'imports' => $imports, 'filter_options' => filter_options(null) + ['parcel_area' => cadastre_filter_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre)]);
     }
 
     if ($action === 'viewport') {
@@ -826,6 +1198,13 @@ try {
         $where = 'p.latitude BETWEEN :south AND :north AND p.longitude BETWEEN :west AND :east'
             . ($registry !== null ? registry_filter($pdo, $registry, $filter) : record_filter($filter));
         $bounds = ['south' => $south, 'north' => $north, 'west' => $west, 'east' => $east];
+        if ($filter['area_active']) {
+            $candidateIds = cadastre_candidate_ids($pdo, $where, $bounds);
+            $areaIds = cadastre_matching_ids($cadastre, $candidateIds, $filter);
+            unset($candidateIds);
+            $where .= cadastre_area_filter($pdo, $areaIds);
+            unset($areaIds);
+        }
         $countStmt = $pdo->prepare('SELECT COUNT(*) FROM parcels p WHERE ' . $where);
         $countStmt->execute($bounds);
         $total = (int)$countStmt->fetchColumn();
@@ -900,7 +1279,14 @@ try {
         if ($term === '' || text_length($term) > 120) {
             respond(['items' => []]);
         }
-        if ($registry !== null) respond(['items' => registry_search($pdo, $registry, $term, $filter)]);
+        $areaIds = null;
+        if ($filter['area_active']) {
+            $where = '1 = 1' . ($registry !== null ? registry_filter($pdo, $registry, $filter) : record_filter($filter));
+            $candidateIds = cadastre_candidate_ids($pdo, $where, [], $registry, $filter);
+            $areaIds = cadastre_matching_ids($cadastre, $candidateIds, $filter);
+            unset($candidateIds);
+        }
+        if ($registry !== null) respond(['items' => registry_search($pdo, $registry, $term, $filter, $areaIds)]);
         $like = '%' . str_replace(['%', '_'], ['\%', '\_'], $term) . '%';
         $stmt = $pdo->prepare(
             'SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng, ' . document_flags_select() . '
@@ -910,7 +1296,7 @@ try {
                     SELECT 1 FROM parcel_documents pd
                     JOIN source_documents sd ON sd.source_code = pd.source_code AND sd.document_hash = pd.document_hash
                     WHERE pd.parcel_cadastral_id = p.cadastral_id AND sd.raw_fields LIKE :raw_term
-                ))' . record_filter($filter) . '
+                ))' . record_filter($filter) . cadastre_area_filter($pdo, $areaIds) . '
              ORDER BY (p.cadastral_id = :exact_term) DESC, p.cadastral_id LIMIT 40'
         );
         $stmt->execute(['id_term' => $like, 'raw_term' => $like, 'exact_term' => $term]);
@@ -934,7 +1320,9 @@ try {
             $plot = $stmt->fetch();
             if (!$plot && !isset($registry['by_id'][$id])) respond(['error' => 'No record was found for this cadastral identifier.'], 404);
             if (!$plot) $plot = ['cadastral_id' => $id, 'lat' => null, 'lng' => null];
-            respond(['plot' => registry_plot($plot, $registry), 'sources' => registry_plot_sources($id, $registry)]);
+            $cadastreRecord = cadastre_plot($id, $cadastre);
+            respond(['plot' => registry_plot($plot, $registry), 'sources' => registry_plot_sources($id, $registry),
+                'cadastre' => $cadastreRecord, 'cadastre_status' => cadastre_plot_status($cadastreRecord, $cadastre)]);
         }
         $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng, ' . document_flags_select() . ' FROM parcels p ' . document_flags_join() . ' WHERE p.cadastral_id = :id LIMIT 1');
         $stmt->execute(['id' => $id]);
@@ -973,7 +1361,8 @@ try {
                 'raw_fields' => is_array($rawFields) ? $rawFields : [],
             ];
         }
-        respond(['plot' => $plot, 'sources' => array_values($grouped)]);
+        $cadastreRecord = cadastre_plot($id, $cadastre);
+        respond(['plot' => $plot, 'sources' => array_values($grouped), 'cadastre' => $cadastreRecord, 'cadastre_status' => cadastre_plot_status($cadastreRecord, $cadastre)]);
     }
 
     respond(['error' => 'Unknown API action.'], 404);

@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUpRight, Check, Copy, FileCheck2, FileText, Info, Link2
 import { useI18n } from '@/lib/i18n';
 import { displayDate, fieldLabel, fieldValue, REGISTER_COLORS } from '@/lib/registerUi';
 import { realEstateApi } from '@/api/realEstateApi';
+import CadastralSummary from '@/components/details/CadastralSummary';
 
 const REGISTER_GROUPS = ['building_permits', 'projecting_visas', 'exploitation_certificates', 'exploitation_certificates_legacy'];
 const SOURCE_ORDER = Object.fromEntries(REGISTER_GROUPS.map((code, index) => [code, index]));
@@ -142,6 +143,7 @@ export default function DetailsPanel({ parcel, onClose }) {
             <div className="property-coordinate"><MapPin size={15} /><div><span>{t('panel.location')}</span>{locationAvailable ? <strong>{Number(plot.lat).toFixed(6)}, {Number(plot.lng).toFixed(6)}</strong> : <p>{t('panel.noCoordinateHelp')}</p>}</div></div>
             {overview.length > 0 && <dl className="property-overview-fields">{overview.map((field) => <div className="property-overview-field" key={field.key}><dt>{t(`panel.overview.${field.key}`)}</dt><dd>{field.values.map((entry) => <div className="property-overview-value" key={entry.value}><p>{entry.value}</p><div className="overview-value-sources">{[...entry.sources.values()].map((source) => <button key={source.code} onClick={() => goToSource(source.code)} title={sourceLabel(source, lang)}>{sourceShortLabel(source, lang, t)}<ArrowDown size={10} /></button>)}</div></div>)}</dd></div>)}</dl>}
           </section>
+          <CadastralSummary cadastre={currentData?.cadastre} status={currentData?.cadastre_status} />
           <section className={`certificate-status certificate-status-compact ${hasCertificate ? 'certificate-found' : 'certificate-unknown'}`}>
             <div className="certificate-status-top"><span className="certificate-icon"><FileCheck2 size={18} /></span><div><p>{t('certificate.heading')} · „{t('panel.act16')}“</p><h3>{hasCertificate ? t('certificate.found') : t('certificate.notLinked')}</h3></div>{hasCertificate && <span className="certificate-linked-count">{certificateDocuments.length}</span>}</div>
             <p className="certificate-explanation">{hasCertificate ? t('certificate.foundHelp') : t('certificate.notLinkedHelp')}</p>

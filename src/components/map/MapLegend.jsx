@@ -14,7 +14,7 @@ export default function MapLegend({ count, empty, loading, truncated, apiError, 
       <details className="legend-colors"><summary>{t('legend.title')}<ChevronDown size={13} /></summary><div>{Object.entries(REGISTER_COLORS).map(([code, color]) => <span key={code}><i style={{ background: color }} />{t(`legend.${code}`)}</span>)}<span><i className="legend-cluster-sample">3</i>{t('legend.cluster')}</span></div></details>
       {truncated && <p className="legend-warning">{t('map.truncated')}</p>}
       {apiError && <p role="alert" className="legend-error">{t('map.apiError')}</p>}
-      {filterError && <p role="alert" className="legend-error">{t('filter.dateRangeError')}</p>}
+      {filterError && <p role="alert" className="legend-error">{t(filterError)}</p>}
     </div>
   );
 }

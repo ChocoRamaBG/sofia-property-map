@@ -199,6 +199,27 @@
 .filter-date-presets > button { flex: 1; min-width: 0; min-height: 44px; padding: 6px; border: 1px solid #e1e8da; border-radius: 6px; color: #6c8962; background: #f8faf4; font-size: 9px; line-height: 1.4; }
 .filter-date-presets > button:hover { background: #f0f6e7; }
 .filter-date-presets > button:disabled { cursor: not-allowed; }
+.filter-document-date-list { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.filter-document-date-card { min-width: 0; margin: 0; padding: 9px 10px 11px; border: 1px solid #dce6da; border-radius: 9px; background: #fbfcf9; }
+.filter-document-date-card > legend { max-width: 100%; padding: 0 5px; color: #365d48; font-size: 11px; font-weight: 600; line-height: 1.6; }
+.filter-document-date-card.is-active { border-color: #9dcbb0; background: #f1f8f2; }
+.filter-document-date-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #617e65; font-size: 10px; line-height: 1.5; }
+.filter-document-date-heading > strong, .filter-document-date-heading > span { min-width: 0; }
+.filter-document-date-clear { flex-shrink: 0; min-height: 44px; padding: 6px 3px; border-radius: 5px; color: #376c51; font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
+.filter-document-date-clear:hover { color: #154a35; background: #e7f2e8; }
+.filter-document-date-clear:focus-visible, .filter-date-presets > button:focus-visible { outline: 2px solid #2e9276; outline-offset: 2px; }
+.filter-document-date-card .filter-date-fields { margin-top: 4px; }
+.filter-document-date-card .filter-field-help { font-size: 10px; color: #76866d; }
+.filter-legacy-date-block { margin-top: 12px; padding: 10px; border: 1px solid #e4dcca; border-radius: 8px; background: #fcfaf3; }
+.filter-legacy-date-block > p:not(.filter-field-help):not(.filter-field-error) { color: #6f765c; font-size: 11px; line-height: 1.7; }
+.filter-area-availability { margin-top: 16px; padding: 12px; border: 1px solid #e3e8e1; border-radius: 8px; background: #f9faf7; }
+.filter-area-availability > strong { display: block; color: #637661; font-size: 11px; font-weight: 600; }
+.filter-area-availability > p { margin-top: 5px; font-size: 10px; line-height: 1.7; color: #7b8973; }
+.filter-parcel-area-section { padding: 11px; margin: 0 0 17px; border: 1px solid #d8e6d7; border-radius: 9px; background: #f4f9f2; }
+.filter-parcel-area-fields { margin: 0; padding: 0; min-width: 0; border: none; }
+.filter-parcel-area-fields .filter-field > input { font-size: 12px; }
+.filter-area-source { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; margin-top: 5px; color: #406c52; font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
+.filter-area-source:hover { color: #174a34; }
 .filter-field-help > span { display: block; margin-top: 3px; }
 .filter-field-error { color: #a94f43; font-size: 10px; line-height: 1.6; margin-top: 7px; }
 .filter-field > input[aria-invalid="true"] { border-color: #c78374; }
@@ -366,6 +387,35 @@ button.map-context:hover { background: white; border-color: #a8c7b1; color: #2e7
 .document-heading strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .document-capture { font-size: 9px; margin: 5px 0 12px 22px; color: #92a18e; }
 .document-dates { display: flex; flex-direction: column; gap: 3px; margin: 6px 0 12px 22px; font-size: 9px; color: #899b86; line-height: 1.6; }
+.cadastre-summary { margin: 18px 0; padding: 16px; border: 1px solid #d6e5dd; border-radius: 10px; background: #f7fbf8; }
+.cadastre-summary h3 { color: #2d5446; font-size: 13px; font-weight: 650; line-height: 1.5; }
+.cadastre-summary-heading { display: flex; align-items: flex-start; gap: 8px; color: #567d6a; }
+.cadastre-summary-heading > svg { flex-shrink: 0; margin-top: 2px; }
+.cadastre-summary-heading p { margin-top: 3px; color: #758a7c; font-size: 10px; line-height: 1.6; }
+.cadastre-area { display: flex; align-items: center; gap: 11px; margin: 16px 0 8px; padding: 14px; border: 1px solid #d7e8db; border-radius: 8px; background: #edf6ef; color: #508065; }
+.cadastre-area > svg { flex-shrink: 0; }
+.cadastre-area span { display: block; color: #6a816e; font-size: 10px; line-height: 1.6; }
+.cadastre-area-value { display: block; margin-top: 4px; color: #245941; font-size: 23px; line-height: 1.3; letter-spacing: -.5px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.cadastre-note { margin-top: 7px; color: #7b8a7d; font-size: 10px; line-height: 1.7; }
+.cadastre-fields { margin-top: 15px; }
+.cadastre-fields .register-field { padding: 10px 0; border-top: 1px solid #e0e9e1; }
+.cadastre-fields .register-field > dt { color: #798a7c; font-size: 10px; line-height: 1.6; }
+.cadastre-fields .register-field > dd { margin-top: 4px; color: #3f5e4d; font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.cadastre-source { padding-top: 12px; margin-top: 11px; border-top: 1px solid #dfe9e0; color: #426653; font-size: 10px; line-height: 1.7; }
+.cadastre-source > strong { display: block; font-weight: 600; }
+.cadastre-source > p { margin-top: 4px; color: #839184; }
+.cadastre-source > a, .cadastre-provenance > a { display: inline-flex; align-items: center; gap: 5px; min-height: 40px; color: #3e7859; text-decoration: underline; text-underline-offset: 3px; }
+.cadastre-provenance > dl { padding: 8px 0; }
+.cadastre-provenance .register-field > dd { overflow-wrap: anywhere; }
+.cadastre-summary-missing { background: #fbfcfa; border-color: #e3e9e1; }
+.cadastre-summary-conflict { background: #fffcf5; border-color: #eadbb8; }
+.cadastre-summary-conflict .cadastre-summary-heading, .cadastre-summary-conflict h3 { color: #85662c; }
+.cadastre-conflict-variants { display: grid; gap: 8px; margin-top: 14px; }
+.cadastre-conflict-variant { border: 1px solid #e9dfc9; border-radius: 8px; background: #fffefb; padding: 0 11px; }
+.cadastre-conflict-variant > summary { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 46px; cursor: pointer; color: #78643e; font-size: 11px; line-height: 1.5; }
+.cadastre-conflict-variant > summary strong { font-variant-numeric: tabular-nums; }
+.cadastre-conflict-variant > summary:focus-visible { outline: 2px solid #b49657; outline-offset: 3px; border-radius: 4px; }
+.cadastre-conflict-variant .cadastre-source { padding-bottom: 8px; }
 .document-source-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 13px; color: #60836d; font-size: 9px; line-height: 1.6; }
 .document-source-link:hover { text-decoration: underline; }
 .document-fields-empty { margin-top: 12px; color: #8c9988; font-size: 10px; }

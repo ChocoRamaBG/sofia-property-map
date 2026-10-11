@@ -6,7 +6,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useI18n } from '@/lib/i18n';
 import { trackEvent } from '@/lib/analytics';
 import { displayCount, displayDate } from '@/lib/registerUi';
-import { activeFilterCount, invalidFilterDates, normalizePropertyFilters, readPropertyFilters, writePropertyFilters } from '@/lib/propertyFilters';
+import { activeFilterCount, invalidFilterArea, invalidFilterDates, normalizePropertyFilters, readPropertyFilters, writePropertyFilters } from '@/lib/propertyFilters';
 import { realEstateApi } from '@/api/realEstateApi';
 import AppHeader from '@/components/AppHeader';
 import DataNotice from '@/components/DemoNotice';
@@ -31,6 +31,7 @@ function DatasetSummary({ meta }) {
         <summary><ShieldCheck size={16} /><span>{t('dataset.sources')}</span><ChevronDown size={14} /></summary>
         <div className="dataset-source-list">
           {imports.map((source) => <div key={source.source_code}><a href={source.source_url} target="_blank" rel="noreferrer">{lang === 'bg' ? source.label_bg : source.label_en}<ArrowUpRight size={13} /></a><small>{source.snapshot_date ? t('dataset.snapshot', { date: displayDate(source.snapshot_date, lang) }) : t('dataset.dateUnknown')}</small></div>)}
+          {meta?.cadastre && <div><a href={meta.cadastre.source_url} target="_blank" rel="noreferrer">{lang === 'bg' ? meta.cadastre.label_bg : meta.cadastre.label_en}<ArrowUpRight size={13} /></a><small>{t('dataset.cadastreCount', { n: displayCount(meta.cadastre.parcel_count, lang) })}</small>{meta.cadastre.captured_at && <small>{t('dataset.loaded', { date: displayDate(meta.cadastre.captured_at, lang) })}</small>}</div>}
           <p>{t('dataset.snapshotHelp')}</p>
         </div>
       </details>
@@ -81,6 +82,7 @@ export default function Home() {
     const term = query.trim();
     if (!term) return;
     if (invalidFilterDates(filters)) { toast({ title: t('filter.dateRangeError'), variant: 'destructive' }); return; }
+    if (invalidFilterArea(filters)) { toast({ title: t('filter.areaRangeError'), variant: 'destructive' }); return; }
     trackEvent('search_submit');
     const request = ++searchRequest.current;
     setSearching(true);

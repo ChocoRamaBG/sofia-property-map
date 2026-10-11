@@ -2,9 +2,11 @@ import React, { useId, useState } from 'react';
 import { Check, ChevronDown, FileCheck2, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { REGISTER_FILTERS, REGISTER_COLORS, displayCount, displayDate } from '@/lib/registerUi';
+import { invalidFilterArea } from '@/lib/propertyFilters';
 
-const EMPTY_FILTERS = { recordTypes: [], match: 'any', district: '', descriptionTag: '', dateFrom: '', dateTo: '', hasAddress: false };
+const EMPTY_FILTERS = { recordTypes: [], match: 'any', district: '', descriptionTag: '', dateFrom: '', dateTo: '', hasAddress: false, areaMin: '', areaMax: '' };
 const DOCUMENT_TYPES = REGISTER_FILTERS.filter((code) => code !== 'all' && code !== 'no_records');
+const emptyDocumentDates = () => Object.fromEntries(DOCUMENT_TYPES.map((type) => [type, { from: '', to: '' }]));
 
 function inputDate(date) {
   return String(date.getFullYear()) + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
@@ -13,26 +15,41 @@ function inputDate(date) {
 export default function RegisterFilters({ value, onChange, counts, options }) {
   const { t, lang } = useI18n();
   const id = useId();
-  const filters = { ...EMPTY_FILTERS, ...value, recordTypes: Array.isArray(value?.recordTypes) ? value.recordTypes : [] };
-  const [expanded, setExpanded] = useState(Boolean(filters.district || filters.descriptionTag || filters.dateFrom || filters.dateTo || filters.hasAddress));
+  const filters = { ...EMPTY_FILTERS, ...value, recordTypes: Array.isArray(value?.recordTypes) ? value.recordTypes : [], documentDates: Object.fromEntries(DOCUMENT_TYPES.map((type) => [type, { from: '', to: '', ...value?.documentDates?.[type] }])) };
+  const scopedDateCount = DOCUMENT_TYPES.filter((type) => filters.documentDates[type].from || filters.documentDates[type].to).length;
+  const hasAreaRange = filters.areaMin !== '' || filters.areaMax !== '';
+  const [expanded, setExpanded] = useState(Boolean(filters.district || filters.descriptionTag || filters.dateFrom || filters.dateTo || filters.hasAddress || scopedDateCount || hasAreaRange));
   const noRecords = filters.recordTypes.includes('no_records');
   const selectedTypes = filters.recordTypes.filter((code) => code !== 'no_records');
-  const advancedCount = Number(Boolean(filters.district)) + Number(Boolean(filters.descriptionTag)) + Number(Boolean(filters.dateFrom || filters.dateTo)) + Number(filters.hasAddress);
+  const advancedCount = Number(Boolean(filters.district)) + Number(Boolean(filters.descriptionTag)) + Number(Boolean(filters.dateFrom || filters.dateTo)) + Number(filters.hasAddress) + scopedDateCount + Number(hasAreaRange);
   const activeCount = filters.recordTypes.length + advancedCount;
   const advancedAvailable = options?.available === true;
+  const scopedDatesAvailable = options?.scoped_dates_available === true;
   const advancedDisabled = noRecords || !advancedAvailable;
   const dateRangeError = Boolean(filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo);
+  const areaRangeError = invalidFilterArea(filters);
+  const areaOptions = options?.parcel_area;
+  const areaAvailable = areaOptions?.available === true;
+  const areaNumber = (number) => Number.isFinite(Number(number)) ? Number(number).toLocaleString(lang === 'bg' ? 'bg-BG' : 'en-GB', { maximumFractionDigits: 8 }) : String(number);
   const districts = (options?.districts || []).map((item) => typeof item === 'string' ? { key: item, label: item } : { ...item, key: item.key ?? item.value, label: item.label ?? item.key ?? item.value });
   const descriptions = (options?.description_tags || []).map((item) => ({ ...item, label: lang === 'bg' ? item.label_bg || item.label_en || item.key : item.label_en || item.label_bg || item.key }));
-  const reset = () => onChange({ ...EMPTY_FILTERS, recordTypes: [] });
+  const reset = () => onChange({ ...EMPTY_FILTERS, recordTypes: [], documentDates: emptyDocumentDates() });
   const update = (patch) => onChange({ ...filters, ...patch });
+  const updateDocumentDates = (type, patch) => {
+    const range = { ...filters.documentDates[type], ...patch };
+    update({
+      documentDates: { ...filters.documentDates, [type]: range },
+      recordTypes: range.from || range.to ? [...new Set([...selectedTypes, type])] : selectedTypes,
+      dateFrom: '', dateTo: '',
+    });
+  };
   const toggleType = (code) => {
     if (code === 'no_records') {
-      onChange({ ...EMPTY_FILTERS, recordTypes: noRecords ? [] : ['no_records'] });
+      onChange({ ...EMPTY_FILTERS, recordTypes: noRecords ? [] : ['no_records'], documentDates: emptyDocumentDates(), areaMin: filters.areaMin, areaMax: filters.areaMax });
       return;
     }
     const next = selectedTypes.includes(code) ? selectedTypes.filter((type) => type !== code) : [...selectedTypes, code];
-    update({ recordTypes: next, match: next.length < 2 ? 'any' : filters.match });
+    update({ recordTypes: next, match: next.length < 2 ? 'any' : filters.match, documentDates: selectedTypes.includes(code) ? { ...filters.documentDates, [code]: { from: '', to: '' } } : filters.documentDates });
   };
   const sourceCount = (code) => code === 'exploitation_certificates' ? counts?.plots_with_exploitation_certificate : code === 'no_records' ? counts?.plots_without_records ?? counts?.plots_by_source?.no_records : counts?.plots_by_source?.[code];
   const typeOption = (code) => (
@@ -48,8 +65,15 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
     ...filters.recordTypes.map((code) => ({ key: code, label: t('filter.chip.' + code), remove: () => toggleType(code) })),
     ...(filters.district ? [{ key: 'district', label: t('filter.districtChip', { district: districts.find((item) => item.key === filters.district)?.label || filters.district }), remove: () => update({ district: '' }) }] : []),
     ...(filters.descriptionTag ? [{ key: 'description', label: descriptions.find((item) => item.key === filters.descriptionTag)?.label || filters.descriptionTag, remove: () => update({ descriptionTag: '' }) }] : []),
-    ...(filters.dateFrom || filters.dateTo ? [{ key: 'dates', label: filters.dateFrom && filters.dateTo ? displayDate(filters.dateFrom, lang) + ' – ' + displayDate(filters.dateTo, lang) : filters.dateFrom ? t('filter.fromChip', { date: displayDate(filters.dateFrom, lang) }) : t('filter.toChip', { date: displayDate(filters.dateTo, lang) }), remove: () => update({ dateFrom: '', dateTo: '' }) }] : []),
+    ...DOCUMENT_TYPES.flatMap((type) => {
+      const range = filters.documentDates[type];
+      if (!range.from && !range.to) return [];
+      const period = range.from && range.to ? displayDate(range.from, lang) + ' – ' + displayDate(range.to, lang) : range.from ? t('filter.fromChip', { date: displayDate(range.from, lang) }) : t('filter.toChip', { date: displayDate(range.to, lang) });
+      return [{ key: 'dates-' + type, label: t('filter.documentDateChip', { document: t('filter.chip.' + type), period }), remove: () => updateDocumentDates(type, { from: '', to: '' }) }];
+    }),
+    ...(filters.dateFrom || filters.dateTo ? [{ key: 'dates', label: t('filter.legacyDateChip', { period: filters.dateFrom && filters.dateTo ? displayDate(filters.dateFrom, lang) + ' – ' + displayDate(filters.dateTo, lang) : filters.dateFrom ? t('filter.fromChip', { date: displayDate(filters.dateFrom, lang) }) : t('filter.toChip', { date: displayDate(filters.dateTo, lang) }) }), remove: () => update({ dateFrom: '', dateTo: '' }) }] : []),
     ...(filters.hasAddress ? [{ key: 'address', label: t('filter.addressChip'), remove: () => update({ hasAddress: false }) }] : []),
+    ...(hasAreaRange ? [{ key: 'area', label: filters.areaMin !== '' && filters.areaMax !== '' ? t('filter.areaChip', { from: areaNumber(filters.areaMin), to: areaNumber(filters.areaMax) }) : filters.areaMin !== '' ? t('filter.areaMinChip', { area: areaNumber(filters.areaMin) }) : t('filter.areaMaxChip', { area: areaNumber(filters.areaMax) }), remove: () => update({ areaMin: '', areaMax: '' }) }] : []),
   ];
 
   return (
@@ -62,35 +86,6 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
       <button type="button" className={'filter-all-preset ' + (activeCount === 0 ? 'is-active' : '')} onClick={reset}>
         <span>{t('filter.all')}</span>{counts?.plots != null && <span className="filter-count">{displayCount(counts.plots, lang)}</span>}{activeCount === 0 && <Check size={14} aria-hidden="true" />}
       </button>
-      <div className="filter-advanced">
-        <button type="button" className="filter-advanced-toggle" aria-expanded={expanded} aria-controls={id + '-advanced'} onClick={() => setExpanded((open) => !open)}>
-          <span><strong>{t('filter.more')}</strong><small>{t('filter.moreSummary')}</small></span>{advancedCount > 0 && <span className="filter-active-count">{advancedCount}</span>}<ChevronDown size={17} className={expanded ? 'is-open' : ''} aria-hidden="true" />
-        </button>
-        {expanded && <div id={id + '-advanced'} className="filter-advanced-body">
-          {advancedDisabled && <p className="filter-selection-help">{noRecords ? t('filter.advancedNeedsRecords') : options ? t('filter.advancedUnavailable') : t('filter.advancedLoading')}</p>}
-          <fieldset disabled={advancedDisabled} className="filter-advanced-fields">
-            <legend className="sr-only">{t('filter.more')}</legend>
-            <label className="filter-field" htmlFor={id + '-district'}><span>{t('filter.district')}</span><select id={id + '-district'} value={filters.district} onChange={(event) => update({ district: event.target.value })}><option value="">{t('filter.allDistricts')}</option>{districts.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
-            <label className="filter-field" htmlFor={id + '-description'}><span>{t('filter.descriptionTag')}</span><select id={id + '-description'} value={filters.descriptionTag} onChange={(event) => update({ descriptionTag: event.target.value })}><option value="">{t('filter.anyDescription')}</option>{descriptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select><small>{t('filter.descriptionTagHelp')}</small></label>
-            <div className="filter-date-section">
-              <span className="filter-field-heading">{t('filter.documentDate')}</span>
-              <div className="filter-date-fields">
-                <label className="filter-field" htmlFor={id + '-date-from'}><span>{t('filter.dateFrom')}</span><input id={id + '-date-from'} type="date" value={filters.dateFrom} max={filters.dateTo || undefined} aria-invalid={dateRangeError || undefined} aria-describedby={dateRangeError ? id + '-date-error' : undefined} onChange={(event) => update({ dateFrom: event.target.value })} /></label>
-                <label className="filter-field" htmlFor={id + '-date-to'}><span>{t('filter.dateTo')}</span><input id={id + '-date-to'} type="date" value={filters.dateTo} min={filters.dateFrom || undefined} aria-invalid={dateRangeError || undefined} aria-describedby={dateRangeError ? id + '-date-error' : undefined} onChange={(event) => update({ dateTo: event.target.value })} /></label>
-              </div>
-              {dateRangeError && <p id={id + '-date-error'} className="filter-field-error" role="alert">{t('filter.dateRangeError')}</p>}
-              <div className="filter-date-presets">
-                <button type="button" onClick={() => { const today = new Date(); update({ dateFrom: today.getFullYear() + '-01-01', dateTo: inputDate(today) }); }}>{t('filter.thisYear')}</button>
-                <button type="button" onClick={() => { const today = new Date(); update({ dateFrom: inputDate(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())), dateTo: inputDate(today) }); }}>{t('filter.lastYear')}</button>
-              </div>
-              <p className="filter-field-help">{t('filter.dateHelp')}{options?.date_min && options?.date_max && <span>{t('filter.dateRange', { from: displayDate(options.date_min, lang), to: displayDate(options.date_max, lang) })}</span>}</p>
-            </div>
-            <label className="filter-address-option"><input type="checkbox" checked={filters.hasAddress} onChange={(event) => update({ hasAddress: event.target.checked })} /><span>{t('filter.hasAddress')}<small>{t('filter.addressHelp')}</small></span></label>
-          </fieldset>
-          {!advancedDisabled && <p className="filter-selection-help">{t('filter.combineHelp')}</p>}
-        </div>}
-      </div>
-
       <fieldset className="filter-types">
         <legend>{t('filter.documentTypes')}</legend>
         <div className="filter-options">{DOCUMENT_TYPES.map(typeOption)}</div>
@@ -104,6 +99,70 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
       </div>}
       <div className="filter-no-records-wrap">{typeOption('no_records')}</div>
       {noRecords && <p className="filter-selection-help">{t('filter.noRecordsHelp')}</p>}
+      <div className="filter-advanced">
+        <button type="button" className="filter-advanced-toggle" aria-expanded={expanded} aria-controls={id + '-advanced'} onClick={() => setExpanded((open) => !open)}>
+          <span><strong>{t('filter.more')}</strong><small>{t('filter.moreSummary')}</small></span>{advancedCount > 0 && <span className="filter-active-count">{advancedCount}</span>}<ChevronDown size={17} className={expanded ? 'is-open' : ''} aria-hidden="true" />
+        </button>
+        {expanded && <div id={id + '-advanced'} className="filter-advanced-body">
+          <div className="filter-parcel-area-section">
+            <div className="filter-document-date-heading"><strong>{t('filter.parcelArea')}</strong>{hasAreaRange && <button type="button" className="filter-document-date-clear" onClick={() => update({ areaMin: '', areaMax: '' })}>{t('filter.clearArea')}</button>}</div>
+            {!areaAvailable && <p className="filter-selection-help">{options ? t('filter.parcelAreaUnavailable') : t('filter.parcelAreaLoading')}</p>}
+            <fieldset disabled={!areaAvailable} className="filter-parcel-area-fields">
+              <legend className="sr-only">{t('filter.parcelArea')}</legend>
+              <div className="filter-date-fields">
+                <label className="filter-field" htmlFor={id + '-area-min'}><span>{t('filter.areaMin')}</span><input id={id + '-area-min'} type="number" min="0" max={filters.areaMax || '1000000000'} step="any" inputMode="decimal" value={filters.areaMin} aria-invalid={areaRangeError || undefined} aria-describedby={areaRangeError ? id + '-area-error' : id + '-area-help'} onChange={(event) => update({ areaMin: event.target.value })} /></label>
+                <label className="filter-field" htmlFor={id + '-area-max'}><span>{t('filter.areaMax')}</span><input id={id + '-area-max'} type="number" min={filters.areaMin || '0'} max="1000000000" step="any" inputMode="decimal" value={filters.areaMax} aria-invalid={areaRangeError || undefined} aria-describedby={areaRangeError ? id + '-area-error' : id + '-area-help'} onChange={(event) => update({ areaMax: event.target.value })} /></label>
+              </div>
+            </fieldset>
+            {areaRangeError && <p id={id + '-area-error'} className="filter-field-error" role="alert">{t('filter.areaRangeError')}</p>}
+            <p id={id + '-area-help'} className="filter-field-help">{t('filter.parcelAreaHelp')}</p>
+            {areaAvailable && <p className="filter-field-help">{t('filter.parcelAreaCoverage', { n: displayCount(areaOptions.parcel_count, lang) })}{areaOptions.min_m2 != null && areaOptions.max_m2 != null && <span>{t('filter.parcelAreaAvailableRange', { from: areaNumber(areaOptions.min_m2), to: areaNumber(areaOptions.max_m2) })}</span>}</p>}
+            {Number(areaOptions?.ambiguous_parcel_count) > 0 && <p className="filter-field-help">{t('filter.parcelAreaAmbiguous', { n: displayCount(areaOptions.ambiguous_parcel_count, lang) })}</p>}
+            {areaAvailable && areaOptions.source_url && <a className="filter-area-source" href={areaOptions.source_url} target="_blank" rel="noreferrer">{t('filter.parcelAreaSource')}</a>}
+          </div>
+          {advancedDisabled && <p className="filter-selection-help">{noRecords ? t('filter.advancedNeedsRecords') : options ? t('filter.advancedUnavailable') : t('filter.advancedLoading')}</p>}
+          <fieldset disabled={advancedDisabled} className="filter-advanced-fields">
+            <legend className="sr-only">{t('filter.more')}</legend>
+            <label className="filter-field" htmlFor={id + '-district'}><span>{t('filter.district')}</span><select id={id + '-district'} value={filters.district} onChange={(event) => update({ district: event.target.value })}><option value="">{t('filter.allDistricts')}</option>{districts.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
+            <label className="filter-field" htmlFor={id + '-description'}><span>{t('filter.descriptionTag')}</span><select id={id + '-description'} value={filters.descriptionTag} onChange={(event) => update({ descriptionTag: event.target.value })}><option value="">{t('filter.anyDescription')}</option>{descriptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select><small>{t('filter.descriptionTagHelp')}</small></label>
+            <div className="filter-date-section filter-document-date-section">
+              <span className="filter-field-heading">{t('filter.documentDates')}</span>
+              <p className="filter-field-help">{t('filter.documentDatesHelp')}</p>
+              {advancedAvailable && !scopedDatesAvailable && <p className="filter-selection-help">{t('filter.documentDatesUnavailable')}</p>}
+              {(filters.dateFrom || filters.dateTo) && <div className="filter-legacy-date-block">
+                <div className="filter-document-date-heading"><strong>{t('filter.legacyDateTitle')}</strong><button type="button" className="filter-document-date-clear" onClick={() => update({ dateFrom: '', dateTo: '' })}>{t('filter.clearPeriod')}</button></div>
+                <p>{filters.dateFrom && filters.dateTo ? displayDate(filters.dateFrom, lang) + ' – ' + displayDate(filters.dateTo, lang) : filters.dateFrom ? t('filter.fromChip', { date: displayDate(filters.dateFrom, lang) }) : t('filter.toChip', { date: displayDate(filters.dateTo, lang) })}</p>
+                <p className="filter-field-help">{t('filter.legacyDateHelp')}</p>
+                {dateRangeError && <p className="filter-field-error" role="alert">{t('filter.dateRangeError')}</p>}
+              </div>}
+              <div className="filter-document-date-list">{DOCUMENT_TYPES.map((type) => {
+                const range = filters.documentDates[type];
+                const rangeError = Boolean(range.from && range.to && range.from > range.to);
+                const typeId = id + '-dates-' + type;
+                const available = options?.document_date_ranges?.[type];
+                const document = t('filter.' + type);
+                return <fieldset key={type} disabled={!scopedDatesAvailable} className={'filter-document-date-card ' + (range.from || range.to ? 'is-active' : '')}>
+                  <legend>{document}</legend>
+                  {(range.from || range.to) && <div className="filter-document-date-heading"><span>{t('filter.periodSelected')}</span><button type="button" className="filter-document-date-clear" aria-label={t('filter.clearDocumentPeriod', { document })} onClick={() => updateDocumentDates(type, { from: '', to: '' })}>{t('filter.clearPeriod')}</button></div>}
+                  <div className="filter-date-fields">
+                    <label className="filter-field" htmlFor={typeId + '-from'}><span>{t('filter.dateFrom')}</span><input id={typeId + '-from'} type="date" value={range.from} max={range.to || undefined} aria-label={t('filter.documentDateFrom', { document })} aria-invalid={rangeError || undefined} aria-describedby={rangeError ? typeId + '-error' : undefined} onChange={(event) => updateDocumentDates(type, { from: event.target.value })} /></label>
+                    <label className="filter-field" htmlFor={typeId + '-to'}><span>{t('filter.dateTo')}</span><input id={typeId + '-to'} type="date" value={range.to} min={range.from || undefined} aria-label={t('filter.documentDateTo', { document })} aria-invalid={rangeError || undefined} aria-describedby={rangeError ? typeId + '-error' : undefined} onChange={(event) => updateDocumentDates(type, { to: event.target.value })} /></label>
+                  </div>
+                  {rangeError && <p id={typeId + '-error'} className="filter-field-error" role="alert">{t('filter.dateRangeError')}</p>}
+                  <div className="filter-date-presets">
+                    <button type="button" aria-label={t('filter.documentDatePreset', { document, period: t('filter.thisYear') })} onClick={() => { const today = new Date(); updateDocumentDates(type, { from: today.getFullYear() + '-01-01', to: inputDate(today) }); }}>{t('filter.thisYear')}</button>
+                    <button type="button" aria-label={t('filter.documentDatePreset', { document, period: t('filter.lastYear') })} onClick={() => { const today = new Date(); updateDocumentDates(type, { from: inputDate(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())), to: inputDate(today) }); }}>{t('filter.lastYear')}</button>
+                  </div>
+                  {available?.date_min && available?.date_max && <p className="filter-field-help">{t('filter.dateRange', { from: displayDate(available.date_min, lang), to: displayDate(available.date_max, lang) })}</p>}
+                </fieldset>;
+              })}</div>
+              <p className="filter-field-help">{t('filter.dateHelp')}</p>
+            </div>
+            <label className="filter-address-option"><input type="checkbox" checked={filters.hasAddress} onChange={(event) => update({ hasAddress: event.target.checked })} /><span>{t('filter.hasAddress')}<small>{t('filter.addressHelp')}</small></span></label>
+          </fieldset>
+          {!advancedDisabled && <p className="filter-selection-help">{t('filter.combineHelp')}</p>}
+        </div>}
+      </div>
 
       {chips.length > 0 && <div className="filter-active-list" aria-label={t('filter.activeFilters')}>{chips.map((chip) => <button type="button" key={chip.key} className="filter-active-chip" onClick={chip.remove} aria-label={t('filter.remove', { filter: chip.label })}><span>{chip.label}</span><X size={13} aria-hidden="true" /></button>)}</div>}
       <p className="filter-footnote">{t('filter.note')}</p>
