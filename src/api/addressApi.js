@@ -1,5 +1,11 @@
 const ADDRESS_API_URL = import.meta.env.VITE_ADDRESS_API_URL || './geocode.php';
 
+function lookupQuery(query) {
+  const original = query.trim();
+  const normalized = original.replace(/(\p{L})([0-9]{1,4}(?:[a-zа-я])?)(?=\s*(?:[,;]\s*(?:София|Sofia)(?:\s*,\s*(?:България|Bulgaria))?)?\s*$)/iu, '$1 $2');
+  return Array.from(normalized).length <= 160 ? normalized : original;
+}
+
 export class AddressLookupError extends Error {
   constructor(code = 'unavailable', retryAfter = null) {
     super(code);
@@ -23,7 +29,7 @@ export const addressApi = {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ q: query.trim(), lang: lang === 'en' ? 'en' : 'bg' }),
+      body: JSON.stringify({ q: lookupQuery(query), lang: lang === 'en' ? 'en' : 'bg' }),
       signal,
     });
     const payload = await response.json().catch(() => { throw new AddressLookupError(); });

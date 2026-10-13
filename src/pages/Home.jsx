@@ -8,6 +8,7 @@ import { trackEvent } from '@/lib/analytics';
 import { displayCount, displayDate } from '@/lib/registerUi';
 import { activeFilterCount, invalidFilterArea, invalidFilterDates, invalidFilterSearch, normalizePropertyFilters, readPropertyFilters, SEARCH_TERM_LIMIT, SEARCH_TERM_LENGTH_LIMIT, writePropertyFilters } from '@/lib/propertyFilters';
 import { realEstateApi } from '@/api/realEstateApi';
+import { isAddressQuery } from '@/lib/searchIntent';
 import AppHeader from '@/components/AppHeader';
 import DataNotice from '@/components/DemoNotice';
 import MapView from '@/components/map/MapView';
@@ -62,10 +63,15 @@ export default function Home() {
   const [meta, setMeta] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [addressLocation, setAddressLocation] = useState(null);
+  const [addressRequest, setAddressRequest] = useState(null);
+  const [addressProvider, setAddressProvider] = useState(null);
   const [searchTab, setSearchTab] = useState('records');
   const [workspace, setWorkspace] = useState(() => window.location.hash === '#offers' ? 'offers' : 'map');
   const [marketAlertCount, setMarketAlertCount] = useState(0);
   const searchRequest = useRef(0);
+  const addressRequestSequence = useRef(0);
+  const navigationGeneration = useRef(0);
+  const pendingAddressNavigation = useRef(null);
   const fitSearchResults = useRef(filters.searchTerms.length > 0);
   const mapRef = useRef(null);
   mapRef.current = map;
@@ -89,24 +95,35 @@ export default function Home() {
     return () => window.removeEventListener('hashchange', update);
   }, []);
   const changeWorkspace = useCallback((next) => {
+    navigationGeneration.current += 1; pendingAddressNavigation.current = null; setAddressRequest(null);
     trackEvent('workspace_open', { workspace: next });
     setSearchOpen(false);
     setWorkspace(next);
     window.location.hash = next === 'offers' ? 'offers' : 'map';
   }, []);
-  const handleAddressSelect = useCallback((location) => {
+  const handleAddressSelect = useCallback((location, lookupGeneration) => {
+    if (lookupGeneration != null && lookupGeneration !== navigationGeneration.current) return;
+    navigationGeneration.current += 1;
+    pendingAddressNavigation.current = location;
     setAddressLocation(location); setSelected(null); setSearchOpen(false);
     searchReturn.current = null; pendingSearchReturn.current = null; returningToSearch.current = false; setCanReturnToSearch(false);
-    const currentMap = mapRef.current;
-    if (!currentMap) return;
-    currentMap.stop();
-    const extent = location.bounds;
-    if (extent && ['south', 'north', 'west', 'east'].every((key) => Number.isFinite(extent[key]))) {
-      currentMap.fitBounds([[extent.south, extent.west], [extent.north, extent.east]], { padding: [48, 48], maxZoom: location.precision === 'address' ? 18 : 16 });
-    } else currentMap.flyTo([location.lat, location.lng], location.precision === 'address' ? 18 : 16);
     trackEvent('address_locate');
   }, []);
-  const clearAddress = useCallback(() => setAddressLocation(null), []);
+  useEffect(() => {
+    const location = pendingAddressNavigation.current;
+    if (!map || !location) return;
+    pendingAddressNavigation.current = null;
+    map.stop();
+    map.invalidateSize({ pan: false });
+    const extent = location.bounds;
+    if (extent && ['south', 'north', 'west', 'east'].every((key) => Number.isFinite(extent[key]))) {
+      map.fitBounds([[extent.south, extent.west], [extent.north, extent.east]], { padding: [48, 48], maxZoom: location.precision === 'address' ? 18 : 16 });
+    } else map.flyTo([location.lat, location.lng], location.precision === 'address' ? 18 : 16);
+  }, [map, addressLocation]);
+  const clearAddress = useCallback(() => { navigationGeneration.current += 1; pendingAddressNavigation.current = null; setAddressLocation(null); }, []);
+  const addressLookupStarted = useCallback(() => { navigationGeneration.current += 1; pendingAddressNavigation.current = null; fitSearchResults.current = false; return navigationGeneration.current; }, []);
+  const addressRequestHandled = useCallback((id) => setAddressRequest((current) => current?.id === id ? null : current), []);
+  const addressRequestCurrent = useCallback((request) => request.generation === navigationGeneration.current, []);
   const rememberSearchView = useCallback((plot) => {
     pendingSearchReturn.current = null;
     returningToSearch.current = false;
@@ -165,10 +182,11 @@ export default function Home() {
     });
     return () => { window.cancelAnimationFrame(frame); };
   }, [selected, isMobile, searchOpen, map]);
-  const handleSelect = useCallback((plot) => { trackEvent('property_open', { entry_point: 'map' }); rememberSearchView(plot); setSelected(plot); setSearchOpen(false); }, [rememberSearchView]);
+  const handleSelect = useCallback((plot) => { navigationGeneration.current += 1; pendingAddressNavigation.current = null; trackEvent('property_open', { entry_point: 'map' }); rememberSearchView(plot); setSelected(plot); setSearchOpen(false); }, [rememberSearchView]);
   const handleClear = useCallback(() => { setQuery(''); }, []);
   const handleQueryChange = useCallback((value) => { setQuery(value); }, []);
   const handleFilterChange = useCallback((value) => {
+    navigationGeneration.current += 1; pendingAddressNavigation.current = null;
     const next = normalizePropertyFilters(value);
     trackEvent('filter_change', { filter_count: activeFilterCount(next), record_type_count: next.recordTypes.length });
     searchReturn.current = null; pendingSearchReturn.current = null; returningToSearch.current = false; setCanReturnToSearch(false);
@@ -179,9 +197,10 @@ export default function Home() {
     if (isMobile) setSearchOpen(true);
     else filterPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [isMobile]);
-  const handleSearch = useCallback(() => {
+  const handleRecordSearch = useCallback(() => {
     const term = query.trim();
     if (!term) return;
+    navigationGeneration.current += 1; pendingAddressNavigation.current = null;
     if (invalidFilterDates(filters)) { toast({ title: t('filter.dateRangeError'), variant: 'destructive' }); return; }
     if (invalidFilterArea(filters)) { toast({ title: t('filter.areaRangeError'), variant: 'destructive' }); return; }
     if (Array.from(term).length > SEARCH_TERM_LENGTH_LIMIT || filters.searchTerms.length >= SEARCH_TERM_LIMIT) {
@@ -195,6 +214,20 @@ export default function Home() {
     handleFilterChange({ ...filters, searchTerms: [...filters.searchTerms, term] });
     setQuery('');
   }, [query, filters, handleFilterChange, t, toast]);
+  const handleFindAddress = useCallback(() => {
+    const value = query.trim();
+    if (Array.from(value).length < 3 || Array.from(value).length > 160) return;
+    // Recover an identical address phrase saved by the previous record-only input.
+    const remainingTerms = filters.searchTerms.filter((term) => term.trim().toLocaleLowerCase('bg') !== value.toLocaleLowerCase('bg'));
+    if (remainingTerms.length !== filters.searchTerms.length) handleFilterChange({ ...filters, searchTerms: remainingTerms });
+    const generation = addressLookupStarted();
+    setSearchTab('address');
+    setAddressRequest({ id: ++addressRequestSequence.current, query: value, generation });
+  }, [query, filters, handleFilterChange, addressLookupStarted]);
+  const handleSearch = useCallback(() => {
+    if (isAddressQuery(query)) handleFindAddress();
+    else handleRecordSearch();
+  }, [query, handleFindAddress, handleRecordSearch]);
   const handleRemoveTerm = useCallback((term) => {
     fitSearchResults.current = true;
     handleFilterChange({ ...filters, searchTerms: filters.searchTerms.filter((value) => value !== term) });
@@ -219,6 +252,7 @@ export default function Home() {
     }
     const controller = new AbortController();
     const shouldFit = fitSearchResults.current;
+    const generation = navigationGeneration.current;
     fitSearchResults.current = false;
     setSearching(true); setSearchResponse(null); setSearchError(false);
     realEstateApi.search('', filters, controller.signal).then((response) => {
@@ -226,7 +260,7 @@ export default function Home() {
       setSearchResponse(response);
       const extent = response.bounds;
       const coordinates = ['south', 'north', 'west', 'east'].map((key) => Number(extent?.[key]));
-      if (shouldFit && extent && coordinates.every(Number.isFinite) && coordinates[0] <= coordinates[1] && coordinates[2] <= coordinates[3]) {
+      if (shouldFit && generation === navigationGeneration.current && extent && coordinates.every(Number.isFinite) && coordinates[0] <= coordinates[1] && coordinates[2] <= coordinates[3]) {
         mapRef.current?.fitBounds([[coordinates[0], coordinates[2]], [coordinates[1], coordinates[3]]], { padding: [48, 48], maxZoom: 17 });
       }
     }).catch((error) => {
@@ -235,6 +269,7 @@ export default function Home() {
     return () => { controller.abort(); };
   }, [filters]);
   const handleSelectResult = useCallback((result) => {
+    navigationGeneration.current += 1; pendingAddressNavigation.current = null;
     trackEvent('property_open', { entry_point: 'search' });
     rememberSearchView(result);
     setSearchOpen(false); setSelected(result);
@@ -256,11 +291,12 @@ export default function Home() {
 
   const sidebar = <>
     <div className="search-mode-tabs" role="tablist" aria-label={lang === 'bg' ? 'Начин на търсене' : 'Search method'}>
-      <button id="records-search-tab" role="tab" aria-selected={searchTab === 'records'} aria-controls="records-search-panel" onClick={() => setSearchTab('records')}>{lang === 'bg' ? 'Имот и документи' : 'Property & records'}</button>
+      <button id="records-search-tab" role="tab" aria-selected={searchTab === 'records'} aria-controls="records-search-panel" onClick={() => { navigationGeneration.current += 1; pendingAddressNavigation.current = null; setAddressRequest(null); setSearchTab('records'); }}>{lang === 'bg' ? 'Търсене' : 'Search'}</button>
       <button id="address-search-tab" role="tab" aria-selected={searchTab === 'address'} aria-controls="address-search-panel" onClick={() => setSearchTab('address')}><MapPin size={14} />{lang === 'bg' ? 'Адрес' : 'Address'}</button>
     </div>
     <div id="records-search-panel" role="tabpanel" aria-labelledby="records-search-tab" hidden={searchTab !== 'records'}>
     <SearchPanel panelRef={searchPanel} query={query} onQueryChange={handleQueryChange} onSubmit={handleSearch} onClear={handleClear} loading={searching}
+      addressIntent={isAddressQuery(query)} onFindAddress={handleFindAddress} onSubmitAsRecords={handleRecordSearch} addressProviderLabel={addressProvider?.label}
       searchTerms={filters.searchTerms} searchMatch={filters.searchMatch} onRemoveTerm={handleRemoveTerm} onClearTerms={handleClearTerms} onSearchMatchChange={handleSearchMatchChange}
       results={(searchResponse?.items || []).map((item) => ({ ...item, secondary: t('panel.linkedRecords', { n: item.document_count }) }))}
       resultQuery={filters.searchTerms.join(' · ')} resultTotal={searchResponse?.total} resultMappedTotal={searchResponse?.mapped_total} resultUnmappedTotal={searchResponse?.unmapped_total}
@@ -268,7 +304,8 @@ export default function Home() {
     </div>
     <div id="address-search-panel" className="address-panel-wrap" role="tabpanel" aria-labelledby="address-search-tab" hidden={searchTab !== 'address'}>
       {activeCount > 0 && <div className="address-filter-notice"><p>{lang === 'bg' ? `Картата остава ограничена от ${activeCount} активни условия за имоти.` : `The map still uses ${activeCount} active property conditions.`}</p><button onClick={clearFilters}>{lang === 'bg' ? 'Покажи всички имоти' : 'Show all properties'}</button></div>}
-      <AddressSearch onSelectLocation={handleAddressSelect} selectedLocation={addressLocation} onClearLocation={clearAddress} />
+      <AddressSearch onSelectLocation={handleAddressSelect} selectedLocation={addressLocation} onClearLocation={clearAddress}
+        externalRequest={addressRequest} isRequestCurrent={addressRequestCurrent} onRequestHandled={addressRequestHandled} onLookupStart={addressLookupStarted} onProviderChange={setAddressProvider} />
     </div>
     <MarketTeaser onOpen={() => changeWorkspace('offers')} alertCount={marketAlertCount} />
     <div ref={filterPanel}><RegisterFilters value={filters} onChange={handleFilterChange} counts={meta?.counts} options={meta?.filter_options} /></div>

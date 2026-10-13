@@ -1,5 +1,5 @@
 import React, { useId } from 'react';
-import { ArrowRight, Loader2, Search, X } from 'lucide-react';
+import { ArrowRight, Loader2, MapPin, Search, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import SearchResults from '@/components/search/SearchResults';
 
@@ -7,11 +7,16 @@ export default function SearchPanel({
   panelRef, query = '', onQueryChange, onSubmit, onClear, loading, results = [], resultQuery, onSelectResult,
   searchTerms = [], searchMatch = 'all', onRemoveTerm, onClearTerms, onSearchMatchChange,
   resultTotal, resultMappedTotal, resultUnmappedTotal, resultsTruncated, searchError,
+  addressIntent = false, onFindAddress, onSubmitAsRecords, addressProviderLabel,
 }) {
   const { t } = useI18n();
   const matchGroup = useId();
-  const termTooLong = Array.from(query.trim()).length > 120;
-  const canSubmit = !loading && query.trim().length > 0 && searchTerms.length < 8;
+  const queryLength = Array.from(query.trim()).length;
+  const termTooLong = queryLength > (addressIntent ? 160 : 120);
+  const canFindAddress = queryLength >= 3 && queryLength <= 160;
+  const canAddRecordTerm = !loading && queryLength > 0 && queryLength <= 120 && searchTerms.length < 8;
+  const canSubmit = addressIntent ? canFindAddress : canAddRecordTerm;
+  const recordLoading = !addressIntent && loading;
   return (
     <section className="search-panel" ref={panelRef}>
       <p className="eyebrow">{t('search.eyebrow')}</p>
@@ -24,11 +29,13 @@ export default function SearchPanel({
           {query && <button type="button" onClick={onClear} aria-label={t('search.clearDraft')}><X size={15} aria-hidden="true" /></button>}
         </label>
         <button className="search-submit" type="submit" disabled={!canSubmit}>
-          {loading ? <Loader2 size={17} className="animate-spin" aria-hidden="true" /> : <Search size={17} aria-hidden="true" />} {loading ? t('search.searching') : t('search.addTerm')} {!loading && <ArrowRight size={16} className="ml-auto" aria-hidden="true" />}
+          {recordLoading ? <Loader2 size={17} className="animate-spin" aria-hidden="true" /> : addressIntent ? <MapPin size={17} aria-hidden="true" /> : <Search size={17} aria-hidden="true" />} {recordLoading ? t('search.searching') : t(addressIntent ? 'search.findAddress' : 'search.addTerm')} {!recordLoading && <ArrowRight size={16} className="ml-auto" aria-hidden="true" />}
         </button>
       </form>
-      <p className="search-hint" id={`${matchGroup}-hint`}>{t('search.hint')}</p>
-      {termTooLong && <p className="search-term-limit" id={`${matchGroup}-limit`} role="status">{t('search.termTooLong')}</p>}
+      {queryLength > 0 && <button type="button" className="search-intent-alternative" disabled={addressIntent ? !canAddRecordTerm : !canFindAddress} onClick={addressIntent ? onSubmitAsRecords : onFindAddress}>{addressIntent ? <Search size={14} aria-hidden="true" /> : <MapPin size={14} aria-hidden="true" />}{t(addressIntent ? 'search.asRecords' : 'search.asAddress')}</button>}
+      <p className="search-hint" id={`${matchGroup}-hint`}>{t(addressIntent ? 'search.addressHint' : 'search.hint')}</p>
+      {queryLength > 0 && <p className="search-provider-notice">{t('search.addressProvider', { provider: addressProviderLabel || t('search.addressService') })}</p>}
+      {termTooLong && <p className="search-term-limit" id={`${matchGroup}-limit`} role="status">{t(addressIntent ? 'search.addressTooLong' : 'search.termTooLong')}</p>}
       {searchTerms.length > 0 && (
         <div className="search-active-terms">
           <div className="search-terms-heading">

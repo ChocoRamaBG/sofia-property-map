@@ -146,6 +146,10 @@
 .search-submit:hover { background: #24575c; }
 .search-submit:disabled { opacity: .57; cursor: default; }
 .search-hint { font-size: 10px; color: #7e8b8b; line-height: 1.6; margin-top: 9px; }
+.search-intent-alternative { display: flex; align-items: center; gap: 7px; min-height: 44px; margin-top: 4px; font-size: 11px; color: #286a5b; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+.search-intent-alternative:disabled { opacity: .55; cursor: default; }
+.search-intent-alternative:focus-visible { outline: 2px solid #2e9276; outline-offset: 2px; }
+.search-provider-notice { margin-top: 5px; font-size: 10px; color: #647674; line-height: 1.6; }
 .search-active-terms { margin-top: 13px; padding: 11px; border: 1px solid #dce8e0; border-radius: 9px; background: #f6faf7; }
 .search-terms-heading { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .search-terms-heading h2 { color: #365b50; font-size: 11px; font-weight: 600; }
