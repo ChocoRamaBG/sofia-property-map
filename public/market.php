@@ -4,6 +4,10 @@ declare(strict_types=1);
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
+set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+    if (!(error_reporting() & $severity)) return false;
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
 
 const MARKET_MAX_LISTINGS = 50000;
 const MARKET_MAX_SHARDS = 256;
@@ -49,7 +53,10 @@ function market_snapshot(): array {
         || !in_array($manifest['mode'] ?? null, ['historical_bootstrap', 'daily'], true)
         || ($manifest['mode'] === 'daily' && ($manifest['capture']['complete'] ?? null) !== true)) throw new RuntimeException('Market manifest is invalid.');
     market_descriptor($manifest['summary_file'] ?? null, '/^summary\.json$/', 512 * 1024);
-    market_descriptor($manifest['state_file'] ?? null, '/^state\.json$/', 64 * 1024 * 1024);
+    market_descriptor($manifest['state_file'] ?? null, '/^state\.json(?:\.gz)?$/', ($manifest['state_file']['path'] ?? '') === 'state.json.gz' ? 9 * 1024 * 1024 : 64 * 1024 * 1024);
+    if (($manifest['state_file']['path'] ?? '') === 'state.json.gz' && (($manifest['state_file']['encoding'] ?? null) !== 'gzip'
+        || !is_int($manifest['state_file']['expanded_bytes'] ?? null) || $manifest['state_file']['expanded_bytes'] < 1 || $manifest['state_file']['expanded_bytes'] > 64 * 1024 * 1024
+        || !is_string($manifest['state_file']['expanded_sha256'] ?? null) || !preg_match('/^[a-f0-9]{64}$/', $manifest['state_file']['expanded_sha256']))) throw new RuntimeException('Market private state descriptor is invalid.');
     $shards = $manifest['listing_shards'] ?? null;
     if (!is_array($shards) || !array_is_list($shards) || count($shards) < 1 || count($shards) > MARKET_MAX_SHARDS) throw new RuntimeException('Market shard count is invalid.');
     $count = 0;
@@ -206,7 +213,7 @@ try {
         }
     }
     ksort($items);
-    market_respond(['items' => array_values($items), 'total' => $total, 'page' => $page, 'pages' => $pages, 'page_size' => $filters['page_size'], 'captured_at' => $summary['captured_at'], 'mode' => $summary['mode']]);
+    market_respond(['snapshot_id' => $summary['snapshot_id'], 'items' => array_values($items), 'total' => $total, 'page' => $page, 'pages' => $pages, 'page_size' => $filters['page_size'], 'captured_at' => $summary['captured_at'], 'mode' => $summary['mode']]);
 } catch (InvalidArgumentException $error) {
     market_respond(['error' => 'invalid_filter', 'message' => $error->getMessage()], 400);
 } catch (Throwable $error) {

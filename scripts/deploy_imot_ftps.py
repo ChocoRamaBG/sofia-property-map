@@ -21,9 +21,9 @@ from uuid import uuid4
 
 from deploy_registry_ftps import read_remote
 from imot_market_format import (
-    HEX32, MAX_MANIFEST_BYTES, MAX_SHARD_BYTES, MAX_STATE_BYTES,
+    HEX32, MAX_MANIFEST_BYTES, MAX_SHARD_BYTES, MAX_STATE_BYTES, MAX_STATE_COMPRESSED_BYTES,
     MAX_SUMMARY_BYTES, VERSION, digest, json_bytes, timestamp,
-    validate_manifest, validate_snapshot,
+    read_state_payload, validate_manifest, validate_snapshot,
 )
 
 PRIVATE = "/htdocs/private"
@@ -32,6 +32,10 @@ PREVIOUS = PRIVATE + "/market-active.previous.json"
 SNAPSHOTS = PRIVATE + "/market-snapshots"
 MAX_POINTER_BYTES = 4096
 MAX_FETCH_META_BYTES = 16 * 1024
+
+
+def state_file_limit(descriptor):
+    return MAX_STATE_COMPRESSED_BYTES if descriptor.get("path") == "state.json.gz" else MAX_STATE_BYTES
 
 
 def validate_pointer(payload):
@@ -72,7 +76,7 @@ def manifest_for(ftp, pointer_payload):
     validate_manifest(manifest)
     if manifest["snapshot_id"] != ptr["snapshot_id"]:
         raise ValueError("Hosted manifest has another snapshot identity")
-    if manifest["summary_file"]["path"] != "summary.json" or manifest["state_file"]["path"] != "state.json":
+    if manifest["summary_file"]["path"] != "summary.json" or manifest["state_file"]["path"] not in {"state.json", "state.json.gz"}:
         raise ValueError("Hosted market tree uses unexpected summary/state filenames")
     return ptr, manifest
 
@@ -81,7 +85,7 @@ def descriptor_payload(ftp, identifier, descriptor, limit):
     raw = read_remote(ftp, f"{SNAPSHOTS}/{identifier}/{descriptor['path']}", limit)
     if len(raw) != descriptor["bytes"] or digest(raw) != descriptor["sha256"]:
         raise ValueError("Hosted market file failed its byte count or SHA-256 check")
-    content = json.loads(raw)
+    content = json.loads(read_state_payload(raw, descriptor)) if descriptor["path"] in {"state.json", "state.json.gz"} else json.loads(raw)
     if content.get("snapshot_id") != identifier:
         raise ValueError("Hosted market file has another snapshot identity")
     return raw
@@ -171,7 +175,7 @@ def prune(ftp, active_raw, keep=7):
         raw = read_remote(ftp, f"{SNAPSHOTS}/{identifier}/manifest.json", MAX_MANIFEST_BYTES)
         manifest = json.loads(raw)
         validate_manifest(manifest)
-        if manifest["snapshot_id"] != identifier or manifest["summary_file"]["path"] != "summary.json" or manifest["state_file"]["path"] != "state.json":
+        if manifest["snapshot_id"] != identifier or manifest["summary_file"]["path"] != "summary.json" or manifest["state_file"]["path"] not in {"state.json", "state.json.gz"}:
             raise ValueError("Unexpected immutable market tree identity")
         captured = timestamp(manifest.get("captured_at"))
         if captured is None:
@@ -183,7 +187,7 @@ def prune(ftp, active_raw, keep=7):
     for _, identifier, manifest, members in completed:
         if identifier in retained:
             continue
-        descriptors = [(manifest["summary_file"], MAX_SUMMARY_BYTES), (manifest["state_file"], MAX_STATE_BYTES), *[(desc, MAX_SHARD_BYTES) for desc in manifest["listing_shards"]]]
+        descriptors = [(manifest["summary_file"], MAX_SUMMARY_BYTES), (manifest["state_file"], state_file_limit(manifest["state_file"])), *[(desc, MAX_SHARD_BYTES) for desc in manifest["listing_shards"]]]
         expected = {"manifest.json", *(desc["path"] for desc, _ in descriptors)}
         if members != expected:
             raise ValueError("Unexpected contents in old market tree; retention stopped")
@@ -219,7 +223,7 @@ def main():
     if args.operation == "publish" and args.previous is None:
         parser.error("publish requires the --previous fetched pointer metadata")
     candidate = validate_snapshot(args.input) if args.operation != "fetch" else None
-    if candidate and (candidate[1]["summary_file"]["path"] != "summary.json" or candidate[1]["state_file"]["path"] != "state.json"):
+    if candidate and (candidate[1]["summary_file"]["path"] != "summary.json" or candidate[1]["state_file"]["path"] not in {"state.json", "state.json.gz"}):
         raise ValueError("Unexpected candidate summary/state file names")
     if args.operation == "validate":
         print(f"Validated complete market files and {candidate[1]['counts']['listing_count']} stable source IDs")
@@ -241,7 +245,8 @@ def main():
             state_payload = json_bytes({"version": VERSION, "mode": "none", "listings": {}})
             if raw:
                 ptr, manifest = manifest_for(ftp, raw)
-                state_payload = descriptor_payload(ftp, ptr["snapshot_id"], manifest["state_file"], MAX_STATE_BYTES)
+                encoded_state = descriptor_payload(ftp, ptr["snapshot_id"], manifest["state_file"], state_file_limit(manifest["state_file"]))
+                state_payload = read_state_payload(encoded_state, manifest["state_file"])
             meta = {"version": 1, "remote": ACTIVE, "present": raw is not None, "raw_pointer": raw.decode("utf-8") if raw else None, "bytes": len(raw) if raw else 0, "sha256": digest(raw) if raw else None, "state_sha256": digest(state_payload)}
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.state_output.parent.mkdir(parents=True, exist_ok=True)
@@ -262,7 +267,7 @@ def main():
         directory = f"{SNAPSHOTS}/{ptr['snapshot_id']}"
         ftp.mkd(directory)  # Refuse an existing immutable tree, including leftovers.
         local = args.input / "market-snapshots" / ptr["snapshot_id"]
-        descriptors = [(manifest["summary_file"], MAX_SUMMARY_BYTES), (manifest["state_file"], MAX_STATE_BYTES), *[(desc, MAX_SHARD_BYTES) for desc in manifest["listing_shards"]]]
+        descriptors = [(manifest["summary_file"], MAX_SUMMARY_BYTES), (manifest["state_file"], state_file_limit(manifest["state_file"])), *[(desc, MAX_SHARD_BYTES) for desc in manifest["listing_shards"]]]
         for descriptor, limit in descriptors:
             path = local / descriptor["path"]
             if path.is_symlink():

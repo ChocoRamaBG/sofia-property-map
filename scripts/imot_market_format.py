@@ -7,6 +7,8 @@ place to read descriptions, agency contacts, photos and actual availability.
 from __future__ import annotations
 
 import hashlib
+import gzip
+import io
 import json
 import math
 import re
@@ -23,6 +25,7 @@ MAX_SHARD_BYTES = 256 * 1024
 MAX_SUMMARY_BYTES = 512 * 1024
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_STATE_BYTES = 64 * 1024 * 1024
+MAX_STATE_COMPRESSED_BYTES = 9 * 1024 * 1024
 MAX_CAPTURE_BYTES = 96 * 1024 * 1024
 HEX32 = re.compile(r"[a-f0-9]{32}")
 HEX64 = re.compile(r"[a-f0-9]{64}")
@@ -124,6 +127,42 @@ def validate_descriptor(item, maximum):
         raise ValueError("Invalid snapshot descriptor size or hash")
 
 
+def validate_state_descriptor(item):
+    if not isinstance(item, dict):
+        raise ValueError("Missing private state descriptor")
+    if item.get("path") == "state.json":
+        validate_descriptor(item, MAX_STATE_BYTES)
+        return
+    if item.get("path") != "state.json.gz" or item.get("encoding") != "gzip":
+        raise ValueError("Unsupported private state encoding")
+    validate_descriptor(item, MAX_STATE_COMPRESSED_BYTES)
+    if type(item.get("expanded_bytes")) is not int or not 1 <= item["expanded_bytes"] <= MAX_STATE_BYTES or not HEX64.fullmatch(str(item.get("expanded_sha256", ""))):
+        raise ValueError("Invalid bounded expanded-state descriptor")
+
+
+def read_state_payload(payload, descriptor):
+    """Verify stored bytes then inflate at most 64 MiB for private processing."""
+    validate_state_descriptor(descriptor)
+    if len(payload) != descriptor["bytes"] or digest(payload) != descriptor["sha256"]:
+        raise ValueError("Private state stored bytes mismatch")
+    if descriptor["path"] == "state.json":
+        return payload
+    result, total = [], 0
+    with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as stream:
+        while True:
+            chunk = stream.read(min(1024 * 1024, MAX_STATE_BYTES - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_STATE_BYTES:
+                raise ValueError("Expanded private state exceeds its byte limit")
+            result.append(chunk)
+    expanded = b"".join(result)
+    if len(expanded) != descriptor["expanded_bytes"] or digest(expanded) != descriptor["expanded_sha256"]:
+        raise ValueError("Expanded private state integrity failed")
+    return expanded
+
+
 def validate_manifest(manifest):
     if not isinstance(manifest, dict) or type(manifest.get("version")) is not int or manifest["version"] != VERSION or not HEX32.fullmatch(str(manifest.get("snapshot_id", ""))):
         raise ValueError("Unsupported market snapshot")
@@ -139,7 +178,7 @@ def validate_manifest(manifest):
         if completion.get("evidence_location") != "state.audit.completion" or not HEX64.fullmatch(str(completion.get("evidence_sha256", ""))):
             raise ValueError("Daily market completion evidence is missing")
     validate_descriptor(manifest.get("summary_file"), MAX_SUMMARY_BYTES)
-    validate_descriptor(manifest.get("state_file"), MAX_STATE_BYTES)
+    validate_state_descriptor(manifest.get("state_file"))
     shards = manifest.get("listing_shards")
     if not isinstance(shards, list) or not 1 <= len(shards) <= MAX_SHARDS:
         raise ValueError("Invalid bounded listing shard count")
@@ -175,7 +214,8 @@ def validate_snapshot(output):
         data = (folder / desc["path"]).read_bytes()
         if len(data) != desc["bytes"] or digest(data) != desc["sha256"]:
             raise ValueError("Market snapshot file mismatch")
-        content = json.loads(data)
+        decoded = read_state_payload(data, desc) if desc["path"] == manifest["state_file"]["path"] else data
+        content = json.loads(decoded)
         if content.get("snapshot_id") != identifier:
             raise ValueError("Market file belongs to another snapshot")
         if desc["path"] == manifest["state_file"]["path"] and manifest["mode"] == "daily":

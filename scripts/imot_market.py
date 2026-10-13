@@ -7,6 +7,8 @@ generation time never turns old rows into current offers or daily alerts.
 from __future__ import annotations
 
 import argparse
+import gzip
+import io
 from collections import Counter, defaultdict
 from datetime import datetime
 import json
@@ -17,7 +19,7 @@ from uuid import uuid4
 
 from imot_market_format import (
     VERSION, MAX_LISTINGS, MAX_SHARD_BYTES, MAX_SUMMARY_BYTES, MAX_MANIFEST_BYTES,
-    MAX_STATE_BYTES, MAX_CAPTURE_BYTES, MAX_SHARDS, SHARD_ROWS, canonical_offer_id, digest,
+    MAX_STATE_BYTES, MAX_STATE_COMPRESSED_BYTES, MAX_CAPTURE_BYTES, MAX_SHARDS, SHARD_ROWS, canonical_offer_id, digest,
     json_bytes, number, stable_key, text, timestamp, utc_now, validate_snapshot,
 )
 
@@ -397,7 +399,17 @@ def build_snapshot(capture, output, previous=None):
         (folder / name).write_bytes(payload)
         return {"path": name, "bytes": len(payload), "sha256": digest(payload)}
     summary_desc = write_file("summary.json", summary, MAX_SUMMARY_BYTES)
-    state_desc = write_file("state.json", state, MAX_STATE_BYTES)
+    state_payload = json_bytes(state)
+    if len(state_payload) > MAX_STATE_BYTES:
+        raise ValueError("Expanded private state exceeds its byte limit")
+    compressed_buffer = io.BytesIO()
+    with gzip.GzipFile(filename="", mode="wb", fileobj=compressed_buffer, compresslevel=6, mtime=0) as stream:
+        stream.write(state_payload)
+    compressed_state = compressed_buffer.getvalue()
+    if len(compressed_state) > MAX_STATE_COMPRESSED_BYTES:
+        raise ValueError("Compressed private state exceeds the hosting-safe byte limit")
+    (folder / "state.json.gz").write_bytes(compressed_state)
+    state_desc = {"path": "state.json.gz", "bytes": len(compressed_state), "sha256": digest(compressed_state), "encoding": "gzip", "expanded_bytes": len(state_payload), "expanded_sha256": digest(state_payload)}
     shards, rows = [], []
     empty_size = len(json_bytes({"snapshot_id": identifier, "listings": []}))
     shard_size = empty_size
@@ -430,7 +442,7 @@ def build_snapshot(capture, output, previous=None):
             "evidence_location": "state.audit.completion",
         }
     capture_meta["source_url"] = capture.get("source_url") or "https://www.imot.bg/"
-    manifest = {"version": VERSION, "snapshot_id": identifier, "generated_at": generated, "captured_at": captured_at, "mode": summary["mode"], "capture": capture_meta, "coverage": coverage, "counts": counts, "summary_file": summary_desc, "state_file": state_desc, "listing_shards": shards, "limits": {"max_listings": MAX_LISTINGS, "max_shard_bytes": MAX_SHARD_BYTES, "max_summary_bytes": MAX_SUMMARY_BYTES, "max_state_bytes": MAX_STATE_BYTES}}
+    manifest = {"version": VERSION, "snapshot_id": identifier, "generated_at": generated, "captured_at": captured_at, "mode": summary["mode"], "capture": capture_meta, "coverage": coverage, "counts": counts, "summary_file": summary_desc, "state_file": state_desc, "listing_shards": shards, "limits": {"max_listings": MAX_LISTINGS, "max_shard_bytes": MAX_SHARD_BYTES, "max_summary_bytes": MAX_SUMMARY_BYTES, "max_state_bytes": MAX_STATE_BYTES, "max_state_compressed_bytes": MAX_STATE_COMPRESSED_BYTES}}
     manifest_desc = write_file("manifest.json", manifest, MAX_MANIFEST_BYTES)
     pointer = {"version": VERSION, "snapshot_id": identifier, "manifest_path": f"market-snapshots/{identifier}/manifest.json", "manifest_sha256": manifest_desc["sha256"]}
     root.mkdir(parents=True, exist_ok=True)
