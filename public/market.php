@@ -135,6 +135,8 @@ function market_listing_filters(array $summary): array {
     if (!in_array($filters['deals_only'], ['', '0', '1'], true)) throw new InvalidArgumentException('Invalid opportunity filter.');
     $filters['daily_only'] = market_filter_string('daily_only', 1);
     if (!in_array($filters['daily_only'], ['', '0', '1'], true)) throw new InvalidArgumentException('Invalid daily-change filter.');
+    $filters['include_unknown_vat'] = market_filter_string('include_unknown_vat', 1);
+    if (!in_array($filters['include_unknown_vat'], ['', '0', '1'], true)) throw new InvalidArgumentException('Invalid unknown-VAT filter.');
     $filters['change'] = market_filter_string('change', 30);
     if (!in_array($filters['change'], ['', 'new', 'price_drop', 'became_eligible', 'baseline', 'unchanged', 'historical'], true)) throw new InvalidArgumentException('Invalid change filter.');
     $filters['sort'] = market_filter_string('sort', 20) ?: 'discount';
@@ -152,9 +154,15 @@ function market_matches(array $row, array $filters): bool {
     }
     $comparison = $row['comparison'];
     if ($filters['deals_only'] === '1' && ($comparison['eligible'] ?? false) !== true) return false;
-    if ($filters['daily_only'] === '1' && ($row['historical'] || ($comparison['alert_eligible'] ?? false) !== true
-        || !in_array($row['vat_basis'], ['included', 'excluded'], true)
-        || !in_array($row['change']['kind'] ?? '', ['new', 'price_drop', 'became_eligible'], true))) return false;
+    if ($filters['daily_only'] === '1') {
+        if ($row['historical'] || !in_array($row['change']['kind'] ?? '', ['new', 'price_drop', 'became_eligible'], true)) return false;
+        $knownVatCandidate = in_array($row['vat_basis'], ['included', 'excluded'], true) && ($comparison['alert_eligible'] ?? false) === true;
+        $unknownVatCandidate = $filters['include_unknown_vat'] === '1' && $row['vat_basis'] === 'unknown'
+            && ($comparison['eligible'] ?? false) === true
+            && ($row['change']['area_changed'] ?? false) === false
+            && ($row['change']['price_basis_changed'] ?? false) === false;
+        if (!$knownVatCandidate && !$unknownVatCandidate) return false;
+    }
     if ($filters['min_discount'] !== null && (!is_numeric($comparison['below_median_pct'] ?? null) || $comparison['below_median_pct'] < $filters['min_discount'])) return false;
     return $filters['change'] === '' || ($row['change']['kind'] ?? '') === $filters['change'];
 }

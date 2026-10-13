@@ -88,6 +88,9 @@ const TEXT = {
   alertBaseline: ['Първата дневна снимка установява отправна база. Известията започват при следващи нови обяви или промени.', 'The first daily snapshot sets a baseline. Alerts start with later new listings or changes.'],
   alertStale: ['Последната снимка е по-стара от 48 часа. Ще покажем нови известия след актуално завършено обновяване.', 'The latest snapshot is over 48 hours old. New alerts will appear after a fresh completed update.'],
   alertVatHelp: ['Известията включват само обяви с известна основа за ДДС и достатъчно сходни обяви.', 'Alerts include only listings with a known VAT basis and enough comparable peers.'],
+  alertUnknownVatOption: ['Следи и офертни цени с непосочен ДДС', 'Also track asking prices with unreported VAT'],
+  alertUnknownVatHelp: ['Сравняват се само с други обяви с непосочен ДДС. Крайният размер на ДДС остава неизвестен.', 'These are compared only with other unreported-VAT listings. The final VAT amount remains unknown.'],
+  alertVatHelpOpted: ['Следенето включва и обяви с непосочен ДДС. Сравненията остават отделни за всяка ДДС група.', 'Watching also includes listings with unreported VAT. Comparisons remain separate for each VAT group.'],
   alertEmpty: ['Няма нови непрегледани съвпадения с предпочитанията ви.', 'No unseen new matches for your preferences.'],
   alertLoading: ['Проверяваме всички дневни съвпадения с предпочитанията ви…', 'Checking all daily matches for your preferences…'],
   alertError: ['Дневните съвпадения не се заредиха изцяло. Последният потвърден брой остава до успешно обновяване.', 'Daily matches could not load completely. The last confirmed count remains until a successful refresh.'],
@@ -145,7 +148,7 @@ const TEXT = {
 
 const EMPTY_FILTERS = { neighborhood: '', type: '', vat: '', min_discount: '', min_area: '', max_area: '', min_price: '', max_price: '', deals_only: false, change: '', sort: 'discount' };
 const ALERT_KEY = 'sofiapermits.market.watching.v1';
-const DEFAULT_ALERT = { enabled: false, neighborhood: '', type: '', minDiscount: 20, seenKeys: [], baselineSnapshot: '' };
+const DEFAULT_ALERT = { enabled: false, neighborhood: '', type: '', minDiscount: 20, includeUnknownVat: false, seenKeys: [], baselineSnapshot: '' };
 
 function useText() {
   const { lang } = useI18n();
@@ -194,7 +197,7 @@ function initialAlerts() {
   try {
     const saved = JSON.parse(localStorage.getItem(ALERT_KEY) || 'null');
     if (!saved || typeof saved !== 'object') return { ...DEFAULT_ALERT };
-    return { ...DEFAULT_ALERT, enabled: saved.enabled === true, neighborhood: typeof saved.neighborhood === 'string' ? saved.neighborhood : '', type: typeof saved.type === 'string' ? saved.type : '', minDiscount: [20, 25, 30, 40, 50].includes(saved.minDiscount) ? saved.minDiscount : 20, seenKeys: Array.isArray(saved.seenKeys) ? saved.seenKeys.filter((key) => typeof key === 'string').slice(-600) : [], baselineSnapshot: typeof saved.baselineSnapshot === 'string' ? saved.baselineSnapshot : '' };
+    return { ...DEFAULT_ALERT, enabled: saved.enabled === true, neighborhood: typeof saved.neighborhood === 'string' ? saved.neighborhood : '', type: typeof saved.type === 'string' ? saved.type : '', minDiscount: [20, 25, 30, 40, 50].includes(saved.minDiscount) ? saved.minDiscount : 20, includeUnknownVat: saved.includeUnknownVat === true, seenKeys: Array.isArray(saved.seenKeys) ? saved.seenKeys.filter((key) => typeof key === 'string').slice(-600) : [], baselineSnapshot: typeof saved.baselineSnapshot === 'string' ? saved.baselineSnapshot : '' };
   } catch { return { ...DEFAULT_ALERT }; }
 }
 
@@ -232,7 +235,7 @@ function Pagination({ page, pages, onPage, busy = false }) {
 function AlertPanel({ summary, onCountChange }) {
   const { lang, tr } = useText();
   const [preferences, setPreferences] = useState(initialAlerts);
-  const [draft, setDraft] = useState(() => { const p = initialAlerts(); return { neighborhood: p.neighborhood, type: p.type, minDiscount: p.minDiscount }; });
+  const [draft, setDraft] = useState(() => { const p = initialAlerts(); return { neighborhood: p.neighborhood, type: p.type, minDiscount: p.minDiscount, includeUnknownVat: p.includeUnknownVat }; });
   const [expanded, setExpanded] = useState(false);
   const [alertPage, setAlertPage] = useState(1);
   const [saved, setSaved] = useState(false);
@@ -245,7 +248,7 @@ function AlertPanel({ summary, onCountChange }) {
   const capture = Date.parse(summary.captured_at);
   const fresh = Number.isFinite(capture) && Date.now() - capture <= 48 * 3600 * 1000 && capture - Date.now() <= 6 * 3600 * 1000;
   const suppressed = historical || firstBaseline || !fresh;
-  const candidateQueryKey = preferences.enabled && !suppressed && preferences.baselineSnapshot !== summary.snapshot_id ? JSON.stringify({ snapshot: summary.snapshot_id, captured: summary.captured_at, neighborhood: preferences.neighborhood, type: preferences.type, minDiscount: preferences.minDiscount }) : '';
+  const candidateQueryKey = preferences.enabled && !suppressed && preferences.baselineSnapshot !== summary.snapshot_id ? JSON.stringify({ snapshot: summary.snapshot_id, captured: summary.captured_at, neighborhood: preferences.neighborhood, type: preferences.type, minDiscount: preferences.minDiscount, includeUnknownVat: preferences.includeUnknownVat }) : '';
   useEffect(() => {
     if (!candidateQueryKey) return undefined;
     const query = JSON.parse(candidateQueryKey);
@@ -256,7 +259,7 @@ function AlertPanel({ summary, onCountChange }) {
       let pages = 1;
       let expectedTotal = null;
       for (let page = 1; page <= pages; page += 1) {
-        const data = await marketApi.listings({ daily_only: 1, deals_only: 1, min_discount: query.minDiscount, neighborhood: query.neighborhood, type: query.type, sort: 'newest', page_size: 60, page }, controller.signal);
+        const data = await marketApi.listings({ daily_only: 1, deals_only: 1, include_unknown_vat: query.includeUnknownVat ? 1 : undefined, min_discount: query.minDiscount, neighborhood: query.neighborhood, type: query.type, sort: 'newest', page_size: 60, page }, controller.signal);
         if (controller.signal.aborted) return;
         if (!Array.isArray(data?.items) || data.items.length > 60 || !Number.isSafeInteger(data.total) || data.total < 0 || data.total > 50000 || !Number.isSafeInteger(data.pages) || data.pages < 1 || data.pages > 834 || data.pages !== Math.max(1, Math.ceil(data.total / 60)) || data.page !== page || data.mode !== 'daily' || data.snapshot_id !== query.snapshot || data.captured_at !== query.captured || (expectedTotal !== null && (data.total !== expectedTotal || data.pages !== pages))) throw new Error('Incomplete or changing daily alert snapshot.');
         pages = data.pages; expectedTotal = data.total;
@@ -277,7 +280,9 @@ function AlertPanel({ summary, onCountChange }) {
   const seenKeys = new Set(preferences.seenKeys);
   const candidates = candidateState.items.filter((offer) => {
     const discount = numeric(offer.comparison?.below_median_pct);
-    return !offer.historical && offer.comparison?.eligible === true && offer.comparison?.alert_eligible !== false && ['included', 'excluded'].includes(offer.vat_basis) && discount !== null && discount >= preferences.minDiscount && discount < 60
+    const knownVatAllowed = ['included', 'excluded'].includes(offer.vat_basis) && offer.comparison?.alert_eligible === true;
+    const unknownVatAllowed = preferences.includeUnknownVat === true && offer.vat_basis === 'unknown' && offer.change?.area_changed !== true && offer.change?.price_basis_changed !== true;
+    return !offer.historical && offer.comparison?.eligible === true && (knownVatAllowed || unknownVatAllowed) && discount !== null && discount >= preferences.minDiscount && discount < 60
       && (!preferences.neighborhood || offer.neighborhood_key === preferences.neighborhood) && (!preferences.type || offer.type_key === preferences.type)
       && ['new', 'price_drop', 'became_eligible'].includes(offer.change?.kind) && !seenKeys.has(alertEventKey(offer));
   });
@@ -303,13 +308,13 @@ function AlertPanel({ summary, onCountChange }) {
       <label><span>{tr('neighborhood')}</span><select value={draft.neighborhood} onChange={(event) => { setDraft({ ...draft, neighborhood: event.target.value }); setSaved(false); }}><option value="">{tr('anyNeighborhood')}</option>{(options.neighborhoods || []).map((item) => <option value={item.key} key={item.key}>{item.label_bg}</option>)}</select></label>
       <label><span>{tr('type')}</span><select value={draft.type} onChange={(event) => { setDraft({ ...draft, type: event.target.value }); setSaved(false); }}><option value="">{tr('anyType')}</option>{(options.types || []).map((item) => <option value={item.key} key={item.key}>{typeText(item.label_bg, lang)}</option>)}</select></label>
       <label><span>{tr('alertMin')}</span><select value={draft.minDiscount} onChange={(event) => { setDraft({ ...draft, minDiscount: Number(event.target.value) }); setSaved(false); }}>{[20, 25, 30, 40, 50].map((n) => <option key={n} value={n}>{n}%</option>)}</select></label>
-      <button className="market-button is-primary" type="submit"><Bell size={15} />{tr(preferences.enabled ? 'alertUpdate' : 'alertSave')}</button>
-      {preferences.enabled && <button className="market-button is-quiet" type="button" onClick={() => { savePreferences({ ...preferences, enabled: false }); setSaved(false); }}><BellOff size={15} />{tr('alertStop')}</button>}
+      <label className="market-alert-vat-option"><input type="checkbox" checked={draft.includeUnknownVat} onChange={(event) => { setDraft({ ...draft, includeUnknownVat: event.target.checked }); setSaved(false); }} /><span><strong>{tr('alertUnknownVatOption')}</strong><small>{tr('alertUnknownVatHelp')}</small></span></label>
+      <div className="market-alert-save-actions"><button className="market-button is-primary" type="submit"><Bell size={15} />{tr(preferences.enabled ? 'alertUpdate' : 'alertSave')}</button>{preferences.enabled && <button className="market-button is-quiet" type="button" onClick={() => { savePreferences({ ...preferences, enabled: false }); setSaved(false); }}><BellOff size={15} />{tr('alertStop')}</button>}</div>
     </form>
     {storageError && <p className="market-inline-note is-warning" role="status">{tr('alertStorage')}</p>}
     {saved && <p className="market-inline-note" role="status"><Check size={14} />{tr('alertSaved')}</p>}
     {suppressed ? <p className="market-inline-note"><Info size={14} />{tr(historical ? 'alertHistorical' : firstBaseline ? 'alertBaseline' : 'alertStale')}</p> : candidatesLoading ? <p className="market-inline-note" role="status"><Loader2 size={14} className="animate-spin" />{tr('alertLoading')}</p> : candidatesError ? <div className="market-inline-note is-warning" role="status"><Info size={14} /><span>{tr('alertError')} <button className="market-alert-retry" type="button" onClick={() => setCandidateRevision((n) => n + 1)}>{tr('retry')}</button></span></div> : preferences.enabled && unseen.length === 0 ? <p className="market-inline-note">{tr('alertEmpty')}</p> : null}
-    <p className="market-inline-note">{tr('alertVatHelp')}</p>
+    <p className="market-inline-note">{tr(preferences.includeUnknownVat ? 'alertVatHelpOpted' : 'alertVatHelp')}</p>
     {expanded && candidatesReady && unseen.length > 0 && <div className="market-alert-matches"><div className="market-alert-matches-heading"><strong>{tr('alertNewCount', { n: unseen.length })}</strong><button type="button" onClick={markSeen}>{tr('alertMarkSeen')}<Check size={14} /></button></div><div className="market-offer-grid">{unseen.slice((Math.min(alertPage, Math.ceil(unseen.length / 6)) - 1) * 6, Math.min(alertPage, Math.ceil(unseen.length / 6)) * 6).map((offer) => <OfferCard key={offer.id} offer={offer} mode={summary.mode} />)}</div><Pagination page={Math.min(alertPage, Math.ceil(unseen.length / 6))} pages={Math.ceil(unseen.length / 6)} onPage={setAlertPage} /></div>}
   </section>;
 }

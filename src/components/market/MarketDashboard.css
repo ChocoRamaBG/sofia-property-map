@@ -116,11 +116,16 @@
 .market-alert-intro h2 { color: #315d3c; font-size: 20px; line-height: 1.4; font-weight: 600; letter-spacing: -.4px; margin-top: 2px; }
 .market-alert-intro p { max-width: 760px; font-size: 11px; color: #849878; line-height: 1.8; margin-top: 5px; }
 .market-alert-count { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 8px 12px; border-radius: 7px; border: 1px solid #accf9a; color: #4d7b38; background: #e3f0db; font-size: 10px !important; font-weight: 600 !important; line-height: 1.5; }
-.market-alert-form { display: grid; grid-template-columns: 1.3fr 1fr .8fr auto; align-items: end; gap: 10px; margin-top: 19px; }
+.market-alert-form { display: grid; grid-template-columns: 1.3fr 1fr .8fr; align-items: end; gap: 10px; margin-top: 19px; }
 .market-alert-form > label, .market-filter-grid > label { display: block; min-width: 0; }
 .market-alert-form > label > span, .market-filter-grid > label > span { display: block; font-size: 10px; color: #7d956d; line-height: 1.5; margin-bottom: 6px; }
 .market-alert-form select, .market-filter-grid select, .market-filter-grid input { min-width: 0; width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid #d7e4ce; border-radius: 7px; background: #fcfef9; color: #668550; font-size: 11px; line-height: 1.5; }
-.market-alert-form > .market-button.is-quiet { grid-column: 4; padding-top: 2px; padding-bottom: 2px; min-height: 32px; font-size: 10px !important; }
+.market-alert-form > .market-alert-vat-option { display: flex; align-items: flex-start; gap: 9px; grid-column: 1 / -1; min-height: 44px; padding: 9px 0; cursor: pointer; }
+.market-alert-vat-option > input { flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; accent-color: #478246; }
+.market-alert-form > .market-alert-vat-option > span { margin-bottom: 0; }
+.market-alert-vat-option strong { display: block; color: #63844f; font-size: 11px; font-weight: 550; line-height: 1.6; }
+.market-alert-vat-option small { display: block; margin-top: 3px; color: #7a8e69; font-size: 10px; line-height: 1.75; }
+.market-alert-save-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; }
 .market-inline-note { display: flex; align-items: flex-start; gap: 6px; margin-top: 12px; color: #809776; font-size: 10px; line-height: 1.75; }
 .market-inline-note > svg { flex-shrink: 0; margin-top: 1px; }
 .market-inline-note.is-warning { color: #a48854; }
