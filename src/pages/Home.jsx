@@ -89,6 +89,7 @@ export default function Home() {
     return () => window.removeEventListener('hashchange', update);
   }, []);
   const changeWorkspace = useCallback((next) => {
+    trackEvent('workspace_open', { workspace: next });
     setSearchOpen(false);
     setWorkspace(next);
     window.location.hash = next === 'offers' ? 'offers' : 'map';

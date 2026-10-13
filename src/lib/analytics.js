@@ -242,8 +242,11 @@ export function trackEvent(name, parameters = {}) {
   if (consent !== 'granted') return false;
   const values = parameters && typeof parameters === 'object' ? parameters : {};
   const safe = {};
-  if (name === 'search_submit') {
+  if (name === 'search_submit' || name === 'address_locate') {
     // Record the action without the text the visitor entered.
+  } else if (name === 'workspace_open') {
+    if (!['map', 'offers'].includes(values.workspace)) return false;
+    safe.workspace = values.workspace;
   } else if (name === 'property_open') {
     if (values.entry_point === 'map' || values.entry_point === 'search') {
       safe.entry_point = values.entry_point;

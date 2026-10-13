@@ -56,6 +56,8 @@
 .market-offer-facts div { display: flex; align-items: baseline; gap: 6px; max-width: 100%; font-size: 10px; line-height: 1.6; }
 .market-offer-facts dt { flex-shrink: 0; color: #99a494; }
 .market-offer-facts dd { min-width: 0; color: #718676; overflow-wrap: anywhere; }
+.market-offer-facts .market-construction-fact { flex-basis: 100%; flex-direction: column; align-items: flex-start; gap: 2px; }
+.market-construction-fact dt { font-size: 9px; }
 .market-offer-price { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 5px 10px; margin-top: 20px; }
 .market-offer-price > strong { color: #204f3b; font-size: 23px; font-weight: 650; letter-spacing: -.55px; line-height: 1.3; font-variant-numeric: tabular-nums; }
 .market-offer-price > strong span { color: #829d85; font-size: 15px; font-weight: 400; }

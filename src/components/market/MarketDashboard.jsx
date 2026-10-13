@@ -47,7 +47,7 @@ const TEXT = {
   source: ['Оригиналната обява в imot.bg', 'Original listing on imot.bg'],
   area: ['Площ', 'Area'],
   floor: ['Етаж', 'Floor'],
-  year: ['Строеж', 'Built'],
+  year: ['Заявено строителство', 'Advertised construction'],
   unknown: ['Не е посочено', 'Not stated'],
   unit: ['€/м²', '€/m²'],
   derivedTotal: ['Обща цена, изчислена от €/м²', 'Total calculated from the €/m² quote'],
@@ -173,6 +173,17 @@ function typeText(value, lang) {
   const normalized = String(value || '').trim().toLocaleUpperCase('bg-BG');
   return { '2-СТАЕН': '2-room apartment', '3-СТАЕН': '3-room apartment', '4-СТАЕН': '4-room apartment', 'МНОГОСТАЕН': 'Multi-room apartment', 'МЕЗОНЕТ': 'Maisonette' }[normalized] || value;
 }
+function constructionText(value, lang) {
+  if (lang === 'bg' || typeof value !== 'string') return value;
+  const text = value.trim();
+  for (const [pattern, label] of [[/^Ще бъде въведен(?:а|о)? в експлоатация\s*/iu, 'Expected completion'], [/^Въведен(?:а|о)? в експлоатация\s*/iu, 'Completion stated']]) {
+    if (pattern.test(text)) {
+      const remainder = text.replace(pattern, '').replace(/\s*г\.?$/iu, '').trim();
+      return remainder ? `${label} · ${remainder}` : label;
+    }
+  }
+  return value;
+}
 function headlineMetric(row) {
   if ((row?.headline_priced_count || 0) > 0) return { ...row, priced_count: row.headline_priced_count, vat_basis: row.headline_vat_basis || 'included' };
   const unknown = (row?.by_vat_basis || []).find((item) => item.vat_basis === 'unknown' && item.priced_count > 0);
@@ -200,7 +211,7 @@ function OfferCard({ offer, mode }) {
     <div className="market-offer-top"><span className="market-offer-type">{typeText(offer.type_bg, lang) || tr('unknown')}</span>{historical ? <span className="market-status-badge is-historical"><Clock3 size={11} />{tr('historicalOffer')}</span> : ['new', 'price_drop', 'became_eligible'].includes(change) ? <span className="market-status-badge">{change === 'price_drop' ? <TrendingDown size={11} /> : <Check size={11} />}{tr(change === 'price_drop' ? 'priceDrop' : change === 'new' ? 'newOffer' : 'newlyEligible')}</span> : null}</div>
     <h3><MapPin size={15} />{offer.neighborhood_bg || tr('unknown')}</h3>
     {offer.address_bg && <p className="market-offer-address">{offer.address_bg}</p>}
-    <dl className="market-offer-facts"><div><dt>{tr('area')}</dt><dd>{formatNumber(offer.area_sqm, lang, 1)} {tr('sqm')}</dd></div><div><dt>{tr('year')}</dt><dd>{offer.construction_year || offer.construction_label_bg || tr('unknown')}</dd></div>{offer.floor_bg && <div><dt>{tr('floor')}</dt><dd>{offer.floor_bg}</dd></div>}</dl>
+    <dl className="market-offer-facts"><div><dt>{tr('area')}</dt><dd>{formatNumber(offer.area_sqm, lang, 1)} {tr('sqm')}</dd></div>{offer.floor_bg && <div><dt>{tr('floor')}</dt><dd>{offer.floor_bg}</dd></div>}<div className="market-construction-fact"><dt>{tr('year')}</dt><dd>{constructionText(offer.construction_label_bg, lang) || offer.construction_year || tr('unknown')}</dd></div></dl>
     <div className="market-offer-price"><strong>{formatNumber(offer.price_eur, lang)}{numeric(offer.price_eur) !== null && <span> €</span>}</strong><span>{formatNumber(quotedUnitPrice ?? offer.eur_per_sqm, lang, quotedUnitPrice === null ? 0 : 2)} {tr('unit')}</span></div>
     {offer.price_total_derived === true && <p className="market-price-derived"><Info size={11} />{tr('derivedTotal')}</p>}
     <p className={`market-offer-vat${offer.vat_basis === 'unknown' ? ' is-unknown' : ''}`}>{offer.vat_basis === 'unknown' && <Info size={11} />}{vatText(offer.vat_basis, tr)}</p>
