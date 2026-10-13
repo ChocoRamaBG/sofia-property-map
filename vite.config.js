@@ -8,6 +8,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api.php': 'http://127.0.0.1:8000',
+      '/market.php': 'http://127.0.0.1:8000',
+      '/geocode.php': 'http://127.0.0.1:8000',
     },
   },
   resolve: {

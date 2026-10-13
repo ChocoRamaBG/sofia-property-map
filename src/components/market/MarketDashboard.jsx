@@ -1,0 +1,393 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, BellOff, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, ExternalLink, Filter, Info, Layers3, Loader2, MapPin, RefreshCw, Search, ShieldCheck, SlidersHorizontal, TrendingDown, X } from 'lucide-react';
+import { useI18n } from '@/lib/i18n';
+import { marketApi } from '@/api/marketApi';
+import './MarketDashboard.css';
+
+const TEXT = {
+  eyebrow: ['SOFIAPERMITS · ПАЗАРНИ ДАННИ', 'SOFIAPERMITS · MARKET DATA'],
+  title: ['Пазарът в София, в числа.', 'Sofia’s market, in numbers.'],
+  intro: ['Сравнете офертни цени по квартал и открийте обяви под цените на сходни апартаменти.', 'Compare asking prices by neighborhood and find listings priced below similar apartments.'],
+  map: ['Към кадастралната карта', 'Back to the cadastral map'],
+  refresh: ['Обнови изгледа', 'Refresh view'],
+  backgroundError: ['Изгледът не можа да се обнови. Показана е последната заредена снимка.', 'The view could not refresh. The last loaded snapshot is still shown.'],
+  loading: ['Зареждане на пазарните данни…', 'Loading market data…'],
+  loadError: ['Пазарните данни временно не са достъпни.', 'Market data is temporarily unavailable.'],
+  retry: ['Опитай отново', 'Try again'],
+  archive: ['Архивна база', 'Historical baseline'],
+  archiveHelp: ['Това са обяви от {period}. Наличността им сега не е проверена. Новите дневни снимки ще се показват отделно от тази отправна база.', 'These listings were captured in {period}. Their current availability has not been verified. New daily snapshots will be shown separately from this baseline.'],
+  captured: ['Снимка към {date}', 'Snapshot captured {date}'],
+  stale: ['По-стара снимка · известията са временно спрени', 'Older snapshot · alerts are temporarily paused'],
+  baseline: ['Първа дневна снимка · отправна база за бъдещи промени', 'First daily snapshot · baseline for future changes'],
+  scope: ['Обхват на наличните обяви', 'Coverage of available listings'],
+  constructionScope: ['Заявена година на строеж: от {year} г.', 'Advertised construction year: {year} onwards'],
+  ads: ['Обяви в набора', 'Listings in the dataset'],
+  adHint: ['Уникални ID на обяви; не уникални имоти', 'Unique listing IDs, not unique properties'],
+  neighborhoods: ['Квартали и населени места', 'Neighborhoods & settlements'],
+  pricedHint: ['{n} обяви с известна цена и валута', '{n} listings with a known price and currency'],
+  median: ['Медиана €/м²', 'Median €/m²'],
+  medianHint: ['{n} обяви · {vat}', '{n} listings · {vat}'],
+  opportunities: ['Под сравнимата медиана', 'Below the comparable median'],
+  opportunityHint: ['Поне 20% под медианата · поне 8 сходни обяви', 'At least 20% below the median · at least 8 peers'],
+  topTitle: ['По-ниска цена. По-ясно сравнение.', 'A lower price. A clearer comparison.'],
+  topHelp: ['Оферти с поне 20% разлика спрямо медианата на сходни обяви в същия квартал. Това е повод за проверка, а не потвърдена изгодна сделка.', 'Listings at least 20% below similar asking prices in the same neighborhood. A reason to investigate, rather than a verified bargain.'],
+  viewAll: ['Виж всички', 'View all'],
+  noTop: ['Няма обяви с достатъчна извадка и избрания праг.', 'No listings meet the threshold with enough comparable peers.'],
+  historicalOffer: ['Архивна обява', 'Historical listing'],
+  newOffer: ['Нова обява', 'New listing'],
+  priceDrop: ['Намаление на цената', 'Price reduced'],
+  newlyEligible: ['Ново съвпадение', 'New match'],
+  below: ['{n}% под медианата', '{n}% below median'],
+  above: ['{n}% над медианата', '{n}% above median'],
+  nearMedian: ['Близо до медианата', 'Near the median'],
+  peers: ['Медиана на {n} сходни обяви', 'Median of {n} similar listings'],
+  noComparison: ['Недостатъчно сходни обяви за сравнение', 'Not enough similar listings for comparison'],
+  comparisonVatUnknown: ['Сравнение по заявена цена · ДДС е неизвестен', 'Quoted-price comparison · VAT is unknown'],
+  review: ['Необичайна разлика · нужна проверка', 'Unusual difference · review needed'],
+  source: ['Оригиналната обява в imot.bg', 'Original listing on imot.bg'],
+  area: ['Площ', 'Area'],
+  year: ['Строеж', 'Built'],
+  unknown: ['Не е посочено', 'Not stated'],
+  unit: ['€/м²', '€/m²'],
+  sqm: ['м²', 'm²'],
+  vatIncluded: ['Включен ДДС / не се начислява', 'VAT included / not charged'],
+  vatExcluded: ['Без ДДС', 'VAT excluded'],
+  vatUnknown: ['ДДС не е посочен', 'VAT not stated'],
+  updated: ['Промяна в обявата: {date}', 'Listing updated: {date}'],
+  observed: ['Наблюдавана: {date}', 'Observed: {date}'],
+  tableTitle: ['Цените по квартали', 'Prices by neighborhood'],
+  tableHelp: ['Използваме офертни цени с включен или неначисляван ДДС. При липса на такива обозначаваме отделна извадка с непосочен ДДС. Типовете апартаменти са смесени; картите сравняват отделни групи.', 'Figures use asking prices with VAT included or not charged. Where none exist, a separate sample with unstated VAT is labeled. Apartment types are combined here; listing cards compare separate groups.'],
+  searchNeighborhood: ['Търси квартал…', 'Search neighborhoods…'],
+  order: ['Подреди', 'Sort'],
+  orderCount: ['По брой обяви', 'Most listings'],
+  orderMedian: ['По най-ниска медиана', 'Lowest median'],
+  orderMean: ['По най-ниска средна цена', 'Lowest mean price'],
+  orderName: ['По име', 'By name'],
+  neighborhood: ['Квартал', 'Neighborhood'],
+  count: ['Обяви', 'Listings'],
+  sample: ['Извадка с цена', 'Price sample'],
+  mean: ['Средна €/м²', 'Mean €/m²'],
+  medianColumn: ['Медиана €/м²', 'Median €/m²'],
+  medianPrice: ['Медиана на цена', 'Median asking price'],
+  viewNeighborhood: ['Виж обявите в {name}', 'View listings in {name}'],
+  emptyNeighborhoods: ['Няма квартал с това име.', 'No neighborhoods match that name.'],
+  tableRange: ['{from}–{to} от {total} квартала', '{from}–{to} of {total} neighborhoods'],
+  smallSample: ['Малка извадка', 'Small sample'],
+  alertTitle: ['Следете това, което ви интересува.', 'Follow what matters to you.'],
+  alertHelp: ['Известия вътре в сайта за нови обяви и промени след завършена дневна снимка. Предпочитанията се пазят само в този браузър.', 'In-site alerts for new listings and changes after a completed daily snapshot. Preferences are stored only in this browser.'],
+  alertEnabled: ['Следенето е включено', 'Watching is enabled'],
+  alertDisabled: ['Следенето е изключено', 'Watching is off'],
+  alertSave: ['Запази и включи следенето', 'Save and enable watching'],
+  alertUpdate: ['Запази предпочитанията', 'Save preferences'],
+  alertStop: ['Спри следенето', 'Stop watching'],
+  alertSaved: ['Запазено. Следенето започва от следващата завършена снимка.', 'Saved. Watching starts with the next completed snapshot.'],
+  alertMin: ['Минимум под медианата', 'Minimum below median'],
+  alertHistorical: ['Архивните обяви не генерират нови известия. Можете да запазите предпочитанията си за бъдещи дневни снимки.', 'Historical listings do not generate new alerts. You can save preferences for future daily snapshots.'],
+  alertBaseline: ['Първата дневна снимка установява отправна база. Известията започват при следващи нови обяви или промени.', 'The first daily snapshot sets a baseline. Alerts start with later new listings or changes.'],
+  alertStale: ['Последната снимка е по-стара от 48 часа. Ще покажем нови известия след актуално завършено обновяване.', 'The latest snapshot is over 48 hours old. New alerts will appear after a fresh completed update.'],
+  alertVatHelp: ['Известията включват само обяви с известна основа за ДДС и достатъчно сходни обяви.', 'Alerts include only listings with a known VAT basis and enough comparable peers.'],
+  alertEmpty: ['Няма нови непрегледани съвпадения с предпочитанията ви.', 'No unseen new matches for your preferences.'],
+  alertNewCount: ['{n} нови съвпадения', '{n} new matches'],
+  alertSee: ['Покажи съвпаденията', 'Show matches'],
+  alertMarkSeen: ['Отбележи като прегледани', 'Mark as seen'],
+  alertStorage: ['Браузърът не позволи запазване. Следенето ще важи само докато страницата е отворена.', 'Your browser did not allow saving. Watching will last only while this page is open.'],
+  listingsTitle: ['Разгледайте обявите', 'Explore the listings'],
+  listingsHelp: ['Комбинирайте квартал, тип, цена и разлика спрямо сравнимите обяви.', 'Combine neighborhood, apartment type, price and difference from comparable listings.'],
+  anyNeighborhood: ['Всички квартали', 'All neighborhoods'],
+  type: ['Тип апартамент', 'Apartment type'],
+  anyType: ['Всички типове', 'All types'],
+  vat: ['ДДС в цената', 'VAT basis'],
+  anyVat: ['Всички стойности', 'All values'],
+  minDiscount: ['Минимум под медианата · %', 'Minimum below median · %'],
+  discountNone: ['Без праг', 'No threshold'],
+  onlyDeals: ['Само обяви с поне 20% под медианата', 'Only listings at least 20% below median'],
+  moreFilters: ['Площ, цена и промени', 'Area, price and changes'],
+  minArea: ['Площ от · м²', 'Area from · m²'],
+  maxArea: ['Площ до · м²', 'Area to · m²'],
+  minPrice: ['Цена от · €', 'Price from · €'],
+  maxPrice: ['Цена до · €', 'Price to · €'],
+  change: ['Промяна между снимките', 'Change between snapshots'],
+  anyChange: ['Всички', 'Any'],
+  sortDiscount: ['Най-много под медианата', 'Largest difference below median'],
+  sortUnit: ['Най-ниска цена на м²', 'Lowest price per m²'],
+  sortPrice: ['Най-ниска обща цена', 'Lowest total price'],
+  sortNewest: ['Най-скоро наблюдавани', 'Most recently observed'],
+  apply: ['Покажи обявите', 'Show listings'],
+  reset: ['Изчисти филтрите', 'Clear filters'],
+  rangeError: ['Проверете диапазоните: минимумът трябва да е по-малък или равен на максимума.', 'Check the ranges: minimum must be no greater than maximum.'],
+  resultCount: ['{n} обяви с тези условия', '{n} listings match these conditions'],
+  emptyListings: ['Няма обяви с тези условия. Променете или изчистете филтрите.', 'No listings match these conditions. Change or clear the filters.'],
+  listingsLoading: ['Зареждане на обявите…', 'Loading listings…'],
+  listingsError: ['Обявите не се заредиха. Опитайте отново.', 'Listings could not load. Try again.'],
+  page: ['Страница {page} от {pages}', 'Page {page} of {pages}'],
+  previous: ['Предишна страница', 'Previous page'],
+  next: ['Следваща страница', 'Next page'],
+  methodology: ['Как се получават тези числа', 'How these numbers are calculated'],
+  methodologyIntro: ['Прозрачно сравнение, с ясни ограничения.', 'Transparent comparisons with clear limits.'],
+  methodologyPrice: ['Офертни, не продажни цени', 'Asking prices, not sale prices'],
+  methodologyPriceHelp: ['Цените са заявени в обявите. Те не установяват стойността, наличността или състоянието на имота. Не смесваме неизвестна валута с евро; левовите цени се преобразуват по 1,95583 лв./€.', 'Prices are stated in listings. They do not establish a property’s value, availability or condition. Unknown currencies are not treated as euros; BGN prices use 1.95583 BGN/€.'],
+  methodologyPeers: ['Сравняваме сходни обяви', 'Similar listings form the comparison'],
+  methodologyPeersHelp: ['Същият квартал, тип апартамент, група година на строеж и основа за ДДС. Самата обява е изключена от медианата; нужни са поне 8 други обяви. Неизвестната година е отделна група, която може да смесва различни възрасти.', 'Peers share neighborhood, apartment type, construction-year band and VAT basis. The listing itself is excluded from its comparison median; at least 8 other listings are required. Unknown construction years form a separate group that may mix property ages.'],
+  methodologyDeals: ['Сигнал за проверка', 'A lead to investigate'],
+  methodologyDealsHelp: ['Прагът е поне 20% под сравнимата медиана. Разлики от 60% или повече са отбелязани за проверка и не се изпращат като нови съвпадения. Площта и годината са заявени от рекламодателя.', 'The threshold is at least 20% below the comparable median. Differences of 60% or more are flagged for review and excluded from new alerts. Area and construction year are advertiser statements.'],
+  methodologySource: ['Една обява ≠ един имот', 'One listing does not equal one property'],
+  methodologySourceHelp: ['Премахваме повторенията по ID на обявата. Различни обяви за един физически имот може да останат отделни. Обявите не се свързват автоматично с кадастъра или с официален Акт 16.', 'Duplicate listing IDs are removed. Multiple listings for one physical property may remain separate. Listings are not automatically linked to the cadastre or official Act 16 evidence.'],
+  history: ['История на завършените снимки', 'Completed snapshot history'],
+  historyEmpty: ['Все още има само една отправна снимка. Измененията се изчисляват след следващи завършени обновявания.', 'Only one baseline snapshot is available so far. Changes are calculated after later completed updates.'],
+  historyHelp: ['Последни {n} завършени снимки. Промяна в състава на обявите също може да промени медианата.', 'Last {n} completed snapshots. A change in the mix of listings can also change the median.'],
+  sourceLink: ['Източник: imot.bg', 'Source: imot.bg'],
+  noValue: ['—', '—'],
+};
+
+const EMPTY_FILTERS = { neighborhood: '', type: '', vat: '', min_discount: '', min_area: '', max_area: '', min_price: '', max_price: '', deals_only: false, change: '', sort: 'discount' };
+const ALERT_KEY = 'sofiapermits.market.watching.v1';
+const DEFAULT_ALERT = { enabled: false, neighborhood: '', type: '', minDiscount: 20, seenKeys: [], baselineSnapshot: '' };
+
+function useText() {
+  const { lang } = useI18n();
+  return { lang, tr: (key, vars = {}) => {
+    let value = TEXT[key]?.[lang === 'bg' ? 0 : 1] || key;
+    Object.entries(vars).forEach(([name, item]) => { value = value.replaceAll(`{${name}}`, String(item)); });
+    return value;
+  } };
+}
+
+function numeric(value) { return typeof value === 'number' && Number.isFinite(value) ? value : null; }
+function formatNumber(value, lang, digits = 0) { const n = numeric(value); return n === null ? '—' : n.toLocaleString(lang === 'bg' ? 'bg-BG' : 'en-GB', { maximumFractionDigits: digits }); }
+function formatDate(value, lang, withTime = false) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '—';
+  return new Intl.DateTimeFormat(lang === 'bg' ? 'bg-BG' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric', ...(withTime && String(value).includes('T') ? { hour: '2-digit', minute: '2-digit' } : {}), timeZone: 'Europe/Sofia' }).format(date);
+}
+function safeOfferUrl(value) {
+  try { const url = new URL(value); return url.protocol === 'https:' && (url.hostname === 'imot.bg' || url.hostname.endsWith('.imot.bg')) ? url.href : null; } catch { return null; }
+}
+function vatText(value, tr) { return tr(value === 'included' ? 'vatIncluded' : value === 'excluded' ? 'vatExcluded' : 'vatUnknown'); }
+function typeText(value, lang) {
+  if (lang === 'bg') return value;
+  const normalized = String(value || '').trim().toLocaleUpperCase('bg-BG');
+  return { '2-СТАЕН': '2-room apartment', '3-СТАЕН': '3-room apartment', '4-СТАЕН': '4-room apartment', 'МНОГОСТАЕН': 'Multi-room apartment', 'МЕЗОНЕТ': 'Maisonette' }[normalized] || value;
+}
+function headlineMetric(row) {
+  if ((row?.headline_priced_count || 0) > 0) return { ...row, priced_count: row.headline_priced_count, vat_basis: row.headline_vat_basis || 'included' };
+  const unknown = (row?.by_vat_basis || []).find((item) => item.vat_basis === 'unknown' && item.priced_count > 0);
+  return unknown || { ...row, priced_count: row?.headline_priced_count || 0, vat_basis: row?.headline_vat_basis || 'included' };
+}
+function alertEventKey(offer) { return `${offer.id}:${offer.change?.kind || ''}:${offer.price_eur ?? ''}:${offer.first_seen_at || ''}`; }
+function initialAlerts() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ALERT_KEY) || 'null');
+    if (!saved || typeof saved !== 'object') return { ...DEFAULT_ALERT };
+    return { ...DEFAULT_ALERT, enabled: saved.enabled === true, neighborhood: typeof saved.neighborhood === 'string' ? saved.neighborhood : '', type: typeof saved.type === 'string' ? saved.type : '', minDiscount: [20, 25, 30, 40, 50].includes(saved.minDiscount) ? saved.minDiscount : 20, seenKeys: Array.isArray(saved.seenKeys) ? saved.seenKeys.filter((key) => typeof key === 'string').slice(-600) : [], baselineSnapshot: typeof saved.baselineSnapshot === 'string' ? saved.baselineSnapshot : '' };
+  } catch { return { ...DEFAULT_ALERT }; }
+}
+
+function OfferCard({ offer, mode }) {
+  const { lang, tr } = useText();
+  const comparison = offer.comparison || {};
+  const discount = numeric(comparison.below_median_pct);
+  const unusual = discount !== null && discount >= 60;
+  const historical = mode === 'historical_bootstrap' || offer.historical;
+  const link = safeOfferUrl(offer.url);
+  const change = offer.change?.kind;
+  return <article className={`market-offer-card${comparison.eligible ? ' is-comparable-deal' : ''}`}>
+    <div className="market-offer-top"><span className="market-offer-type">{typeText(offer.type_bg, lang) || tr('unknown')}</span>{historical ? <span className="market-status-badge is-historical"><Clock3 size={11} />{tr('historicalOffer')}</span> : ['new', 'price_drop', 'became_eligible'].includes(change) ? <span className="market-status-badge">{change === 'price_drop' ? <TrendingDown size={11} /> : <Check size={11} />}{tr(change === 'price_drop' ? 'priceDrop' : change === 'new' ? 'newOffer' : 'newlyEligible')}</span> : null}</div>
+    <h3><MapPin size={15} />{offer.neighborhood_bg || tr('unknown')}</h3>
+    {offer.address_bg && <p className="market-offer-address">{offer.address_bg}</p>}
+    <dl className="market-offer-facts"><div><dt>{tr('area')}</dt><dd>{formatNumber(offer.area_sqm, lang, 1)} {tr('sqm')}</dd></div><div><dt>{tr('year')}</dt><dd>{offer.construction_year || tr('unknown')}</dd></div></dl>
+    <div className="market-offer-price"><strong>{formatNumber(offer.price_eur, lang)}{numeric(offer.price_eur) !== null && <span> €</span>}</strong><span>{formatNumber(offer.eur_per_sqm, lang)} {tr('unit')}</span></div>
+    <p className={`market-offer-vat${offer.vat_basis === 'unknown' ? ' is-unknown' : ''}`}>{offer.vat_basis === 'unknown' && <Info size={11} />}{vatText(offer.vat_basis, tr)}</p>
+    <div className={`market-offer-comparison${unusual ? ' needs-review' : ''}`}>
+      {discount !== null && (comparison.peer_count || 0) >= 8 ? <><strong>{discount > 0 ? <ArrowDownRight size={17} /> : <BarChart3 size={17} />}{discount > 0 ? tr('below', { n: formatNumber(discount, lang, 1) }) : discount < 0 ? tr('above', { n: formatNumber(Math.abs(discount), lang, 1) }) : tr('nearMedian')}</strong><span>{tr('peers', { n: comparison.peer_count })} · {formatNumber(comparison.median_eur_per_sqm, lang)} {tr('unit')}</span>{offer.vat_basis === 'unknown' && <em>{tr('comparisonVatUnknown')}</em>}{unusual && <em><Info size={12} />{tr('review')}</em>}</> : <span>{tr('noComparison')}</span>}
+    </div>
+    <p className="market-offer-date">{offer.last_modified_at ? tr('updated', { date: formatDate(offer.last_modified_at, lang) }) : tr('observed', { date: formatDate(offer.observed_at, lang) })}</p>
+    {link && <a className="market-offer-link" href={link} target="_blank" rel="noreferrer">{tr('source')}<ArrowUpRight size={16} /></a>}
+  </article>;
+}
+
+function Pagination({ page, pages, onPage, busy = false }) {
+  const { tr } = useText();
+  if (pages <= 1) return null;
+  return <nav className="market-pagination" aria-label={tr('page', { page, pages })}><button type="button" disabled={busy || page <= 1} onClick={() => onPage(page - 1)} aria-label={tr('previous')}><ChevronLeft size={17} /></button><span>{tr('page', { page, pages })}</span><button type="button" disabled={busy || page >= pages} onClick={() => onPage(page + 1)} aria-label={tr('next')}><ChevronRight size={17} /></button></nav>;
+}
+
+function AlertPanel({ summary, onCountChange }) {
+  const { lang, tr } = useText();
+  const [preferences, setPreferences] = useState(initialAlerts);
+  const [draft, setDraft] = useState(() => { const p = initialAlerts(); return { neighborhood: p.neighborhood, type: p.type, minDiscount: p.minDiscount }; });
+  const [expanded, setExpanded] = useState(false);
+  const [alertPage, setAlertPage] = useState(1);
+  const [saved, setSaved] = useState(false);
+  const [storageError, setStorageError] = useState(false);
+  const options = summary.filter_options || {};
+  const historical = summary.mode !== 'daily';
+  const firstBaseline = summary.history?.baseline === true;
+  const capture = Date.parse(summary.captured_at);
+  const fresh = Number.isFinite(capture) && Date.now() - capture <= 48 * 3600 * 1000 && capture - Date.now() <= 6 * 3600 * 1000;
+  const suppressed = historical || firstBaseline || !fresh;
+  const candidates = (Array.isArray(summary.daily_candidates) ? summary.daily_candidates : []).filter((offer) => {
+    const discount = numeric(offer.comparison?.below_median_pct);
+    return !offer.historical && offer.comparison?.eligible === true && offer.comparison?.alert_eligible !== false && ['included', 'excluded'].includes(offer.vat_basis) && discount !== null && discount >= preferences.minDiscount && discount < 60
+      && (!preferences.neighborhood || offer.neighborhood_key === preferences.neighborhood) && (!preferences.type || offer.type_key === preferences.type)
+      && ['new', 'price_drop', 'became_eligible'].includes(offer.change?.kind) && !preferences.seenKeys.includes(alertEventKey(offer));
+  });
+  const unseen = preferences.enabled && !suppressed && preferences.baselineSnapshot !== summary.snapshot_id ? candidates : [];
+  useEffect(() => { onCountChange?.(unseen.length); }, [onCountChange, unseen.length]);
+  function savePreferences(next) {
+    setPreferences(next);
+    try { localStorage.setItem(ALERT_KEY, JSON.stringify(next)); setStorageError(false); } catch { setStorageError(true); }
+  }
+  function enable(event) {
+    event.preventDefault();
+    const keys = (summary.daily_candidates || []).map(alertEventKey);
+    savePreferences({ ...preferences, ...draft, enabled: true, baselineSnapshot: summary.snapshot_id, seenKeys: [...new Set([...preferences.seenKeys, ...keys])].slice(-600) });
+    setSaved(true); setExpanded(false); setAlertPage(1);
+  }
+  function markSeen() {
+    savePreferences({ ...preferences, seenKeys: [...new Set([...preferences.seenKeys, ...unseen.map(alertEventKey)])].slice(-600) });
+    setExpanded(false); setAlertPage(1);
+  }
+  return <section className="market-alerts" aria-labelledby="market-alert-title">
+    <div className="market-alert-intro"><div className="market-section-icon"><Bell size={20} /></div><div><div className="market-eyebrow">{tr(preferences.enabled ? 'alertEnabled' : 'alertDisabled')}</div><h2 id="market-alert-title">{tr('alertTitle')}</h2><p>{tr('alertHelp')}</p></div>{unseen.length > 0 && <button className="market-alert-count" type="button" onClick={() => setExpanded(!expanded)}><Bell size={14} />{tr('alertNewCount', { n: unseen.length })}<ChevronDown size={14} /></button>}</div>
+    <form className="market-alert-form" onSubmit={enable}>
+      <label><span>{tr('neighborhood')}</span><select value={draft.neighborhood} onChange={(event) => { setDraft({ ...draft, neighborhood: event.target.value }); setSaved(false); }}><option value="">{tr('anyNeighborhood')}</option>{(options.neighborhoods || []).map((item) => <option value={item.key} key={item.key}>{item.label_bg}</option>)}</select></label>
+      <label><span>{tr('type')}</span><select value={draft.type} onChange={(event) => { setDraft({ ...draft, type: event.target.value }); setSaved(false); }}><option value="">{tr('anyType')}</option>{(options.types || []).map((item) => <option value={item.key} key={item.key}>{typeText(item.label_bg, lang)}</option>)}</select></label>
+      <label><span>{tr('alertMin')}</span><select value={draft.minDiscount} onChange={(event) => { setDraft({ ...draft, minDiscount: Number(event.target.value) }); setSaved(false); }}>{[20, 25, 30, 40, 50].map((n) => <option key={n} value={n}>{n}%</option>)}</select></label>
+      <button className="market-button is-primary" type="submit"><Bell size={15} />{tr(preferences.enabled ? 'alertUpdate' : 'alertSave')}</button>
+      {preferences.enabled && <button className="market-button is-quiet" type="button" onClick={() => { savePreferences({ ...preferences, enabled: false }); setSaved(false); }}><BellOff size={15} />{tr('alertStop')}</button>}
+    </form>
+    {storageError && <p className="market-inline-note is-warning" role="status">{tr('alertStorage')}</p>}
+    {saved && <p className="market-inline-note" role="status"><Check size={14} />{tr('alertSaved')}</p>}
+    {suppressed ? <p className="market-inline-note"><Info size={14} />{tr(historical ? 'alertHistorical' : firstBaseline ? 'alertBaseline' : 'alertStale')}</p> : preferences.enabled && unseen.length === 0 ? <p className="market-inline-note">{tr('alertEmpty')}</p> : null}
+    <p className="market-inline-note">{tr('alertVatHelp')}</p>
+    {expanded && unseen.length > 0 && <div className="market-alert-matches"><div className="market-alert-matches-heading"><strong>{tr('alertNewCount', { n: unseen.length })}</strong><button type="button" onClick={markSeen}>{tr('alertMarkSeen')}<Check size={14} /></button></div><div className="market-offer-grid">{unseen.slice((Math.min(alertPage, Math.ceil(unseen.length / 6)) - 1) * 6, Math.min(alertPage, Math.ceil(unseen.length / 6)) * 6).map((offer) => <OfferCard key={offer.id} offer={offer} mode={summary.mode} />)}</div><Pagination page={Math.min(alertPage, Math.ceil(unseen.length / 6))} pages={Math.ceil(unseen.length / 6)} onPage={setAlertPage} /></div>}
+  </section>;
+}
+
+function NeighborhoodTable({ summary, onSelect }) {
+  const { lang, tr } = useText();
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState('count');
+  const [page, setPage] = useState(1);
+  const rows = useMemo(() => (summary.neighborhoods || []).filter((row) => row.label_bg.toLocaleLowerCase('bg-BG').includes(query.trim().toLocaleLowerCase('bg-BG'))).sort((a, b) => {
+    if (sort === 'name') return a.label_bg.localeCompare(b.label_bg, 'bg');
+    if (sort === 'count') return b.count - a.count || a.label_bg.localeCompare(b.label_bg, 'bg');
+    const key = sort === 'mean' ? 'mean_eur_per_sqm' : 'median_eur_per_sqm';
+    return (numeric(headlineMetric(a)[key]) ?? Infinity) - (numeric(headlineMetric(b)[key]) ?? Infinity) || b.count - a.count;
+  }), [summary.neighborhoods, query, sort]);
+  const pages = Math.max(1, Math.ceil(rows.length / 12));
+  const currentPage = Math.min(page, pages);
+  const visible = rows.slice((currentPage - 1) * 12, currentPage * 12);
+  const maxMedian = Math.max(1, ...rows.map((row) => numeric(headlineMetric(row).median_eur_per_sqm) || 0));
+  return <section className="market-section market-neighborhood-section" aria-labelledby="market-neighborhood-title">
+    <div className="market-section-heading"><div><div className="market-eyebrow">SOFIA · {tr('neighborhoods')}</div><h2 id="market-neighborhood-title">{tr('tableTitle')}</h2><p>{tr('tableHelp')}</p></div><div className="market-table-controls"><label className="market-search-field"><Search size={16} /><input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder={tr('searchNeighborhood')} aria-label={tr('searchNeighborhood')} /></label><select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }} aria-label={tr('order')}><option value="count">{tr('orderCount')}</option><option value="median">{tr('orderMedian')}</option><option value="mean">{tr('orderMean')}</option><option value="name">{tr('orderName')}</option></select></div></div>
+    <div className="market-table-wrap"><table className="market-neighborhood-table"><thead><tr><th scope="col">{tr('neighborhood')}</th><th scope="col">{tr('count')}</th><th scope="col">{tr('sample')}</th><th scope="col">{tr('mean')}</th><th scope="col">{tr('medianColumn')}</th><th scope="col">{tr('medianPrice')}</th></tr></thead><tbody>{visible.map((row) => { const metric = headlineMetric(row); return <tr key={row.key}><th scope="row"><button type="button" onClick={() => onSelect(row.key)} aria-label={tr('viewNeighborhood', { name: row.label_bg })}>{row.label_bg}<ArrowUpRight size={13} /></button></th><td>{formatNumber(row.count, lang)}</td><td>{formatNumber(metric.priced_count, lang)}{metric.vat_basis === 'unknown' && <small>{tr('vatUnknown')}</small>}{metric.priced_count < 8 && <small>{tr('smallSample')}</small>}</td><td>{formatNumber(metric.mean_eur_per_sqm, lang)}</td><td className="market-median-cell"><strong>{formatNumber(metric.median_eur_per_sqm, lang)}</strong><span className="market-price-bar" aria-hidden="true"><i style={{ width: `${Math.max(0, Math.min(100, (numeric(metric.median_eur_per_sqm) || 0) / maxMedian * 100))}%` }} /></span></td><td>{formatNumber(metric.median_price_eur, lang)}{numeric(metric.median_price_eur) !== null && ' €'}</td></tr>; })}</tbody></table>{visible.length === 0 && <p className="market-empty">{tr('emptyNeighborhoods')}</p>}</div>
+    <div className="market-table-footer"><span>{tr('tableRange', { from: rows.length ? (currentPage - 1) * 12 + 1 : 0, to: Math.min(currentPage * 12, rows.length), total: rows.length })}</span><Pagination page={currentPage} pages={pages} onPage={setPage} /></div>
+  </section>;
+}
+
+function MarketListings({ summary, sectionRef, externalSelection }) {
+  const { lang, tr } = useText();
+  const [draft, setDraft] = useState({ ...EMPTY_FILTERS });
+  const [filters, setFilters] = useState({ ...EMPTY_FILTERS });
+  const [page, setPage] = useState(1);
+  const [revision, setRevision] = useState(0);
+  const [rangeError, setRangeError] = useState(false);
+  const [state, setState] = useState({ loading: true, error: false, data: null });
+  const options = summary.filter_options || {};
+  useEffect(() => {
+    if (!externalSelection) return;
+    const next = { ...EMPTY_FILTERS, ...externalSelection.filters };
+    setDraft(next); setFilters(next); setPage(1); setRangeError(false);
+  }, [externalSelection]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setState((previous) => ({ ...previous, loading: true, error: false }));
+    marketApi.listings({ ...filters, deals_only: filters.deals_only ? 1 : undefined, page, page_size: 24 }, controller.signal).then((data) => { if (!controller.signal.aborted) setState({ loading: false, error: false, data }); }).catch(() => { if (!controller.signal.aborted) setState({ loading: false, error: true, data: null }); });
+    return () => controller.abort();
+  }, [filters, page, revision, summary.snapshot_id]);
+  function update(key, value) { setDraft((previous) => ({ ...previous, [key]: value })); setRangeError(false); }
+  function apply(event) {
+    event.preventDefault();
+    for (const [min, max] of [['min_area', 'max_area'], ['min_price', 'max_price']]) {
+      if ((draft[min] !== '' && (!Number.isFinite(Number(draft[min])) || Number(draft[min]) < 0)) || (draft[max] !== '' && (!Number.isFinite(Number(draft[max])) || Number(draft[max]) < 0)) || (draft[min] !== '' && draft[max] !== '' && Number(draft[min]) > Number(draft[max]))) { setRangeError(true); return; }
+    }
+    setFilters({ ...draft }); setPage(1); setRangeError(false);
+  }
+  const items = Array.isArray(state.data?.items) ? state.data.items : [];
+  return <section className="market-section market-listings-section" ref={sectionRef} aria-labelledby="market-listings-title">
+    <div className="market-section-heading"><div><div className="market-eyebrow">{tr('count')} · IMOT.BG</div><h2 id="market-listings-title">{tr('listingsTitle')}</h2><p>{tr('listingsHelp')}</p></div><SlidersHorizontal className="market-heading-icon" size={24} /></div>
+    <form className="market-filter-form" onSubmit={apply}>
+      <div className="market-filter-grid"><label><span>{tr('neighborhood')}</span><select value={draft.neighborhood} onChange={(event) => update('neighborhood', event.target.value)}><option value="">{tr('anyNeighborhood')}</option>{(options.neighborhoods || []).map((item) => <option value={item.key} key={item.key}>{item.label_bg} ({item.count})</option>)}</select></label><label><span>{tr('type')}</span><select value={draft.type} onChange={(event) => update('type', event.target.value)}><option value="">{tr('anyType')}</option>{(options.types || []).map((item) => <option value={item.key} key={item.key}>{typeText(item.label_bg, lang)} ({item.count})</option>)}</select></label><label><span>{tr('vat')}</span><select value={draft.vat} onChange={(event) => update('vat', event.target.value)}><option value="">{tr('anyVat')}</option>{(options.vat_bases || []).map((item) => <option value={item.key} key={item.key}>{vatText(item.key, tr)} ({item.count})</option>)}</select></label><label><span>{tr('minDiscount')}</span><select value={draft.min_discount} onChange={(event) => update('min_discount', event.target.value)}><option value="">{tr('discountNone')}</option>{[10, 20, 25, 30, 40, 50].map((n) => <option key={n} value={n}>{n}%</option>)}</select></label></div>
+      <div className="market-filter-second-row"><label className="market-checkbox"><input type="checkbox" checked={draft.deals_only} onChange={(event) => update('deals_only', event.target.checked)} /><span>{tr('onlyDeals')}</span></label><label className="market-sort-field"><span>{tr('order')}</span><select value={draft.sort} onChange={(event) => update('sort', event.target.value)}><option value="discount">{tr('sortDiscount')}</option><option value="eur_per_sqm">{tr('sortUnit')}</option><option value="price">{tr('sortPrice')}</option><option value="newest">{tr('sortNewest')}</option></select></label></div>
+      <details className="market-more-filters"><summary><Filter size={14} />{tr('moreFilters')}<ChevronDown size={14} /></summary><div className="market-filter-grid is-advanced">{['min_area', 'max_area', 'min_price', 'max_price'].map((key) => <label key={key}><span>{tr({ min_area: 'minArea', max_area: 'maxArea', min_price: 'minPrice', max_price: 'maxPrice' }[key])}</span><input type="number" min="0" max={key.endsWith('area') ? 100000 : 10000000000} step="any" value={draft[key]} onChange={(event) => update(key, event.target.value)} placeholder="—" /></label>)}<label><span>{tr('change')}</span><select value={draft.change} onChange={(event) => update('change', event.target.value)}><option value="">{tr('anyChange')}</option>{[['new', 'newOffer'], ['price_drop', 'priceDrop'], ['became_eligible', 'newlyEligible']].map(([value, key]) => <option key={value} value={value}>{tr(key)}</option>)}</select></label></div></details>
+      {rangeError && <p className="market-inline-note is-warning" role="alert">{tr('rangeError')}</p>}
+      <div className="market-filter-actions"><button className="market-button is-primary" type="submit"><Search size={15} />{tr('apply')}</button><button className="market-button is-quiet" type="button" onClick={() => { setDraft({ ...EMPTY_FILTERS }); setFilters({ ...EMPTY_FILTERS }); setPage(1); setRangeError(false); }}><X size={14} />{tr('reset')}</button>{!state.loading && !state.error && <span className="market-result-count" aria-live="polite">{tr('resultCount', { n: formatNumber(state.data?.total, lang) })}</span>}</div>
+    </form>
+    <div className="market-listings-results" aria-live="polite" aria-busy={state.loading}>{state.loading ? <div className="market-loading is-inline"><Loader2 size={21} className="animate-spin" /><span>{tr('listingsLoading')}</span></div> : state.error ? <div className="market-empty" role="alert"><p>{tr('listingsError')}</p><button className="market-button" type="button" onClick={() => setRevision((n) => n + 1)}><RefreshCw size={15} />{tr('retry')}</button></div> : items.length === 0 ? <p className="market-empty">{tr('emptyListings')}</p> : <><div className="market-offer-grid">{items.map((offer) => <OfferCard key={offer.id} offer={offer} mode={state.data?.mode || summary.mode} />)}</div><Pagination page={state.data?.page || page} pages={state.data?.pages || 1} onPage={(next) => { setPage(next); sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} /></>}</div>
+  </section>;
+}
+
+function Methodology({ summary }) {
+  const { lang, tr } = useText();
+  const series = Array.isArray(summary.history?.series) ? summary.history.series.slice(-8) : [];
+  return <section className="market-section market-methodology" aria-labelledby="market-methodology-title"><div className="market-section-heading"><div><div className="market-eyebrow">{tr('methodologyIntro')}</div><h2 id="market-methodology-title">{tr('methodology')}</h2></div><ShieldCheck className="market-heading-icon" size={25} /></div><div className="market-method-grid">{[['Price', BarChart3], ['Peers', Layers3], ['Deals', CircleHelp], ['Source', ExternalLink]].map(([key, Icon]) => <article key={key}><Icon size={20} /><h3>{tr(`methodology${key}`)}</h3><p>{tr(`methodology${key}Help`)}</p></article>)}</div><details className="market-history"><summary><CalendarDays size={16} />{tr('history')}<ChevronDown size={16} /></summary>{series.length <= 1 ? <p>{tr('historyEmpty')}</p> : <><p>{tr('historyHelp', { n: series.length })}</p><div className="market-history-series">{series.map((point, index) => <div key={`${point.captured_at}-${index}`}><span>{formatDate(point.captured_at, lang)}</span><strong>{formatNumber(point.median_eur_per_sqm, lang)} {tr('unit')}</strong><small>{formatNumber(point.listing_count, lang)} {tr('count').toLocaleLowerCase()}</small></div>)}</div></>}</details><div className="market-method-footer"><a href="https://www.imot.bg/" target="_blank" rel="noreferrer">{tr('sourceLink')}<ArrowUpRight size={14} /></a><span>{tr('captured', { date: formatDate(summary.captured_at, lang, true) })}</span></div></section>;
+}
+
+export default function MarketDashboard({ onBackToMap, onSummaryChange, onAlertCountChange }) {
+  const { lang, tr } = useText();
+  const [revision, setRevision] = useState(0);
+  const [state, setState] = useState({ loading: true, error: false, backgroundError: false, data: null });
+  const [selection, setSelection] = useState(null);
+  const listingsRef = useRef(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    let pending = false;
+    let lastAttempt = 0;
+    async function load(quiet) {
+      if (pending || controller.signal.aborted) return;
+      pending = true; lastAttempt = Date.now();
+      if (!quiet) setState((previous) => ({ ...previous, loading: !previous.data, error: false, backgroundError: false }));
+      try {
+        const data = await marketApi.summary(controller.signal);
+        if (!controller.signal.aborted) setState((previous) => ({ loading: false, error: false, backgroundError: false, checkedAt: Date.now(), data: previous.data?.snapshot_id === data?.snapshot_id ? previous.data : data }));
+      } catch {
+        if (!controller.signal.aborted) setState((previous) => ({ ...previous, loading: false, error: !previous.data, backgroundError: Boolean(previous.data) }));
+      } finally { pending = false; }
+    }
+    load(false);
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') load(true); }, 60000);
+    function onVisible() { if (document.visibilityState === 'visible' && Date.now() - lastAttempt >= 60000) load(true); }
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { controller.abort(); window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [revision]);
+  function showListings(filters) { setSelection({ filters, id: Date.now() }); listingsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  const summary = state.data;
+  const historical = summary?.mode === 'historical_bootstrap';
+  const captured = Date.parse(summary?.captured_at || '');
+  const stale = summary && !historical && (!Number.isFinite(captured) || Date.now() - captured > 48 * 3600 * 1000);
+  const range = summary?.coverage?.source_date_min && summary?.coverage?.source_date_max ? `${formatDate(summary.coverage.source_date_min, lang)} – ${formatDate(summary.coverage.source_date_max, lang)}` : formatDate(summary?.captured_at, lang);
+  const headline = headlineMetric(summary?.totals);
+  useEffect(() => { if (summary) onSummaryChange?.(summary); }, [onSummaryChange, summary]);
+  return <main className="market-workspace"><div className="market-shell">
+    <header className="market-hero"><div className="market-hero-copy"><p className="market-eyebrow">{tr('eyebrow')}</p><h1>{tr('title')}</h1><p>{tr('intro')}</p><div className="market-hero-meta"><span><CalendarDays size={14} />{summary ? tr('captured', { date: formatDate(summary.captured_at, lang, true) }) : tr('loading')}</span><a href="#market-methodology-title"><Info size={14} />{tr('methodology')}</a></div></div><div className="market-hero-actions">{onBackToMap && <button className="market-button" type="button" onClick={onBackToMap}><ArrowLeft size={15} />{tr('map')}</button>}<button className="market-button is-quiet" type="button" disabled={state.loading} onClick={() => setRevision((n) => n + 1)}><RefreshCw size={15} className={state.loading ? 'animate-spin' : ''} />{tr('refresh')}</button></div></header>
+    {state.loading ? <div className="market-loading"><Loader2 size={28} className="animate-spin" /><span>{tr('loading')}</span></div> : state.error || !summary ? <div className="market-empty market-main-error" role="alert"><Info size={25} /><p>{tr('loadError')}</p><button className="market-button is-primary" type="button" onClick={() => setRevision((n) => n + 1)}><RefreshCw size={15} />{tr('retry')}</button></div> : <>
+      {state.backgroundError && <p className="market-inline-note is-warning" role="status"><Info size={15} />{tr('backgroundError')}</p>}
+      {historical && <div className="market-data-notice"><div className="market-notice-icon"><Clock3 size={22} /></div><div><strong>{tr('archive')} · {range}</strong><p>{tr('archiveHelp', { period: range })}</p></div></div>}
+      {!historical && (stale || summary.history?.baseline) && <p className="market-inline-note is-warning"><Info size={15} />{tr(stale ? 'stale' : 'baseline')}</p>}
+      <div className="market-stats-grid"><article><span>{tr('ads')}</span><strong>{formatNumber(summary.counts?.listing_count, lang)}</strong><p>{tr('adHint')}</p></article><article><span>{tr('neighborhoods')}</span><strong>{formatNumber(summary.coverage?.neighborhood_count ?? summary.neighborhoods?.length, lang)}</strong><p>{tr('pricedHint', { n: formatNumber(summary.counts?.priced_count, lang) })}</p></article><article className="is-emphasis"><span>{tr('median')}</span><strong>{formatNumber(headline.median_eur_per_sqm, lang)}<small> €</small></strong><p>{tr('medianHint', { n: formatNumber(headline.priced_count, lang), vat: vatText(headline.vat_basis, tr) })}</p></article><article><span>{tr('opportunities')}</span><strong>{formatNumber(summary.counts?.eligible_count, lang)}</strong><p>{tr('opportunityHint')}</p></article></div>
+      <div className="market-scope"><span>{tr('scope')}</span><p>{lang === 'bg' ? summary.coverage?.scope_bg || 'Обяви за апартаменти в София и населените места в каталога' : 'Apartment listings in Sofia and settlements in the source catalogue · advertised asking prices'}{summary.coverage?.construction_year_min && <small>{tr('constructionScope', { year: summary.coverage.construction_year_min })}</small>}</p></div>
+      <section className="market-section market-top-section" aria-labelledby="market-top-title"><div className="market-section-heading"><div><div className="market-eyebrow"><TrendingDown size={13} />{tr('opportunities')}</div><h2 id="market-top-title">{tr('topTitle')}</h2><p>{tr('topHelp')}</p></div><button className="market-button" type="button" onClick={() => showListings({ deals_only: true, min_discount: 20 })}>{tr('viewAll')}<ArrowRight size={15} /></button></div>{summary.top_offers?.length ? <div className="market-offer-grid">{summary.top_offers.slice(0, 6).map((offer) => <OfferCard key={offer.id} offer={offer} mode={summary.mode} />)}</div> : <p className="market-empty">{tr('noTop')}</p>}</section>
+      <NeighborhoodTable summary={summary} onSelect={(neighborhood) => showListings({ neighborhood })} />
+      <AlertPanel summary={summary} onCountChange={onAlertCountChange} />
+      <MarketListings summary={summary} sectionRef={listingsRef} externalSelection={selection} />
+      <Methodology summary={summary} />
+    </>}
+  </div></main>;
+}
+
+export function MarketTeaser({ onOpen, alertCount = 0 }) {
+  const { tr } = useText();
+  return <button className="market-teaser" type="button" onClick={onOpen}><span className="market-section-icon"><BarChart3 size={19} /></span><span><strong>{tr('title')}</strong><small>{tr('intro')}</small>{alertCount > 0 && <em className="market-teaser-alert-count"><Bell size={12} />{tr('alertNewCount', { n: alertCount })}</em>}</span><ArrowRight size={16} /></button>;
+}

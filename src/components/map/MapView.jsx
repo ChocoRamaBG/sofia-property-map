@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { CircleMarker, MapContainer, Marker, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { CircleMarker, MapContainer, Marker, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import { divIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useI18n } from '@/lib/i18n';
@@ -48,7 +48,7 @@ function BoundsWatcher({ onChange }) {
 }
 
 export default function MapView({
-  parcels = [], selectedParcel, selectedKey, hoveredKey, baseLayer = 'standard', userLocation,
+  parcels = [], selectedParcel, selectedKey, hoveredKey, baseLayer = 'standard', userLocation, addressLocation,
   onSelect, onHover, onBoundsChange, onMapReady, onClusterClick,
 }) {
   const { t, lang } = useI18n();
@@ -109,6 +109,11 @@ export default function MapView({
           <Tooltip>{t('map.you')}</Tooltip>
         </CircleMarker>
       ) : null}
+      {addressLocation && <CircleMarker center={[addressLocation.lat, addressLocation.lng]} radius={10}
+        pathOptions={{ color: '#fff', weight: 3, fillColor: '#c86624', fillOpacity: 1 }}>
+        <Tooltip>{lang === 'bg' ? 'Адресно местоположение' : 'Address location'} · {addressLocation.label}</Tooltip>
+        <Popup><strong>{addressLocation.label}</strong><p>{lang === 'bg' ? 'Приблизително местоположение от OpenStreetMap. Изберете кадастрална точка отделно за официалните сведения.' : 'Approximate OpenStreetMap location. Select a cadastral point separately for official records.'}</p><a href={addressLocation.source_url} target="_blank" rel="noopener noreferrer">OpenStreetMap ↗</a></Popup>
+      </CircleMarker>}
       <BoundsWatcher onChange={onBoundsChange} />
       <MapBridge onMapReady={onMapReady} />
     </MapContainer>

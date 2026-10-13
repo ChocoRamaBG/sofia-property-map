@@ -50,6 +50,44 @@ The importer recognizes the historical column layouts, skips exact duplicate wor
 
 Subsequent monthly merges retain these archive observations.
 
+## Daily offers dashboard
+
+The **Offers & prices** workspace reads a separate private imot.bg market snapshot through `market.php`. The original Master Summary supplies an explicitly dated September 2024 historical baseline; it never creates daily alerts. Daily collection covers public two-, three- and four-room apartment sale listings across the source's Sofia catalogue locations, including nearby settlements, without the old construction-year restriction. Other categories and rentals are outside this scope. An advert ID is not a unique property ID.
+
+The consolidated collector replaces 73 desktop neighborhood scripts and 18 No Data scripts. It reads public list cards with a single worker paced at least two seconds apart, uses `lxml` to recover the source's malformed HTML, and divides capped searches using the source's native price bands. Exact stable totals must reconcile in every search leaf before publishing. Unknown prices remain visible but do not enter financial comparisons. Source challenges, a changed catalogue, incomplete counts or capacity limits stop publication and leave the active snapshot in place.
+
+Price comparisons use **asking EUR/m²**, grouped by neighborhood, apartment type, VAT basis and advertised construction-age cohort (from 2021, before 2021, unknown). The candidate is excluded from its own peers. A potential bargain requires at least 20% below the peer median with at least eight other comparable adverts. Discounts of 60% or more are review signals and cannot alert. Unknown VAT comparisons stay separate and labeled; default website alerts require known VAT. Unknown currencies are never assumed. Neighborhood figures use VAT included/not charged; an explicit separate unknown-VAT fallback is shown when that sample is absent. These are asking-price statistics, not transaction prices or confirmed bargains.
+
+The dashboard provides neighborhood mean/median and sample sizes, top comparisons, combined listing filters, a bounded market history and local alert preferences. Only factual fields and original advert links are public; no descriptions, photos or contacts are republished. Advertised Act 16 or construction status is an advertiser claim and is never joined to official records by address or proximity.
+
+### Daily/manual GitHub update
+
+All cloud code lives in the existing private `ChocoRamaBG/sofia-property-map` repository. `.github/workflows/daily-imot-refresh.yml` runs daily at **03:23 UTC** (06:23 Sofia in summer, 05:23 in winter). To run one complete refresh manually, open **Actions → Daily Sofia asking-price refresh → Run workflow** on `main`. The workflow fetches the verified previous state, captures every configured search, builds comparisons and changes, validates all hashes and counts, then uploads over verified FTPS using the existing `FTP_HOST`, `FTP_USER` and `FTP_PASSWORD` Actions secrets. A green completed publication automatically changes the website's dataset; no SQL import or second button is required. GitHub can delay scheduled jobs.
+
+The first complete daily capture establishes an alert baseline. Later new adverts, reduced prices and newly eligible comparisons can generate website alerts. Users save their neighborhood/type/discount preferences inside the dashboard. Preferences and seen event keys remain in that browser. While the website's browser tab is visible, the summary refreshes every minute, including the map's alert badge. There are no emails or background browser push notifications. Historical captures and captures older than 48 hours cannot alert.
+
+### Market storage and retention
+
+`private/market-active.json` points to a verified immutable `private/market-snapshots/<uuid>/` tree, with a summary (<=512 KiB), manifest (<=256 KiB), <=256 public listing shards (<=250 rows and 256 KiB each) and a private state (<=64 MiB). The bound is 50,000 unique listings and a 96 MiB capture. Manifest completion counts and a hash are crosschecked with full search evidence in the private state. Public APIs never expose the state or private audit.
+
+Activation uses verified upload/readback and atomic rename, retaining a verified previous pointer. After successful activation, market-only retention keeps the latest seven completed snapshots plus current/previous referenced snapshots. Only fully verified older unreferenced allowlisted market UUID trees can be removed; unexpected layouts stop cleanup and incomplete unverifiable directories remain. Registry and cadastral snapshots are preserved independently. Complete private captures/prepared snapshots are also retained as Actions artifacts for 31 days. Private price history is bounded to 90 days and 64 changes per listing; aggregate history keeps 180 completed captures. Missing adverts are not described as sold.
+
+Install dependencies and run a local capture/prepare flow from this website directory:
+
+    python -m pip install -r scripts/requirements-imot.txt
+    python scripts/deploy_imot_ftps.py fetch --output seed/daily/previous-pointer.json --state-output seed/daily/previous-state.json
+    python scripts/imot_scraper.py --output seed/daily/capture.json
+    python scripts/imot_market.py --input seed/daily/capture.json --previous-state seed/daily/previous-state.json --output seed/daily/publish
+    python scripts/deploy_imot_ftps.py publish --input seed/daily/publish --previous seed/daily/previous-pointer.json
+
+The fetch/publish operations require FTPS credentials in the process environment. Never commit credentials or generated private output. Use fresh local fetch paths and do not publish concurrently with a cloud run.
+
+## Street address navigation
+
+The map sidebar separates **Property & records** from **Address**. Manual address submission calls the same-origin `geocode.php` proxy, which uses OpenStreetMap Nominatim. No autocomplete or bulk parser geocoding is used. The proxy identifies the site, verifies TLS, restricts results to the Sofia area, globally paces requests to at least 1.1 seconds apart, applies conservative request limits, and keeps a private hashed-query response cache for at most seven days (150 entries/2 MiB). Trusted `private/geocode-config.php` can switch to an approved compatible HTTPS provider without a frontend release. The cache is incidental provider-policy state, not a dataset write endpoint.
+
+Address selection moves the map and adds a distinct orange location marker. Results indicate address/street/area precision and attribution. Address results never create parcel/document matches. Existing submitted property phrases, filters and search results remain available when switching search modes or visiting the offers dashboard. Address values and listing filters are never sent to analytics.
+
 ## Local development
 
 Requirements: Node.js, Python 3.12, Chrome, PHP, and MySQL. Install the parser dependencies from the website directory:

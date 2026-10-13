@@ -14,6 +14,8 @@ import MapView from '@/components/map/MapView';
 import MapToolbar from '@/components/map/MapToolbar';
 import MapLegend from '@/components/map/MapLegend';
 import SearchPanel from '@/components/search/SearchPanel';
+import AddressSearch from '@/components/search/AddressSearch';
+import MarketDashboard, { MarketTeaser } from '@/components/market/MarketDashboard';
 import RegisterFilters from '@/components/search/RegisterFilters';
 import DetailsPanel from '@/components/details/DetailsPanel';
 import useViewportParcels from '@/hooks/useViewportParcels';
@@ -59,6 +61,10 @@ export default function Home() {
   const [filters, setFilters] = useState(readPropertyFilters);
   const [meta, setMeta] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
+  const [addressLocation, setAddressLocation] = useState(null);
+  const [searchTab, setSearchTab] = useState('records');
+  const [workspace, setWorkspace] = useState(() => window.location.hash === '#offers' ? 'offers' : 'map');
+  const [marketAlertCount, setMarketAlertCount] = useState(0);
   const searchRequest = useRef(0);
   const fitSearchResults = useRef(filters.searchTerms.length > 0);
   const mapRef = useRef(null);
@@ -74,6 +80,32 @@ export default function Home() {
 
   useEffect(() => { let active = true; realEstateApi.meta().then((data) => { if (active) setMeta(data); }).catch(() => {}); return () => { active = false; }; }, []);
   useEffect(() => { writePropertyFilters(filters); }, [filters]);
+  useEffect(() => {
+    const update = () => {
+      if (window.location.hash === '#offers') setWorkspace('offers');
+      else if (window.location.hash === '#map' || window.location.hash === '') setWorkspace('map');
+    };
+    window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
+  }, []);
+  const changeWorkspace = useCallback((next) => {
+    setSearchOpen(false);
+    setWorkspace(next);
+    window.location.hash = next === 'offers' ? 'offers' : 'map';
+  }, []);
+  const handleAddressSelect = useCallback((location) => {
+    setAddressLocation(location); setSelected(null); setSearchOpen(false);
+    searchReturn.current = null; pendingSearchReturn.current = null; returningToSearch.current = false; setCanReturnToSearch(false);
+    const currentMap = mapRef.current;
+    if (!currentMap) return;
+    currentMap.stop();
+    const extent = location.bounds;
+    if (extent && ['south', 'north', 'west', 'east'].every((key) => Number.isFinite(extent[key]))) {
+      currentMap.fitBounds([[extent.south, extent.west], [extent.north, extent.east]], { padding: [48, 48], maxZoom: location.precision === 'address' ? 18 : 16 });
+    } else currentMap.flyTo([location.lat, location.lng], location.precision === 'address' ? 18 : 16);
+    trackEvent('address_locate');
+  }, []);
+  const clearAddress = useCallback(() => setAddressLocation(null), []);
   const rememberSearchView = useCallback((plot) => {
     pendingSearchReturn.current = null;
     returningToSearch.current = false;
@@ -222,11 +254,21 @@ export default function Home() {
   }, [map]);
 
   const sidebar = <>
+    <div className="search-mode-tabs" role="tablist" aria-label={lang === 'bg' ? 'Начин на търсене' : 'Search method'}>
+      <button id="records-search-tab" role="tab" aria-selected={searchTab === 'records'} aria-controls="records-search-panel" onClick={() => setSearchTab('records')}>{lang === 'bg' ? 'Имот и документи' : 'Property & records'}</button>
+      <button id="address-search-tab" role="tab" aria-selected={searchTab === 'address'} aria-controls="address-search-panel" onClick={() => setSearchTab('address')}><MapPin size={14} />{lang === 'bg' ? 'Адрес' : 'Address'}</button>
+    </div>
+    <div id="records-search-panel" role="tabpanel" aria-labelledby="records-search-tab" hidden={searchTab !== 'records'}>
     <SearchPanel panelRef={searchPanel} query={query} onQueryChange={handleQueryChange} onSubmit={handleSearch} onClear={handleClear} loading={searching}
       searchTerms={filters.searchTerms} searchMatch={filters.searchMatch} onRemoveTerm={handleRemoveTerm} onClearTerms={handleClearTerms} onSearchMatchChange={handleSearchMatchChange}
       results={(searchResponse?.items || []).map((item) => ({ ...item, secondary: t('panel.linkedRecords', { n: item.document_count }) }))}
       resultQuery={filters.searchTerms.join(' · ')} resultTotal={searchResponse?.total} resultMappedTotal={searchResponse?.mapped_total} resultUnmappedTotal={searchResponse?.unmapped_total}
       resultsTruncated={searchResponse?.truncated} searchError={searchError} onSelectResult={handleSelectResult} />
+    </div>
+    <div id="address-search-panel" className="address-panel-wrap" role="tabpanel" aria-labelledby="address-search-tab" hidden={searchTab !== 'address'}>
+      <AddressSearch onSelectLocation={handleAddressSelect} selectedLocation={addressLocation} onClearLocation={clearAddress} />
+    </div>
+    <MarketTeaser onOpen={() => changeWorkspace('offers')} alertCount={marketAlertCount} />
     <div ref={filterPanel}><RegisterFilters value={filters} onChange={handleFilterChange} counts={meta?.counts} options={meta?.filter_options} /></div>
     <div className="map-instructions"><span><MapPin size={18} /></span><div><strong>{t('map.howTitle')}</strong><p>{t('map.howHelp')}</p></div></div>
     <DatasetSummary meta={meta} />
@@ -234,18 +276,20 @@ export default function Home() {
 
   return (
     <div className="map-app">
-      <AppHeader /><DataNotice />
-      <main className={`map-workspace ${selected ? 'has-selected' : ''}`}>
+      <AppHeader activeWorkspace={workspace} onWorkspaceChange={changeWorkspace} alertCount={marketAlertCount} />
+      {workspace === 'map' && <DataNotice />}
+      <div className="offers-workspace-host" hidden={workspace !== 'offers'}><MarketDashboard onBackToMap={() => changeWorkspace('map')} onAlertCountChange={setMarketAlertCount} /></div>
+      <main hidden={workspace !== 'map'} className={`map-workspace ${selected ? 'has-selected' : ''}`}>
         {!isMobile && <aside ref={sidebarScroll} className="workspace-sidebar" aria-label={t('search.title')}>{sidebar}</aside>}
         <div className="map-stage">
-          <MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} userLocation={userLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} />
+          <MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} userLocation={userLocation} addressLocation={addressLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} />
           {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{t('search.mobile')}<SlidersHorizontal size={16} />{activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : <button className="map-context" onClick={editFilters} aria-label={t('filter.edit')}><span className="context-dot" />{t('map.city')}<span className="map-context-divider" /><SlidersHorizontal size={13} />{activeCount ? t('filter.activeCount', { n: activeCount }) : t('filter.all')}</button>}
           <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} />
           <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={isLoading} truncated={truncated} apiError={apiError} filterError={filterError} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} />
         </div>
         {!isMobile && selected && <aside className="workspace-details" aria-label={t('panel.title')}><DetailsPanel parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} /></aside>}
       </main>
-      {isMobile && <>
+      {isMobile && workspace === 'map' && <>
         <Sheet open={searchOpen} onOpenChange={setSearchOpen}><SheetContent ref={sidebarScroll} side="bottom" className="mobile-sidebar-sheet overflow-y-auto p-0" aria-describedby={undefined}
           onOpenAutoFocus={(event) => { if (pendingSearchReturn.current) event.preventDefault(); }}
           onCloseAutoFocus={(event) => { if (searchReturn.current || returningToSearch.current) event.preventDefault(); }}><SheetTitle className="sr-only">{t('search.mobile')}</SheetTitle>{sidebar}</SheetContent></Sheet>

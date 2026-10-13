@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source": "imot.bg",
+  "catalogue_url": "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya",
+  "robots_url": "https://www.imot.bg/robots.txt",
+  "terms_url": "https://www.imot.bg/obshti-uslovia",
+  "reviewed_at": "2026-10-13",
+  "scope_bg": "Публични обяви за продажба на двустайни, тристайни и четиристайни апартаменти в локациите от каталога град София; всички години на строителство. Обяви без обявена цена се запазват, но не участват в ценовите сравнения. Други видове имоти и наеми не са включени.",
+  "property_types": [
+    {"label_bg": "2-СТАЕН", "slug": "dvustaen", "form_value": "2~"},
+    {"label_bg": "3-СТАЕН", "slug": "tristaen", "form_value": "3~"},
+    {"label_bg": "4-СТАЕН", "slug": "chetiristaen", "form_value": "4~"}
+  ],
+  "minimum_price_eur": 0,
+  "initial_price_split_eur": 250000,
+  "minimum_request_interval_seconds": 2,
+  "maximum_pages_per_search": 25,
+  "maximum_listings": 50000,
+  "maximum_requests": 4000,
+  "maximum_runtime_minutes": 150,
+  "maximum_neighborhoods": 250,
+  "user_agent": "SofiaPermitsMarket/1.0 (+https://sofiapermits.site.je/about.html; daily public price summaries)"
+}
