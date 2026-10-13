@@ -153,6 +153,8 @@ Upload the contents of Website Template/dist/ to the domain's htdocs directory u
 
 The Vite output is static HTML/JS/CSS; PHP runs separately on the host for the read-only JSON API. InfinityFree free MySQL is accessible from hosted PHP/phpMyAdmin, not directly from a desktop app. See [InfinityFree's MySQL connection guidance](https://forum.infinityfree.com/t/connecting-to-mysql-from-an-external-application/49339).
 
+The root `public/.htaccess` sends `Cache-Control: no-cache, no-store, must-revalidate` for the homepage, about and privacy HTML so a cached entry does not keep using an earlier asset hash after publication. Hashed assets retain normal caching and are kept on the host. Apply this root configuration separately when it changes; the static publisher preserves existing hosting configuration. A visitor who already cached older HTML may need a one-time reload ignoring cache (`Ctrl+Shift+R` in Edge), or open a fresh version query URL such as `/?v=20261013`.
+
 ## API
 
 - GET api.php?action=meta

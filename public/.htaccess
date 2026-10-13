@@ -1,6 +1,13 @@
 Options -Indexes
 DirectoryIndex index.html
 
+# Hashed assets keep their normal caching; the HTML entry must stay current.
+<IfModule mod_headers.c>
+  <FilesMatch "^(index|about|privacy)\.html$">
+    Header always set Cache-Control "no-cache, no-store, must-revalidate"
+  </FilesMatch>
+</IfModule>
+
 <FilesMatch "^(schema\.sql|README\.md)$">
   Require all denied
 </FilesMatch>
