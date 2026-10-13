@@ -317,7 +317,8 @@ def leaf(reader, neighbor, kind, minimum, maximum, first_soup, first_url):
             if row["id"] in observed:
                 raise CaptureChanged("Source repeated an earlier listing during pagination")
             observed[row["id"]] = row
-        evidence.append({"url": url, "first": first, "last": last, "count": len(rows), "ids_sha256": hashlib.sha256(encoded([row["id"] for row in rows])).hexdigest()})
+        page_ids = [row["id"] for row in rows]
+        evidence.append({"url": url, "first": first, "last": last, "count": len(rows), "ids": page_ids, "ids_sha256": hashlib.sha256(encoded(page_ids)).hexdigest()})
         next_links = {public_url(link["href"]) for link in soup.select("a[href]") if text(link) == "Напред"}
         if page < pages:
             if len(next_links) != 1:
@@ -406,10 +407,28 @@ def run(args):
         if not isinstance(searches, list) or not isinstance(rows, list) or len(rows) > config["maximum_listings"]:
             raise ValueError("Checkpoint lacks its completed search/listing evidence")
         source_keys = set()
+        retained_ids = set()
+        source_identity_sets = []
         for source in searches:
             if not isinstance(source, dict) or source.get("key") in source_keys or source.get("key", "").split(":", 1)[0] not in completed or type(source.get("expected_count")) is not int or source.get("expected_count") != source.get("captured_count") or source["expected_count"] < 0:
                 raise ValueError("Checkpoint search completeness does not reconcile")
             source_keys.add(source["key"])
+            pages = source.get("pages")
+            if not isinstance(pages, list) or not 1 <= len(pages) <= config["maximum_pages_per_search"]:
+                raise ValueError("Checkpoint lacks bounded page identity evidence")
+            leaf_ids = set()
+            page_total = 0
+            for page in pages:
+                if not isinstance(page, dict) or not isinstance(page.get("ids"), list) or type(page.get("count")) is not int or page["count"] != len(page["ids"]) or not 0 <= page["count"] <= 40 or any(not isinstance(identifier, str) or not ID.fullmatch(identifier) for identifier in page["ids"]) or len(set(page["ids"])) != len(page["ids"]) or hashlib.sha256(encoded(page["ids"])).hexdigest() != page.get("ids_sha256"):
+                    raise ValueError("Checkpoint page IDs, hash and count do not reconcile")
+                if leaf_ids.intersection(page["ids"]):
+                    raise ValueError("Checkpoint repeats an ID within one search's pagination")
+                leaf_ids.update(page["ids"])
+                page_total += page["count"]
+            if page_total != source["expected_count"] or len(leaf_ids) != source["expected_count"]:
+                raise ValueError("Checkpoint page totals do not reconcile with the completed search")
+            retained_ids.update(leaf_ids)
+            source_identity_sets.append((source, leaf_ids))
         for key in completed:
             for kind in config["property_types"]:
                 if not any(source.startswith(key + ":" + kind["slug"] + ":") for source in source_keys):
@@ -418,6 +437,13 @@ def run(args):
             if not isinstance(row, dict) or not ID.fullmatch(str(row.get("id", ""))) or row["id"] in all_rows or not urlparse(public_url(row.get("url", ""))).path.startswith("/obiava-" + row["id"] + "-"):
                 raise ValueError("Checkpoint contains an invalid/repeated listing identity")
             all_rows[row["id"]] = row
+        if set(all_rows) != retained_ids:
+            raise ValueError("Checkpoint listing rows do not match the exact completed search ID union")
+        for source, identifiers in source_identity_sets:
+            for identifier in identifiers:
+                row = all_rows[identifier]
+                if row.get("neighborhood_bg") != source.get("neighborhood_bg") or row.get("type_bg") != source.get("type_bg"):
+                    raise ValueError("Checkpoint row does not belong to its recorded neighborhood/type search")
         started = saved["started_at"]
         print(f"Resuming private checkpoint after {len(completed)}/{len(neighbors)} complete neighborhoods", flush=True)
     for position, neighbor in enumerate(neighbors[len(completed):], len(completed) + 1):
@@ -449,7 +475,7 @@ def run(args):
                     "captured_neighborhood_count": len(neighbors), "scope_bg": config["scope_bg"],
                     "scope": {"city": "Sofia catalogue locations", "transaction": "sale", "types": [kind["label_bg"] for kind in config["property_types"]], "construction_year_min": None, "price_min_eur": None, "price_scope": "Includes price-on-request adverts; unknown prices excluded from financial comparisons"},
                     "robots_sha256": robots_hash, "request_count": reader.requests, "searches": searches,
-                    "price_filter_observations": dict(Counter(row["source_price_filter_check"] for row in all_rows.values())),
+                    "price_filter_observations": dict(Counter(row.get("source_price_filter_check", "legacy_not_recorded") for row in all_rows.values())),
                     "price_filter_note_bg": "Служебните ценови диапазони следват критериите на imot.bg. Източникът може да връща цена без ДДС под минимума на диапазона; не прибавяме и не предполагаме данък. При единична цена €/м² общата цена е изчислена от обявената площ и е отделно обозначена. За тези случаи проверяваме запазените критерии, всички страници, точния брой и уникалните идентификатори.",
                     "neighborhoods": neighbors},
         "listings": sorted(all_rows.values(), key=lambda row: row["id"]),

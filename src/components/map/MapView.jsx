@@ -30,7 +30,10 @@ function MapBridge({ onMapReady }) {
     let frame;
     const observer = new ResizeObserver(() => {
       window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => map.invalidateSize({ pan: false }));
+      frame = window.requestAnimationFrame(() => {
+        const container = map.getContainer();
+        if (container.clientWidth && container.clientHeight) map.invalidateSize({ pan: true, animate: false });
+      });
     });
     observer.observe(map.getContainer());
     return () => { observer.disconnect(); window.cancelAnimationFrame(frame); };

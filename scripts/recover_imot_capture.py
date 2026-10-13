@@ -160,7 +160,8 @@ def recover(args):
         raise ValueError("Recovery output exists; choose a fresh capture path")
     session = client()
     run = get_json(session, f"/actions/runs/{args.run}")
-    if run.get("status") != "completed" or run.get("path") != WORKFLOW_PATH or run.get("event") not in {"schedule", "workflow_dispatch"} or run.get("head_repository", {}).get("full_name", "").casefold() != REPOSITORY.casefold() or run.get("repository", {}).get("full_name", "").casefold() != REPOSITORY.casefold():
+    run_path = run.get("path")
+    if run.get("status") != "completed" or not isinstance(run_path, str) or run_path.split("@", 1)[0] != WORKFLOW_PATH or run.get("event") not in {"schedule", "workflow_dispatch"} or run.get("head_repository", {}).get("full_name", "").casefold() != REPOSITORY.casefold() or run.get("repository", {}).get("full_name", "").casefold() != REPOSITORY.casefold():
         raise ValueError("Recovery requires a finished same-repository daily market workflow")
     artifacts = get_json(session, f"/actions/runs/{args.run}/artifacts?per_page=100")
     expected_names = {f"imot-complete-capture-{args.run}", f"imot-source-evidence-{args.run}"}
@@ -190,7 +191,7 @@ def main():
     except Exception as error:
         # Avoid printing signed storage URLs or request objects in error text.
         print(f"Capture recovery stopped: {type(error).__name__}", file=sys.stderr)
-        if isinstance(error, ValueError):
+        if isinstance(error, ValueError) and not isinstance(error, requests.RequestException):
             print(str(error), file=sys.stderr)
         raise SystemExit(1) from None
 

@@ -189,7 +189,7 @@ function headlineMetric(row) {
   const unknown = (row?.by_vat_basis || []).find((item) => item.vat_basis === 'unknown' && item.priced_count > 0);
   return unknown || { ...row, priced_count: row?.headline_priced_count || 0, vat_basis: row?.headline_vat_basis || 'included' };
 }
-function alertEventKey(offer) { return `${offer.id}:${offer.change?.kind || ''}:${offer.price_eur ?? ''}:${offer.first_seen_at || ''}`; }
+function alertEventKey(offer) { return `${offer.id}:${offer.change?.kind || ''}:${offer.price_eur ?? ''}:${offer.observed_at || offer.first_seen_at || ''}`; }
 function initialAlerts() {
   try {
     const saved = JSON.parse(localStorage.getItem(ALERT_KEY) || 'null');
