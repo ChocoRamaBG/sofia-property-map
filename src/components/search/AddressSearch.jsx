@@ -3,6 +3,20 @@ import { ArrowRight, ArrowUpRight, Loader2, MapPin, Search, X } from 'lucide-rea
 import { addressApi } from '@/api/addressApi';
 import { useI18n } from '@/lib/i18n';
 
+function streetOnlyQuery(value) {
+  // Offer a user-controlled fallback only for a simple street + house number.
+  // Block numbers, entrances, floors and apartment numbers are not street numbers.
+  if (/(?:^|\s)(?:бл\.?|блок|ж\.?\s*к\.?|кв\.?|квартал|вх\.?|вход|ет\.?|етаж|ап\.?|апартамент)(?:\s|\.|$)/iu.test(value)) return null;
+  const city = value.match(/(?:,\s*|\s+)(?:София|Sofia)(?:\s*,\s*(?:България|Bulgaria))?\s*$/iu);
+  const suffix = city ? value.slice(city.index) : '';
+  const street = (city ? value.slice(0, city.index) : value).trim();
+  if (street.includes(',')) return null;
+  let withoutNumber = street.replace(/(?:\s+|\s*№\s*)[0-9]{1,4}(?:\s*[a-zа-я])?\s*$/iu, '').trim();
+  if (withoutNumber === street) withoutNumber = street.replace(/^[0-9]{1,4}[a-zа-я]?\s+(?=\p{L})/iu, '').trim();
+  if (withoutNumber === street || Array.from(withoutNumber).length < 3) return null;
+  return `${withoutNumber}${suffix}`;
+}
+
 /** Location lookup only. Selecting an OSM address never links a cadastral record. */
 export default function AddressSearch({ onSelectLocation, selectedLocation = null, onClearLocation }) {
   const { lang, pick } = useI18n();
@@ -30,18 +44,17 @@ export default function AddressSearch({ onSelectLocation, selectedLocation = nul
     return () => controller.abort();
   }, []);
 
-  const submit = async (event) => {
-    event.preventDefault();
-    if (!canSubmit) return;
+  const lookup = async (nextQuery) => {
+    if (loading || !provider?.enabled) return;
     requestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
-    setSubmittedQuery(query.trim());
+    setSubmittedQuery(nextQuery.trim());
     setLoading(true);
     setResults([]);
     setError(null);
     try {
-      const response = await addressApi.search(query, lang, controller.signal);
+      const response = await addressApi.search(nextQuery, lang, controller.signal);
       if (!controller.signal.aborted) {
         setResults(response.results);
         setProvider(response.provider);
@@ -51,6 +64,11 @@ export default function AddressSearch({ onSelectLocation, selectedLocation = nul
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
+  };
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (canSubmit) lookup(query.trim());
   };
 
   const clear = () => {
@@ -69,6 +87,7 @@ export default function AddressSearch({ onSelectLocation, selectedLocation = nul
     : error === 'invalid_query'
       ? pick('Въведете адрес с 3 до 160 знака.', 'Enter an address using 3 to 160 characters.')
       : pick('Търсенето по адрес временно не е достъпно. Опитайте отново по-късно.', 'Address search is temporarily unavailable. Please try again later.');
+  const streetFallback = !loading && !error && submittedQuery && results.length === 0 ? streetOnlyQuery(submittedQuery) : null;
 
   return (
     <section className="address-search rounded-xl border border-emerald-100 bg-emerald-50/40 p-4" aria-label={pick('Намери адрес на картата', 'Find an address on the map')}>
@@ -95,7 +114,14 @@ export default function AddressSearch({ onSelectLocation, selectedLocation = nul
       {submittedQuery && <div className="mt-3" aria-live="polite" aria-busy={loading}>
         {loading ? <p className="flex items-center gap-2 text-xs text-emerald-800" role="status"><Loader2 size={14} className="animate-spin" aria-hidden="true" />{pick('Търсене на адрес в София…', 'Looking up a Sofia address…')}</p>
           : error ? <p className="text-xs leading-relaxed text-red-700" role="alert">{errorText}</p>
-            : results.length === 0 ? <p className="text-xs leading-relaxed text-slate-600">{pick('Не е намерен адрес. Опитайте с пълно име на улицата и номер. Някои адреси липсват в OpenStreetMap.', 'No address found. Try the full street name and house number. Some addresses are missing from OpenStreetMap.')}</p>
+            : results.length === 0 ? <>
+              <p className="text-xs leading-relaxed text-slate-600">{pick('Не е намерен адрес. Опитайте с пълно име на улицата и номер. Някои адреси липсват в OpenStreetMap.', 'No address found. Try the full street name and house number. Some addresses are missing from OpenStreetMap.')}</p>
+              {streetFallback && <div className="mt-2 rounded-lg border border-emerald-200 bg-white p-3">
+                <p className="text-[10px] leading-relaxed text-slate-600">{pick('Можете да потърсите улицата без номера. Резултатът ще показва улица, а не точния адрес.', 'You can look up the street without the house number. The result will locate the street, not the exact address.')}</p>
+                <button type="button" className="mt-1 flex min-h-11 items-center gap-2 text-xs font-medium text-emerald-800 underline underline-offset-2" onClick={() => lookup(streetFallback)}><MapPin size={14} aria-hidden="true" />{pick('Намери само улицата', 'Find street only')}</button>
+                <p className="text-[10px] leading-relaxed text-slate-500">{streetFallback}</p>
+              </div>}
+            </>
               : <>
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-emerald-800">{pick('Изберете място', 'Choose a location')}</p>
                 <ul className="space-y-2">{results.map((result) => <li key={result.id}>

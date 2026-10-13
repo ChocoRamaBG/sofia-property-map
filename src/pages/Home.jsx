@@ -266,6 +266,7 @@ export default function Home() {
       resultsTruncated={searchResponse?.truncated} searchError={searchError} onSelectResult={handleSelectResult} />
     </div>
     <div id="address-search-panel" className="address-panel-wrap" role="tabpanel" aria-labelledby="address-search-tab" hidden={searchTab !== 'address'}>
+      {activeCount > 0 && <div className="address-filter-notice"><p>{lang === 'bg' ? `Картата остава ограничена от ${activeCount} активни условия за имоти.` : `The map still uses ${activeCount} active property conditions.`}</p><button onClick={clearFilters}>{lang === 'bg' ? 'Покажи всички имоти' : 'Show all properties'}</button></div>}
       <AddressSearch onSelectLocation={handleAddressSelect} selectedLocation={addressLocation} onClearLocation={clearAddress} />
     </div>
     <MarketTeaser onOpen={() => changeWorkspace('offers')} alertCount={marketAlertCount} />

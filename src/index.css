@@ -107,6 +107,8 @@
 .search-mode-tabs button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; flex: 1; color: #6b7b74; border-bottom: 2px solid transparent; font-size: 12px; font-weight: 600; }
 .search-mode-tabs button[aria-selected="true"] { color: #176b58; border-color: #288a6c; }
 .address-panel-wrap { padding: 16px; }
+.address-filter-notice { border: 1px solid #e4d6bd; border-radius: 9px; background: #fffaf0; padding: 11px; margin-bottom: 12px; color: #77603e; font-size: 11px; line-height: 1.6; }
+.address-filter-notice button { color: #176b58; text-decoration: underline; min-height: 34px; }
 @media (max-width: 767px) {
   .app-header:has(.workspace-navigation) { flex-wrap: wrap; }
   .workspace-navigation { order: 3; width: 100%; }

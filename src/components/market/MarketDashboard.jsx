@@ -50,6 +50,7 @@ const TEXT = {
   year: ['Строеж', 'Built'],
   unknown: ['Не е посочено', 'Not stated'],
   unit: ['€/м²', '€/m²'],
+  derivedTotal: ['Обща цена, изчислена от €/м²', 'Total calculated from the €/m² quote'],
   sqm: ['м²', 'm²'],
   vatIncluded: ['Включен ДДС / не се начислява', 'VAT included / not charged'],
   vatExcluded: ['Без ДДС', 'VAT excluded'],
@@ -194,12 +195,14 @@ function OfferCard({ offer, mode }) {
   const historical = mode === 'historical_bootstrap' || offer.historical;
   const link = safeOfferUrl(offer.url);
   const change = offer.change?.kind;
+  const quotedUnitPrice = numeric(offer.quoted_eur_per_sqm);
   return <article className={`market-offer-card${comparison.eligible ? ' is-comparable-deal' : ''}`}>
     <div className="market-offer-top"><span className="market-offer-type">{typeText(offer.type_bg, lang) || tr('unknown')}</span>{historical ? <span className="market-status-badge is-historical"><Clock3 size={11} />{tr('historicalOffer')}</span> : ['new', 'price_drop', 'became_eligible'].includes(change) ? <span className="market-status-badge">{change === 'price_drop' ? <TrendingDown size={11} /> : <Check size={11} />}{tr(change === 'price_drop' ? 'priceDrop' : change === 'new' ? 'newOffer' : 'newlyEligible')}</span> : null}</div>
     <h3><MapPin size={15} />{offer.neighborhood_bg || tr('unknown')}</h3>
     {offer.address_bg && <p className="market-offer-address">{offer.address_bg}</p>}
     <dl className="market-offer-facts"><div><dt>{tr('area')}</dt><dd>{formatNumber(offer.area_sqm, lang, 1)} {tr('sqm')}</dd></div><div><dt>{tr('year')}</dt><dd>{offer.construction_year || offer.construction_label_bg || tr('unknown')}</dd></div>{offer.floor_bg && <div><dt>{tr('floor')}</dt><dd>{offer.floor_bg}</dd></div>}</dl>
-    <div className="market-offer-price"><strong>{formatNumber(offer.price_eur, lang)}{numeric(offer.price_eur) !== null && <span> €</span>}</strong><span>{formatNumber(offer.eur_per_sqm, lang)} {tr('unit')}</span></div>
+    <div className="market-offer-price"><strong>{formatNumber(offer.price_eur, lang)}{numeric(offer.price_eur) !== null && <span> €</span>}</strong><span>{formatNumber(quotedUnitPrice ?? offer.eur_per_sqm, lang, quotedUnitPrice === null ? 0 : 2)} {tr('unit')}</span></div>
+    {offer.price_total_derived === true && <p className="market-price-derived"><Info size={11} />{tr('derivedTotal')}</p>}
     <p className={`market-offer-vat${offer.vat_basis === 'unknown' ? ' is-unknown' : ''}`}>{offer.vat_basis === 'unknown' && <Info size={11} />}{vatText(offer.vat_basis, tr)}</p>
     <div className={`market-offer-comparison${unusual ? ' needs-review' : ''}`}>
       {discount !== null && (comparison.peer_count || 0) >= 8 ? <><strong>{discount > 0 ? <ArrowDownRight size={17} /> : <BarChart3 size={17} />}{discount > 0 ? tr('below', { n: formatNumber(discount, lang, 1) }) : discount < 0 ? tr('above', { n: formatNumber(Math.abs(discount), lang, 1) }) : tr('nearMedian')}</strong><span>{tr('peers', { n: comparison.peer_count })} · {formatNumber(comparison.median_eur_per_sqm, lang)} {tr('unit')}</span>{offer.vat_basis === 'unknown' && <em>{tr('comparisonVatUnknown')}</em>}{unusual && <em><Info size={12} />{tr('review')}</em>}</> : <span>{tr('noComparison')}</span>}

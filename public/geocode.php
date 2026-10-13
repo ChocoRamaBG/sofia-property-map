@@ -19,6 +19,7 @@ const ADDRESS_CACHE_MAX_ENTRIES = 150;
 const ADDRESS_CACHE_TTL = 7 * 86400;
 const ADDRESS_MIN_INTERVAL = 1.1;
 const ADDRESS_SOURCE_MAX_BYTES = 256 * 1024;
+const ADDRESS_QUERY_VERSION = 'sofia-street-prefix-v2';
 const ADDRESS_SOUTH = 42.45;
 const ADDRESS_NORTH = 42.90;
 const ADDRESS_WEST = 23.05;
@@ -107,6 +108,17 @@ function address_clean_string($value, int $maxBytes): ?string {
     return preg_replace('/[\x00-\x1F\x7F]/u', ' ', $value);
 }
 
+function address_provider_query(string $query): string {
+    // Bulgarian street-type prefixes can prevent Nominatim from matching the
+    // stored road name. Remove only a leading street-type token, preserving the
+    // actual name, house number and city. Never broaden a missing house number
+    // silently: street-only lookup is a separate explicit user action.
+    $query = preg_replace('/^(?:(?:ул|ul|бул|bul|пл|pl)\.\s*|(?:ул|улица|ul|ulitsa|бул|булевард|bul|boulevard|пл|площад|pl|square)(?:\s+|(?=["„“”«»])))/iu', '', $query);
+    $query = preg_replace('/["„“”«»]/u', '', $query);
+    $query = trim(preg_replace('/\s+/u', ' ', $query));
+    return preg_match('/(?:\bsofia\b|софия)/iu', $query) ? $query : $query . ', София, България';
+}
+
 function address_results(array $rows): array {
     if (count($rows) > 5) throw new RuntimeException('Invalid provider response.');
     $results = [];
@@ -166,8 +178,9 @@ try {
     $queryLength = preg_match_all('/./us', $query);
     if ($queryLength < 3 || $queryLength > 160) address_respond(['error' => 'invalid_query'], 400);
     $query = preg_replace('/\s+/u', ' ', $query);
-    $folded = function_exists('mb_strtolower') ? mb_strtolower($query, 'UTF-8') : strtolower($query);
-    $cacheKey = hash('sha256', $provider['endpoint'] . '\n' . $language . '\n' . $folded);
+    $providerQuery = address_provider_query($query);
+    $folded = function_exists('mb_strtolower') ? mb_strtolower($providerQuery, 'UTF-8') : strtolower($providerQuery);
+    $cacheKey = hash('sha256', ADDRESS_QUERY_VERSION . '\n' . $provider['endpoint'] . '\n' . $language . '\n' . $folded);
 
     $privatePath = realpath(__DIR__ . '/private');
     if ($privatePath === false || !is_file($privatePath . '/.htaccess')) throw new RuntimeException('Cache unavailable.');
@@ -217,7 +230,6 @@ try {
     $state['last_request_at'] = $now;
     $state['requests'][] = $now;
     address_cache_write($cacheHandle, $state);
-    $providerQuery = preg_match('/(?:\bsofia\b|софия)/iu', $query) ? $query : $query . ', София, България';
     $url = $provider['endpoint'] . '?' . http_build_query([
         'q' => $providerQuery, 'format' => 'jsonv2', 'addressdetails' => 1, 'limit' => 5,
         'countrycodes' => 'bg', 'layer' => 'address', 'bounded' => 1,

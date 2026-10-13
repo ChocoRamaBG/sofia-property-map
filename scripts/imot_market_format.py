@@ -22,7 +22,7 @@ MAX_LISTINGS = 50000
 MAX_SHARDS = 256
 SHARD_ROWS = 250
 MAX_SHARD_BYTES = 256 * 1024
-MAX_SUMMARY_BYTES = 512 * 1024
+MAX_SUMMARY_BYTES = 2 * 1024 * 1024
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_STATE_BYTES = 64 * 1024 * 1024
 MAX_STATE_COMPRESSED_BYTES = 9 * 1024 * 1024
@@ -36,6 +36,7 @@ PUBLIC_FIELDS = frozenset({
     "construction_year", "construction_cohort", "last_modified_at", "observed_at",
     "first_seen_at", "comparison", "change", "historical", "quality_flags",
     "floor_bg", "construction_label_bg", "address_bg",
+    "price_total_derived", "quoted_eur_per_sqm",
 })
 
 

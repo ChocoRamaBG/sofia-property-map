@@ -11,7 +11,7 @@ set_error_handler(static function (int $severity, string $message, string $file,
 
 const MARKET_MAX_LISTINGS = 50000;
 const MARKET_MAX_SHARDS = 256;
-const MARKET_PUBLIC_FIELDS = ['id', 'url', 'neighborhood_key', 'neighborhood_bg', 'type_key', 'type_bg', 'area_sqm', 'price_eur', 'eur_per_sqm', 'price_currency', 'vat_basis', 'construction_year', 'construction_cohort', 'last_modified_at', 'observed_at', 'first_seen_at', 'comparison', 'change', 'historical', 'quality_flags', 'floor_bg', 'construction_label_bg', 'address_bg'];
+const MARKET_PUBLIC_FIELDS = ['id', 'url', 'neighborhood_key', 'neighborhood_bg', 'type_key', 'type_bg', 'area_sqm', 'price_eur', 'eur_per_sqm', 'price_currency', 'vat_basis', 'construction_year', 'construction_cohort', 'last_modified_at', 'observed_at', 'first_seen_at', 'comparison', 'change', 'historical', 'quality_flags', 'floor_bg', 'construction_label_bg', 'address_bg', 'price_total_derived', 'quoted_eur_per_sqm'];
 
 function market_respond(array $body, int $status = 200): void {
     http_response_code($status);
@@ -52,7 +52,7 @@ function market_snapshot(): array {
     if (!hash_equals($pointer['manifest_sha256'], hash_file('sha256', $manifestPath)) || ($manifest['version'] ?? null) !== 1 || ($manifest['snapshot_id'] ?? null) !== $id
         || !in_array($manifest['mode'] ?? null, ['historical_bootstrap', 'daily'], true)
         || ($manifest['mode'] === 'daily' && ($manifest['capture']['complete'] ?? null) !== true)) throw new RuntimeException('Market manifest is invalid.');
-    market_descriptor($manifest['summary_file'] ?? null, '/^summary\.json$/', 512 * 1024);
+    market_descriptor($manifest['summary_file'] ?? null, '/^summary\.json$/', 2 * 1024 * 1024);
     market_descriptor($manifest['state_file'] ?? null, '/^state\.json(?:\.gz)?$/', ($manifest['state_file']['path'] ?? '') === 'state.json.gz' ? 9 * 1024 * 1024 : 64 * 1024 * 1024);
     if (($manifest['state_file']['path'] ?? '') === 'state.json.gz' && (($manifest['state_file']['encoding'] ?? null) !== 'gzip'
         || !is_int($manifest['state_file']['expanded_bytes'] ?? null) || $manifest['state_file']['expanded_bytes'] < 1 || $manifest['state_file']['expanded_bytes'] > 64 * 1024 * 1024
@@ -68,7 +68,7 @@ function market_snapshot(): array {
         $count += $descriptor['count'];
     }
     if ($count < 1 || $count > MARKET_MAX_LISTINGS || $count !== ($manifest['counts']['listing_count'] ?? null)) throw new RuntimeException('Market totals are invalid.');
-    $summary = market_json($folder . '/summary.json', 512 * 1024, $manifest['summary_file']);
+    $summary = market_json($folder . '/summary.json', 2 * 1024 * 1024, $manifest['summary_file']);
     if (($summary['snapshot_id'] ?? null) !== $id || ($summary['mode'] ?? null) !== $manifest['mode'] || ($summary['counts']['listing_count'] ?? null) !== $count) throw new RuntimeException('Market summary is inconsistent.');
     return [$folder, $manifest, $summary];
 }
@@ -90,7 +90,8 @@ function market_offer($row): array {
         || !market_source_url($row['url'] ?? null, $row['id'])
         || !in_array($row['vat_basis'] ?? null, ['included', 'excluded', 'unknown'], true)
         || !is_bool($row['historical'] ?? null) || !is_array($row['comparison'] ?? null) || !is_array($row['change'] ?? null)) throw new RuntimeException('Public market offer is invalid.');
-    foreach (['area_sqm', 'price_eur', 'eur_per_sqm'] as $key) {
+    if (isset($row['price_total_derived']) && !is_bool($row['price_total_derived'])) throw new RuntimeException('Market price basis is invalid.');
+    foreach (['area_sqm', 'price_eur', 'eur_per_sqm', 'quoted_eur_per_sqm'] as $key) {
         $value = $row[$key] ?? null;
         if ($value !== null && ((!is_float($value) && !is_int($value)) || !is_finite((float)$value) || $value <= 0 || $value > 1e12)) throw new RuntimeException('Market numeric field is invalid.');
     }

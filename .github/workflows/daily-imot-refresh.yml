@@ -5,9 +5,16 @@ on:
     # 06:23 Sofia in summer; 05:23 in winter. GitHub may delay scheduled jobs.
     - cron: '23 3 * * *'
   workflow_dispatch:
+    inputs:
+      reuse_capture_run_id:
+        description: 'Advanced recovery only: completed daily run ID with a complete capture less than 6 hours old; leave blank for a fresh full refresh'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: daily-sofia-asking-price-refresh
@@ -37,13 +44,22 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: python scripts/deploy_imot_ftps.py fetch --output seed/daily/previous-pointer.json --state-output seed/daily/previous-state.json
       - name: Capture all apartment search leaves
-        run: python scripts/imot_scraper.py --output seed/daily/capture.json
-      - name: Preserve complete private capture
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.reuse_capture_run_id == '' }}
+        run: python scripts/imot_scraper.py --output seed/daily/capture.json --resume
+      - name: Recover a recent complete source capture without another crawl
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.reuse_capture_run_id != '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RECOVERY_RUN_ID: ${{ inputs.reuse_capture_run_id }}
+        run: python scripts/recover_imot_capture.py --run "$RECOVERY_RUN_ID" --output seed/daily/capture.json
+      - name: Preserve private source evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v6
         with:
-          name: imot-complete-capture-${{ github.run_id }}
-          path: seed/daily/capture.json
+          name: imot-source-evidence-${{ github.run_id }}
+          path: |
+            seed/daily/capture.json
+            seed/daily/capture-progress.json
           if-no-files-found: ignore
           retention-days: 31
       - name: Build peer comparisons and daily changes
@@ -65,6 +81,8 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: python scripts/deploy_imot_ftps.py publish --input seed/daily/publish --previous seed/daily/previous-pointer.json
       - name: Summarize the completed refresh
+        env:
+          RECOVERY_RUN_ID: ${{ inputs.reuse_capture_run_id }}
         run: |
           python - <<'PY'
           import json, os
@@ -77,5 +95,7 @@ jobs:
               output.write(f"Capture: {summary['captured_at']}\n\n")
               output.write(f"Listings: {summary['counts']['listing_count']:,}\n\n")
               output.write(f"New daily candidates: {summary['daily_candidates_total']:,}\n\n")
+              if os.environ.get('RECOVERY_RUN_ID'):
+                  output.write(f"Source capture recovered from completed daily run {os.environ['RECOVERY_RUN_ID']}; the original source timestamps are preserved.\n\n")
               output.write('Asking prices, not sale transactions. First complete live capture establishes an alert baseline.\n')
           PY

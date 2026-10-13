@@ -18,6 +18,11 @@ const TILES = {
   },
 };
 
+const ADDRESS_ICON = divIcon({
+  className: 'address-location-icon', iconSize: [34, 42], iconAnchor: [17, 40], popupAnchor: [0, -34],
+  html: '<svg viewBox="0 0 34 42" width="34" height="42" aria-hidden="true"><path d="M17 40C12 32 2 25 2 17a15 15 0 0 1 30 0c0 8-10 15-15 23Z" fill="#c86624" stroke="white" stroke-width="3"/><circle cx="17" cy="17" r="5" fill="white"/></svg>',
+});
+
 function MapBridge({ onMapReady }) {
   const map = useMap();
   useEffect(() => { onMapReady(map); }, [map, onMapReady]);
@@ -109,11 +114,10 @@ export default function MapView({
           <Tooltip>{t('map.you')}</Tooltip>
         </CircleMarker>
       ) : null}
-      {addressLocation && <CircleMarker center={[addressLocation.lat, addressLocation.lng]} radius={10}
-        pathOptions={{ color: '#fff', weight: 3, fillColor: '#c86624', fillOpacity: 1 }}>
+      {addressLocation && <Marker position={[addressLocation.lat, addressLocation.lng]} icon={ADDRESS_ICON} zIndexOffset={1200} title={addressLocation.label}>
         <Tooltip>{lang === 'bg' ? 'Адресно местоположение' : 'Address location'} · {addressLocation.label}</Tooltip>
         <Popup><strong>{addressLocation.label}</strong><p>{lang === 'bg' ? 'Приблизително местоположение от OpenStreetMap. Изберете кадастрална точка отделно за официалните сведения.' : 'Approximate OpenStreetMap location. Select a cadastral point separately for official records.'}</p><a href={addressLocation.source_url} target="_blank" rel="noopener noreferrer">OpenStreetMap ↗</a></Popup>
-      </CircleMarker>}
+      </Marker>}
       <BoundsWatcher onChange={onBoundsChange} />
       <MapBridge onMapReady={onMapReady} />
     </MapContainer>

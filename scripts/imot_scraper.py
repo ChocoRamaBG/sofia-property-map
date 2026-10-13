@@ -17,6 +17,8 @@ import math
 import re
 import sys
 import time
+import unicodedata
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
@@ -49,6 +51,12 @@ def write_json(path: Path, value):
 
 def text(node):
     return re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip() if node else ""
+
+
+def label_identity(value):
+    # Published locality labels differ in spaces after abbreviations in the
+    # catalogue and cards; compare the exact words/punctuation consistently.
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value)).casefold()
 
 
 def public_url(url):
@@ -177,7 +185,7 @@ def cards(soup, neighbor, kind, minimum, maximum):
         seen.add(identifier)
         title = card.select_one("a.title[href]")
         location = title.select_one("location") if title else None
-        if not title or not location or text(location).lower() != ("град София, " + neighbor["label_bg"]).lower():
+        if not title or not location or label_identity(text(location)) != label_identity("град София, " + neighbor["label_bg"]):
             raise ValueError("Result card does not match the requested Sofia neighborhood")
         title_text = text(title).split("град София", 1)[0].strip()
         if title_text != "Продава " + kind["label_bg"]:
@@ -193,23 +201,32 @@ def cards(soup, neighbor, kind, minimum, maximum):
         price = None if requested_price else number(matched[1])
         if not requested_price and price is None:
             raise ValueError("Source price could not be parsed")
-        info = text(card.select_one(".text .info"))
-        area_match = re.match(r"([\d\s.,]+)\s+кв\.м(?:,|\s|$)", info)
-        area = number(area_match[1]) if area_match else None
-        if area is not None and area > 100000:
-            raise ValueError("Apartment area exceeds the supported bounds")
-        if matched and matched[3]:
-            if area is None:
-                raise ValueError("Per-area price lacks a stated area for its total price")
-            price *= area
-        if price is not None and (price < minimum - .01 or maximum is not None and price > maximum + .01):
-            raise ValueError("Source ignored an active price-band filter")
+        quoted_amount = price
+        per_area_quote = bool(matched and matched[3])
         vat_text = text(card.select_one(".price"))
         vat = "excluded" if "Цената е без ДДС" in vat_text else (
             "included" if "включено ДДС" in vat_text else (
                 "not_applicable" if "Не се начислява ДДС" in vat_text else "unknown"
             )
         )
+        info = text(card.select_one(".text .info"))
+        area_match = re.match(r"([\d\s.,]+)\s+кв\.м(?:,|\s|$)", info)
+        area = number(area_match[1]) if area_match else None
+        if area is not None and area > 100000:
+            raise ValueError("Apartment area exceeds the supported bounds")
+        if per_area_quote:
+            if area is None:
+                raise ValueError("Per-area price lacks a stated area for its total price")
+            price *= area
+        # Native imot.bg bands can return explicitly VAT-excluded amounts below
+        # their displayed minimum (observed 109,060 EUR in a 125k–250k band).
+        # Validate retained criteria/counts for these cards rather than infer tax.
+        # A unit quote is also not asserted to use a total-price search axis.
+        # All bands still cover 0..infinity with boundary ID deduplication.
+        native_basis = vat == "excluded" or per_area_quote
+        if quoted_amount is not None and not native_basis and (quoted_amount < minimum - .01 or maximum is not None and quoted_amount > maximum + .01):
+            raise ValueError(f"Listing {identifier} total price does not satisfy the native {minimum}..{maximum or 'any'} band")
+        price_filter_check = "native_vat_basis" if vat == "excluded" else "native_unit_price_basis" if per_area_quote else "raw_total_in_band" if price is not None else "price_on_request"
         # Only structural card fields are retained; the advert teaser and phone
         # after them are deliberately not copied into the prepared dataset.
         construction = re.search(r"((?:Ще бъде въведен|Въведен) в експлоатация(?:\s+\d{4}(?:\s*-\s*\d{4})?\s*г\.)?)", info)
@@ -227,6 +244,8 @@ def cards(soup, neighbor, kind, minimum, maximum):
         output.append({
             "id": identifier, "url": url, "neighborhood_bg": neighbor["label_bg"], "type_bg": kind["label_bg"],
             "price": round(price, 2) if price is not None else None, "price_currency": "EUR" if price is not None else None, "vat_basis": vat,
+            "price_total_derived": per_area_quote, "quoted_eur_per_sqm": quoted_amount if per_area_quote else None,
+            "source_price_filter_check": price_filter_check,
             "area_sqm": area, "construction_year": year, "construction_label_bg": construction_label,
             "floor_bg": floor[1] if floor else None, "address_bg": address_text, "agency_name": text(agency) or None,
             "observed_at": timestamp(), "last_modified_at": None,
@@ -357,7 +376,8 @@ def capture_band(reader, neighbor, kind, minimum, maximum, depth=0):
 
 
 def run(args):
-    config = json.loads(args.sources.read_text(encoding="utf-8"))
+    config_bytes = args.sources.read_bytes()
+    config = json.loads(config_bytes)
     if config.get("version") != 1 or config.get("minimum_price_eur") != 0:
         raise ValueError("Unsupported source configuration")
     if args.output.exists():
@@ -368,7 +388,39 @@ def run(args):
     catalog_page, _ = reader.get(config["catalogue_url"])
     neighbors = catalogue(catalog_page, config)
     all_rows, searches = {}, []
-    for position, neighbor in enumerate(neighbors, 1):
+    completed = []
+    progress_path = args.output.with_name(args.output.stem + "-progress.json")
+    if args.resume and progress_path.exists():
+        if progress_path.is_symlink() or progress_path.stat().st_size > 96 * 1024 * 1024:
+            raise ValueError("Private checkpoint exceeds its input bounds")
+        saved = json.loads(progress_path.read_bytes())
+        old_started = datetime.fromisoformat(str(saved.get("started_at", "")).replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - old_started).total_seconds()
+        if not 0 <= age <= 6 * 3600 or saved.get("version") != 1 or saved.get("complete") is not False or saved.get("config_sha256") != hashlib.sha256(config_bytes).hexdigest() or saved.get("robots_sha256") != robots_hash or saved.get("neighbors") != neighbors:
+            raise ValueError("Private checkpoint is too old or its source configuration/catalogue changed")
+        completed = saved.get("completed_neighborhoods")
+        if not isinstance(completed, list) or completed != [entry["key"] for entry in neighbors[:len(completed)]]:
+            raise ValueError("Checkpoint does not contain a contiguous completed-neighborhood prefix")
+        searches = saved.get("searches")
+        rows = saved.get("listings")
+        if not isinstance(searches, list) or not isinstance(rows, list) or len(rows) > config["maximum_listings"]:
+            raise ValueError("Checkpoint lacks its completed search/listing evidence")
+        source_keys = set()
+        for source in searches:
+            if not isinstance(source, dict) or source.get("key") in source_keys or source.get("key", "").split(":", 1)[0] not in completed or type(source.get("expected_count")) is not int or source.get("expected_count") != source.get("captured_count") or source["expected_count"] < 0:
+                raise ValueError("Checkpoint search completeness does not reconcile")
+            source_keys.add(source["key"])
+        for key in completed:
+            for kind in config["property_types"]:
+                if not any(source.startswith(key + ":" + kind["slug"] + ":") for source in source_keys):
+                    raise ValueError("Checkpoint omits a requested apartment type")
+        for row in rows:
+            if not isinstance(row, dict) or not ID.fullmatch(str(row.get("id", ""))) or row["id"] in all_rows or not urlparse(public_url(row.get("url", ""))).path.startswith("/obiava-" + row["id"] + "-"):
+                raise ValueError("Checkpoint contains an invalid/repeated listing identity")
+            all_rows[row["id"]] = row
+        started = saved["started_at"]
+        print(f"Resuming private checkpoint after {len(completed)}/{len(neighbors)} complete neighborhoods", flush=True)
+    for position, neighbor in enumerate(neighbors[len(completed):], len(completed) + 1):
         for kind in config["property_types"]:
             rows, leaves = capture_band(reader, neighbor, kind, 0, None)
             for row in rows:
@@ -378,6 +430,13 @@ def run(args):
             if len(all_rows) > config["maximum_listings"]:
                 raise ValueError("Capture exceeds its listing-count bound")
             searches.extend(leaves)
+        completed.append(neighbor["key"])
+        # This is explicitly incomplete private evidence, never an input to
+        # publication. A rerun may resume it for six hours with the same scope.
+        write_json(progress_path, {"version": 1, "complete": False, "started_at": started, "saved_at": timestamp(),
+                                  "config_sha256": hashlib.sha256(config_bytes).hexdigest(), "robots_sha256": robots_hash,
+                                  "neighbors": neighbors, "completed_neighborhoods": completed,
+                                  "searches": searches, "listings": sorted(all_rows.values(), key=lambda row: row["id"])})
         print(f"Completed neighborhood {position}/{len(neighbors)}; {len(all_rows)} unique listings", flush=True)
     final_catalogue, _ = reader.get(config["catalogue_url"])
     if catalogue(final_catalogue, config) != neighbors:
@@ -390,6 +449,8 @@ def run(args):
                     "captured_neighborhood_count": len(neighbors), "scope_bg": config["scope_bg"],
                     "scope": {"city": "Sofia catalogue locations", "transaction": "sale", "types": [kind["label_bg"] for kind in config["property_types"]], "construction_year_min": None, "price_min_eur": None, "price_scope": "Includes price-on-request adverts; unknown prices excluded from financial comparisons"},
                     "robots_sha256": robots_hash, "request_count": reader.requests, "searches": searches,
+                    "price_filter_observations": dict(Counter(row["source_price_filter_check"] for row in all_rows.values())),
+                    "price_filter_note_bg": "Служебните ценови диапазони следват критериите на imot.bg. Източникът може да връща цена без ДДС под минимума на диапазона; не прибавяме и не предполагаме данък. При единична цена €/м² общата цена е изчислена от обявената площ и е отделно обозначена. За тези случаи проверяваме запазените критерии, всички страници, точния брой и уникалните идентификатори.",
                     "neighborhoods": neighbors},
         "listings": sorted(all_rows.values(), key=lambda row: row["id"]),
     }
@@ -401,6 +462,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sources", type=Path, default=Path(__file__).with_name("imot_sources.json"))
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--resume", action="store_true", help="Resume a validated private checkpoint at most six hours old")
     args = parser.parse_args()
     try:
         run(args)

@@ -60,6 +60,8 @@
 .market-offer-price > strong { color: #204f3b; font-size: 23px; font-weight: 650; letter-spacing: -.55px; line-height: 1.3; font-variant-numeric: tabular-nums; }
 .market-offer-price > strong span { color: #829d85; font-size: 15px; font-weight: 400; }
 .market-offer-price > span { color: #718a76; font-size: 11px; font-variant-numeric: tabular-nums; }
+.market-price-derived { display: flex; align-items: center; gap: 5px; margin-top: 5px; color: #8c764b; font-size: 9px; line-height: 1.6; }
+.market-price-derived > svg { flex-shrink: 0; }
 .market-offer-vat { color: #879787; font-size: 9px; line-height: 1.6; margin-top: 6px; }
 .market-offer-vat.is-unknown { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; border-radius: 4px; padding: 4px 6px; background: #f9f1df; color: #9b7534; }
 .market-offer-comparison { min-height: 66px; padding: 11px 12px; margin-top: 16px; border-radius: 6px; background: #f1f6ee; }
