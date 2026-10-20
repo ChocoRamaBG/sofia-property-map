@@ -3,7 +3,7 @@
 
 This replaces dozens of desktop Selenium loops, absolute XPaths and Excel writes.
 One worker reads forty public list cards per page; no photographs, full advert
-descriptions, telephone numbers or private accounts are collected. Native public
+descriptions, telephone numbers or private accounts are retained. Native public
 price filters divide capped searches into exhaustive overlapping price bands.
 Every leaf must have an exact, stable visible total and matching unique IDs.
 Any access challenge, incomplete leaf or changed catalogue stops publication.
@@ -27,11 +27,14 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
 
+from imot_enrichment import agency_profile, analyze_text, card_fingerprint, seller_claim
+
 ROOT = "https://www.imot.bg"
 COUNT = re.compile(r"^(\d+)\s*-\s*(\d+)\s+от общо\s+(\d+)(\+?)\s+обяв[аи]\s*-\s*Продава$")
 ID = re.compile(r"^1[a-z][0-9]{12,20}$")
 NEIGHBOR_PATH = re.compile(r"^/obiavi/prodazhbi/grad-sofiya/([a-z0-9-]+)$")
 PRICE = re.compile(r"^([0-9][0-9\s.,]*)\s*(€|EUR|euro|лв\.?|BGN|\$)(?:\s+(на кв\.м|/m2|/m²))?$", re.I)
+CARD_SCHEMA_VERSION = 2
 
 
 def timestamp():
@@ -57,6 +60,14 @@ def label_identity(value):
     # Published locality labels differ in spaces after abbreviations in the
     # catalogue and cards; compare the exact words/punctuation consistently.
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value)).casefold()
+
+
+def structural_row(row):
+    """Observation clocks are not changes to the source's factual claims."""
+    result = {key: value for key, value in row.items() if key not in {"observed_at", "seller_checked_at"}}
+    if isinstance(result.get("analysis"), dict):
+        result["analysis"] = {key: value for key, value in result["analysis"].items() if key != "checked_at"}
+    return result
 
 
 def public_url(url):
@@ -238,18 +249,21 @@ def cards(soup, neighbor, kind, minimum, maximum):
         address_text = address[1].strip() if address else None
         if address_text and re.search(r"(?:@|тел\.?|телефон|gsm|\d{7,})", address_text, re.I):
             address_text = None
-        agency = card.select_one(".agency a, .agencyName a, a.agency, .agency")
-        if not agency:
-            agency = next((link for link in card.select("a[href]") if urlparse(urljoin(ROOT, link["href"])).hostname not in ("www.imot.bg", "imot.bg", None) and urlparse(urljoin(ROOT, link["href"])).hostname.endswith(".imot.bg")), None)
-        output.append({
+        checked_at = timestamp()
+        professional_profile = agency_profile(card)
+        row = {
             "id": identifier, "url": url, "neighborhood_bg": neighbor["label_bg"], "type_bg": kind["label_bg"],
             "price": round(price, 2) if price is not None else None, "price_currency": "EUR" if price is not None else None, "vat_basis": vat,
             "price_total_derived": per_area_quote, "quoted_eur_per_sqm": quoted_amount if per_area_quote else None,
             "source_price_filter_check": price_filter_check,
             "area_sqm": area, "construction_year": year, "construction_label_bg": construction_label,
-            "floor_bg": floor[1] if floor else None, "address_bg": address_text, "agency_name": text(agency) or None,
-            "observed_at": timestamp(), "last_modified_at": None,
-        })
+            "floor_bg": floor[1] if floor else None, "address_bg": address_text,
+            "observed_at": checked_at, "last_modified_at": None,
+            **seller_claim(professional_profile, info, checked_at),
+            **analyze_text(info, source="card", checked_at=checked_at, completion_label=construction_label),
+        }
+        row["enrichment_card_sha256"] = card_fingerprint(row, info, professional_profile)
+        output.append(row)
     return output
 
 
@@ -361,7 +375,7 @@ def capture_band(reader, neighbor, kind, minimum, maximum, depth=0):
         high_rows, high_sources = capture_band(reader, neighbor, kind, midpoint, maximum, depth + 1)
         by_id = {}
         for row in low_rows + high_rows:
-            if row["id"] in by_id and {key: value for key, value in row.items() if key != "observed_at"} != {key: value for key, value in by_id[row["id"]].items() if key != "observed_at"}:
+            if row["id"] in by_id and structural_row(row) != structural_row(by_id[row["id"]]):
                 raise CaptureChanged("Listing changed across overlapping price bands")
             by_id[row["id"]] = row
         if len(by_id) <= total:
@@ -397,7 +411,7 @@ def run(args):
         saved = json.loads(progress_path.read_bytes())
         old_started = datetime.fromisoformat(str(saved.get("started_at", "")).replace("Z", "+00:00"))
         age = (datetime.now(timezone.utc) - old_started).total_seconds()
-        if not 0 <= age <= 6 * 3600 or saved.get("version") != 1 or saved.get("complete") is not False or saved.get("config_sha256") != hashlib.sha256(config_bytes).hexdigest() or saved.get("robots_sha256") != robots_hash or saved.get("neighbors") != neighbors:
+        if not 0 <= age <= 6 * 3600 or saved.get("version") != 1 or saved.get("card_schema_version") != CARD_SCHEMA_VERSION or saved.get("complete") is not False or saved.get("config_sha256") != hashlib.sha256(config_bytes).hexdigest() or saved.get("robots_sha256") != robots_hash or saved.get("neighbors") != neighbors:
             raise ValueError("Private checkpoint is too old or its source configuration/catalogue changed")
         completed = saved.get("completed_neighborhoods")
         if not isinstance(completed, list) or completed != [entry["key"] for entry in neighbors[:len(completed)]]:
@@ -459,7 +473,7 @@ def run(args):
         completed.append(neighbor["key"])
         # This is explicitly incomplete private evidence, never an input to
         # publication. A rerun may resume it for six hours with the same scope.
-        write_json(progress_path, {"version": 1, "complete": False, "started_at": started, "saved_at": timestamp(),
+        write_json(progress_path, {"version": 1, "card_schema_version": CARD_SCHEMA_VERSION, "complete": False, "started_at": started, "saved_at": timestamp(),
                                   "config_sha256": hashlib.sha256(config_bytes).hexdigest(), "robots_sha256": robots_hash,
                                   "neighbors": neighbors, "completed_neighborhoods": completed,
                                   "searches": searches, "listings": sorted(all_rows.values(), key=lambda row: row["id"])})

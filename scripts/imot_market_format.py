@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 
 VERSION = 1
 MAX_LISTINGS = 50000
-MAX_SHARDS = 256
+MAX_SHARDS = 512
 SHARD_ROWS = 250
 MAX_SHARD_BYTES = 256 * 1024
 MAX_SUMMARY_BYTES = 2 * 1024 * 1024
@@ -37,7 +37,51 @@ PUBLIC_FIELDS = frozenset({
     "first_seen_at", "comparison", "change", "historical", "quality_flags",
     "floor_bg", "construction_label_bg", "address_bg",
     "price_total_derived", "quoted_eur_per_sqm",
+    "seller_type", "seller_evidence", "seller_checked_at", "location", "analysis", "asking_estimate",
 })
+
+
+def validate_public_enrichment(offer):
+    """Nested public fields are closed schemas; descriptions/contacts stay out."""
+    if "seller_type" in offer:
+        if (offer.get("seller_type"), offer.get("seller_evidence")) not in {
+            ("agency", "agency_profile"), ("private", "explicit_private_claim"),
+            ("unknown", "not_reported"), ("unknown", "conflicting_signals"),
+        }:
+            raise ValueError("Invalid public seller evidence")
+        if offer.get("seller_checked_at") is not None and timestamp(offer["seller_checked_at"]) is None:
+            raise ValueError("Invalid seller evidence date")
+    location = offer.get("location")
+    if location is not None:
+        fields = {"key", "lat", "lng", "precision", "label_bg", "radius_m", "method", "source_url", "reference_date", "evidence"}
+        if not isinstance(location, dict) or set(location) != fields or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", str(location["key"])):
+            raise ValueError("Invalid public location schema")
+        numbers = (location["lat"], location["lng"], location["radius_m"])
+        if any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) for x in numbers) or not (42.4 <= numbers[0] <= 43 and 22.8 <= numbers[1] <= 24 and 200 <= numbers[2] <= 12000):
+            raise ValueError("Invalid approximate location bounds")
+        if location["precision"] not in {"street", "neighborhood"} or location["method"] != "cadastre_" + location["precision"] + "_reference" or location["source_url"] != "https://kais.cadastre.bg/bg/OpenData" or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(location["reference_date"])) or location["evidence"] not in {"listed_address", "description_street", "listed_neighborhood"} or not isinstance(location["label_bg"], str) or not 1 <= len(location["label_bg"]) <= 180:
+            raise ValueError("Invalid public location provenance")
+    analysis = offer.get("analysis")
+    if analysis is not None:
+        fields = {"completion_stage", "condition", "area_basis", "risk_flags", "checked_at", "description_analyzed"}
+        if not isinstance(analysis, dict) or set(analysis) != fields or analysis["completion_stage"] not in {"planned", "completed", "unknown"} or analysis["condition"] not in {"renovated", "needs_renovation", "unknown"} or analysis["area_basis"] not in {"net", "gross", "terrace_included", "unknown"} or type(analysis["description_analyzed"]) is not bool:
+            raise ValueError("Invalid advertised analysis schema")
+        risks = analysis["risk_flags"]
+        if not isinstance(risks, list) or len(risks) > 5 or any(not isinstance(x, str) or x not in {"share_sale", "auction", "tenanted", "nonresidential", "mandatory_extra_cost"} for x in risks) or len(set(risks)) != len(risks):
+            raise ValueError("Invalid advertised risk flags")
+        if analysis["checked_at"] is not None and timestamp(analysis["checked_at"]) is None:
+            raise ValueError("Invalid analysis date")
+    estimate = offer.get("asking_estimate")
+    if estimate is not None:
+        numeric_fields = {"median_eur_per_sqm", "p25_eur_per_sqm", "p75_eur_per_sqm", "indicated_price_eur", "range_low_eur", "range_high_eur"}
+        if not isinstance(estimate, dict) or set(estimate) != numeric_fields | {"status", "method_version", "peer_count", "location_basis"} or estimate["method_version"] != 2 or estimate["status"] not in {"available", "insufficient_comparables", "needs_review", "invalid_inputs"} or estimate["location_basis"] not in {"street", "neighborhood"} or type(estimate["peer_count"]) is not int or not 0 <= estimate["peer_count"] <= MAX_LISTINGS:
+            raise ValueError("Invalid asking estimate schema")
+        if any(estimate[k] is not None and number(estimate[k]) is None for k in numeric_fields):
+            raise ValueError("Invalid asking estimate numbers")
+        if estimate["status"] == "available" and (estimate["peer_count"] < 8 or any(estimate[k] is None for k in numeric_fields)):
+            raise ValueError("Unsupported available estimate")
+        if estimate["range_low_eur"] is not None and not estimate["range_low_eur"] <= estimate["indicated_price_eur"] <= estimate["range_high_eur"]:
+            raise ValueError("Inconsistent asking estimate range")
 
 
 def json_bytes(value):
@@ -238,6 +282,7 @@ def validate_snapshot(output):
             for offer in offers:
                 if not isinstance(offer, dict) or set(offer) - PUBLIC_FIELDS or not OFFER_ID.fullmatch(str(offer.get("id", ""))) or offer["id"] in identifiers:
                     raise ValueError("Invalid, duplicate or overbroad public offer")
+                validate_public_enrichment(offer)
                 identifiers.add(offer["id"])
                 if canonical_offer_id(offer.get("url"), offer["id"])[0] != offer["id"]:
                     raise ValueError("Canonical offer URL mismatch")

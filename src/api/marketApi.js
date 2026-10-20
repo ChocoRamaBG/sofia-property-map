@@ -15,4 +15,5 @@ async function request(action, params = {}, signal) {
 export const marketApi = {
   summary: (signal) => request('summary', {}, signal),
   listings: (params = {}, signal) => request('listings', params, signal),
+  viewport: (params = {}, signal) => request('viewport', params, signal),
 };

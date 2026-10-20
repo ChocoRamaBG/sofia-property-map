@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, BellOff, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, ExternalLink, Filter, Info, Layers3, Loader2, MapPin, RefreshCw, Search, ShieldCheck, SlidersHorizontal, TrendingDown, X } from 'lucide-react';
+import { ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, BellOff, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, ExternalLink, Filter, Info, Layers3, List, Loader2, Map as MapIcon, MapPin, RefreshCw, Search, ShieldCheck, TrendingDown, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { marketApi } from '@/api/marketApi';
+import OffersMap from './OffersMap';
 import './MarketDashboard.css';
 
 const TEXT = {
@@ -105,6 +106,56 @@ const TEXT = {
   anyType: ['Всички типове', 'All types'],
   vat: ['ДДС в цената', 'VAT basis'],
   anyVat: ['Всички стойности', 'All values'],
+  seller: ['Продавач', 'Seller'],
+  anySeller: ['Всички продавачи', 'All sellers'],
+  sellerAgency: ['Брокер / агенция', 'Broker / agency'],
+  sellerPrivate: ['Частен продавач (по заявление)', 'Private seller (self-declared)'],
+  sellerUnknown: ['Продавачът не е установен', 'Seller not established'],
+  sellerAgencyEvidence: ['Профил на агенция в източника', 'Agency profile on the source website'],
+  sellerPrivateEvidence: ['Изрично заявление в обявата; собствеността не е проверена', 'Explicit statement in the listing; ownership is not verified'],
+  sellerConflicting: ['Противоречиви сигнали за продавача', 'Conflicting seller information'],
+  precision: ['Местоположение в картата', 'Map location'],
+  anyPrecision: ['Всички, включително без ориентир', 'All, including no reference'],
+  precisionStreet: ['Ориентир по улица', 'Street reference'],
+  precisionNeighborhood: ['Ориентир по квартал', 'Neighborhood reference'],
+  precisionAddress: ['Адресен ориентир', 'Address reference'],
+  precisionUnknown: ['Без достатъчно местоположение', 'Insufficient location information'],
+  locatedCoverage: ['{n} обяви с приблизителен ориентир', '{n} listings with an approximate reference'],
+  sellerCoverage: ['{n} обяви с установен тип продавач', '{n} listings with a classified seller type'],
+  analysisCoverage: ['Анализирани описания: {n} от {total}', 'Descriptions analyzed: {n} of {total}'],
+  analysisCoverageHelp: ['Обработката на описанията е постепенна при дневните обновявания. При останалите обяви се използват наличните полета; липсващото не се предполага.', 'Description analysis progresses with daily updates. Other listings use available source fields; missing information is not inferred.'],
+  listView: ['Списък', 'List'],
+  offersMap: ['Карта на обявите', 'Listings map'],
+  viewMode: ['Изглед на обявите', 'Listings view'],
+  referenceFilter: ['Референтна зона: {name}', 'Reference area: {name}'],
+  clearReference: ['Премахни ограничението по зона', 'Remove reference-area filter'],
+  askingEstimate: ['Ориентир по офертни цени', 'Asking-price benchmark'],
+  askingRange: ['Средни 50% от сходните офертни цени', 'Middle 50% of comparable asking prices'],
+  askingSample: ['{n} сходни обяви · медиана {price} €', '{n} comparable listings · median {price} €'],
+  askingHelp: ['Диапазонът е изчислен от квартилите €/м² × заявената площ. Не е оценка по реални сделки; състоянието и площта са заявени от рекламодателя.', 'Range calculated from €/m² quartiles × stated area. It is not a transaction-based valuation; condition and area are advertiser statements.'],
+  askingStreet: ['Сравнение по същата референтна улица', 'Comparison within the same street reference'],
+  askingNeighborhood: ['Сравнение по квартал', 'Neighborhood comparison'],
+  askingInsufficient: ['Недостатъчно сходни обяви за ценови ориентир', 'Not enough comparable listings for a price benchmark'],
+  askingReview: ['Нужна е проверка преди ценово сравнение', 'Review needed before comparing prices'],
+  askingInvalid: ['Недостатъчно надеждни цена или площ за изчисление', 'Insufficient price or area inputs for a calculation'],
+  analysisTitle: ['Сведения от обявата', 'Listing statements'],
+  analysisPartial: ['Описанието още не е анализирано; показани са наличните полета.', 'Description has not yet been analyzed; available source fields are shown.'],
+  analysisChecked: ['Текстът е анализиран на {date}. Това са твърдения в обявата.', 'Text analyzed {date}. These are statements in the listing.'],
+  completion: ['Етап', 'Completion'],
+  completionPlanned: ['В строеж / планирано завършване', 'Under construction / planned completion'],
+  completionCompleted: ['Заявено като завършено', 'Advertised as completed'],
+  condition: ['Състояние', 'Condition'],
+  conditionRenovated: ['Заявено като ремонтирано', 'Advertised as renovated'],
+  conditionNeedsRenovation: ['Нужда от ремонт', 'Needs renovation'],
+  areaBasis: ['Заявена основа на площта', 'Stated area basis'],
+  areaNet: ['Чиста площ', 'Net area'],
+  areaGross: ['С общи части', 'Including common areas'],
+  areaTerrace: ['Включени тераси', 'Includes terraces'],
+  riskShare: ['Дял / идеални части', 'Share / partial ownership sale'],
+  riskAuction: ['Търг / публична продан', 'Auction / public sale'],
+  riskTenanted: ['С наемател', 'Tenanted'],
+  riskNonresidential: ['Нежилищен статут', 'Non-residential status'],
+  riskExtra: ['Задължителен допълнителен разход', 'Mandatory additional cost'],
   minDiscount: ['Минимум под медианата · %', 'Minimum below median · %'],
   discountNone: ['Без праг', 'No threshold'],
   onlyDeals: ['Само обяви с поне 20% под медианата', 'Only listings at least 20% below median'],
@@ -135,6 +186,7 @@ const TEXT = {
   methodologyPriceHelp: ['Цените са заявени в обявите. Те не установяват стойността, наличността или състоянието на имота. Не смесваме неизвестна валута с евро; левовите цени се преобразуват по 1,95583 лв./€.', 'Prices are stated in listings. They do not establish a property’s value, availability or condition. Unknown currencies are not treated as euros; BGN prices use 1.95583 BGN/€.'],
   methodologyPeers: ['Сравняваме сходни обяви', 'Similar listings form the comparison'],
   methodologyPeersHelp: ['Същият квартал, тип апартамент, група година на строеж и основа за ДДС. Самата обява е изключена от медианата; нужни са поне 8 други обяви. Неизвестната година е отделна група, която може да смесва различни възрасти.', 'Peers share neighborhood, apartment type, construction-year band and VAT basis. The listing itself is excluded from its comparison median; at least 8 other listings are required. Unknown construction years form a separate group that may mix property ages.'],
+  methodologyPeersV2Help: ['Същият квартал, тип, ДДС, възраст, етап и основа на площта; площ в ±25%, сходна етажна група и състояние, когато е посочено. При поне 8 сходни обяви по същата референтна улица използваме тях, иначе квартала. Самата обява е изключена. Диапазонът отразява квартилите на офертните цени, а не сигурност за продажна стойност.', 'Peers share neighborhood, type, VAT, age band, completion and area basis, with area within ±25%, a similar floor group and condition where known. At least 8 peers from the same street reference are used when available, otherwise the neighborhood. The candidate is excluded. The range reflects asking-price quartiles, rather than confidence in a sale valuation.'],
   methodologyDeals: ['Сигнал за проверка', 'A lead to investigate'],
   methodologyDealsHelp: ['Прагът е поне 20% под сравнимата медиана. Разлики от 60% или повече са отбелязани за проверка и не се изпращат като нови съвпадения. Площта и годината са заявени от рекламодателя.', 'The threshold is at least 20% below the comparable median. Differences of 60% or more are flagged for review and excluded from new alerts. Area and construction year are advertiser statements.'],
   methodologySource: ['Една обява ≠ един имот', 'One listing does not equal one property'],
@@ -146,7 +198,7 @@ const TEXT = {
   noValue: ['—', '—'],
 };
 
-const EMPTY_FILTERS = { neighborhood: '', type: '', vat: '', min_discount: '', min_area: '', max_area: '', min_price: '', max_price: '', deals_only: false, change: '', sort: 'discount' };
+const EMPTY_FILTERS = { neighborhood: '', type: '', vat: '', seller: '', precision: '', location_key: '', min_discount: '', min_area: '', max_area: '', min_price: '', max_price: '', deals_only: false, change: '', sort: 'discount' };
 const ALERT_KEY = 'sofiapermits.market.watching.v1';
 const DEFAULT_ALERT = { enabled: false, neighborhood: '', type: '', minDiscount: 20, includeUnknownVat: false, seenKeys: [], baselineSnapshot: '' };
 
@@ -171,6 +223,8 @@ function safeOfferUrl(value) {
   try { const url = new URL(value); return url.protocol === 'https:' && ['imot.bg', 'www.imot.bg'].includes(url.hostname) ? url.href : null; } catch { return null; }
 }
 function vatText(value, tr) { return tr(value === 'included' ? 'vatIncluded' : value === 'excluded' ? 'vatExcluded' : 'vatUnknown'); }
+function sellerText(value, tr) { return tr(value === 'agency' ? 'sellerAgency' : value === 'private' ? 'sellerPrivate' : 'sellerUnknown'); }
+function precisionText(value, tr) { return tr(value === 'street' ? 'precisionStreet' : value === 'neighborhood' ? 'precisionNeighborhood' : value === 'address' ? 'precisionAddress' : 'precisionUnknown'); }
 function typeText(value, lang) {
   if (lang === 'bg') return value;
   const normalized = String(value || '').trim().toLocaleUpperCase('bg-BG');
@@ -201,6 +255,31 @@ function initialAlerts() {
   } catch { return { ...DEFAULT_ALERT }; }
 }
 
+function AskingEstimate({ estimate }) {
+  const { lang, tr } = useText();
+  if (!estimate) return null;
+  const available = estimate.status === 'available' && estimate.peer_count >= 8 && numeric(estimate.range_low_eur) !== null && numeric(estimate.range_high_eur) !== null;
+  return <div className={`market-asking-estimate${available ? '' : ' is-unavailable'}`}>
+    <span><BarChart3 size={13} />{tr('askingEstimate')}</span>
+    {available ? <><strong>{formatNumber(estimate.range_low_eur, lang)}–{formatNumber(estimate.range_high_eur, lang)} €</strong><p>{tr('askingSample', { n: estimate.peer_count, price: formatNumber(estimate.indicated_price_eur, lang) })}</p><small>{tr(estimate.location_basis === 'street' ? 'askingStreet' : 'askingNeighborhood')}</small><details><summary>{tr('askingRange')}<CircleHelp size={12} /></summary><p>{tr('askingHelp')}</p></details></> : <p>{tr(estimate.status === 'needs_review' ? 'askingReview' : estimate.status === 'invalid_inputs' ? 'askingInvalid' : 'askingInsufficient')}</p>}
+  </div>;
+}
+
+function ListingAnalysis({ offer }) {
+  const { lang, tr } = useText();
+  const analysis = offer.analysis;
+  if (!analysis) return null;
+  const facts = [];
+  if (analysis.completion_stage !== 'unknown') facts.push(['completion', analysis.completion_stage === 'planned' ? 'completionPlanned' : 'completionCompleted']);
+  if (analysis.condition !== 'unknown') facts.push(['condition', analysis.condition === 'renovated' ? 'conditionRenovated' : 'conditionNeedsRenovation']);
+  if (analysis.area_basis !== 'unknown') facts.push(['areaBasis', { net: 'areaNet', gross: 'areaGross', terrace_included: 'areaTerrace' }[analysis.area_basis]]);
+  const risks = { share_sale: 'riskShare', auction: 'riskAuction', tenanted: 'riskTenanted', nonresidential: 'riskNonresidential', mandatory_extra_cost: 'riskExtra' };
+  return <div className="market-listing-analysis">
+    {analysis.risk_flags?.length > 0 && <div className="market-risk-flags">{analysis.risk_flags.filter((key) => risks[key]).map((key) => <span key={key}><Info size={12} />{tr(risks[key])}</span>)}</div>}
+    <details><summary>{tr('analysisTitle')}<ChevronDown size={13} /></summary><dl>{facts.map(([label, value]) => <div key={label}><dt>{tr(label)}</dt><dd>{tr(value)}</dd></div>)}</dl><p>{analysis.description_analyzed ? tr('analysisChecked', { date: formatDate(analysis.checked_at, lang) }) : tr('analysisPartial')}</p></details>
+  </div>;
+}
+
 function OfferCard({ offer, mode }) {
   const { lang, tr } = useText();
   const comparison = offer.comparison || {};
@@ -210,14 +289,19 @@ function OfferCard({ offer, mode }) {
   const link = safeOfferUrl(offer.url);
   const change = offer.change?.kind;
   const quotedUnitPrice = numeric(offer.quoted_eur_per_sqm);
+  const sellerEvidence = tr(offer.seller_evidence === 'agency_profile' ? 'sellerAgencyEvidence' : offer.seller_evidence === 'explicit_private_claim' ? 'sellerPrivateEvidence' : offer.seller_evidence === 'conflicting_signals' ? 'sellerConflicting' : 'sellerUnknown');
   return <article className={`market-offer-card${comparison.eligible ? ' is-comparable-deal' : ''}`}>
     <div className="market-offer-top"><span className="market-offer-type">{typeText(offer.type_bg, lang) || tr('unknown')}</span>{historical ? <span className="market-status-badge is-historical"><Clock3 size={11} />{tr('historicalOffer')}</span> : ['new', 'price_drop', 'became_eligible'].includes(change) ? <span className="market-status-badge">{change === 'price_drop' ? <TrendingDown size={11} /> : <Check size={11} />}{tr(change === 'price_drop' ? 'priceDrop' : change === 'new' ? 'newOffer' : 'newlyEligible')}</span> : null}</div>
     <h3><MapPin size={15} />{offer.neighborhood_bg || tr('unknown')}</h3>
+    <div className="market-seller-row"><span className={`market-seller-badge is-${offer.seller_type || 'unknown'}`} title={`${sellerEvidence}${offer.seller_checked_at ? ` · ${formatDate(offer.seller_checked_at, lang)}` : ''}`}>{sellerText(offer.seller_type, tr)}</span></div>
     {offer.address_bg && <p className="market-offer-address">{offer.address_bg}</p>}
+    {offer.location && <p className="market-offer-reference"><MapPin size={11} /><span>{precisionText(offer.location.precision, tr)} · {offer.location.label_bg}</span></p>}
     <dl className="market-offer-facts"><div><dt>{tr('area')}</dt><dd>{formatNumber(offer.area_sqm, lang, 1)} {tr('sqm')}</dd></div>{offer.floor_bg && <div><dt>{tr('floor')}</dt><dd>{offer.floor_bg}</dd></div>}<div className="market-construction-fact"><dt>{tr('year')}</dt><dd>{constructionText(offer.construction_label_bg, lang) || offer.construction_year || tr('unknown')}</dd></div></dl>
     <div className="market-offer-price"><strong>{formatNumber(offer.price_eur, lang)}{numeric(offer.price_eur) !== null && <span> €</span>}</strong><span>{formatNumber(quotedUnitPrice ?? offer.eur_per_sqm, lang, quotedUnitPrice === null ? 0 : 2)} {tr('unit')}</span></div>
     {offer.price_total_derived === true && <p className="market-price-derived"><Info size={11} />{tr('derivedTotal')}</p>}
     <p className={`market-offer-vat${offer.vat_basis === 'unknown' ? ' is-unknown' : ''}`}>{offer.vat_basis === 'unknown' && <Info size={11} />}{vatText(offer.vat_basis, tr)}</p>
+    <ListingAnalysis offer={offer} />
+    <AskingEstimate estimate={offer.asking_estimate} />
     <div className={`market-offer-comparison${unusual ? ' needs-review' : ''}`}>
       {discount !== null && (comparison.peer_count || 0) >= 8 ? <><strong>{discount > 0 ? <ArrowDownRight size={17} /> : <BarChart3 size={17} />}{discount > 0 ? tr('below', { n: formatNumber(discount, lang, 1) }) : discount < 0 ? tr('above', { n: formatNumber(Math.abs(discount), lang, 1) }) : tr('nearMedian')}</strong><span>{tr('peers', { n: comparison.peer_count })} · {formatNumber(comparison.median_eur_per_sqm, lang)} {tr('unit')}</span>{offer.vat_basis === 'unknown' && <em>{tr('comparisonVatUnknown')}</em>}{unusual && <em><Info size={12} />{tr('review')}</em>}</> : <span>{tr('noComparison')}</span>}
     </div>
@@ -348,19 +432,23 @@ function MarketListings({ summary, sectionRef, externalSelection }) {
   const [page, setPage] = useState(1);
   const [revision, setRevision] = useState(0);
   const [rangeError, setRangeError] = useState(false);
+  const [view, setView] = useState('list');
+  const [mapVisited, setMapVisited] = useState(false);
+  const [referenceLabel, setReferenceLabel] = useState('');
   const [state, setState] = useState({ loading: true, error: false, data: null });
   const options = summary.filter_options || {};
   useEffect(() => {
     if (!externalSelection) return;
     const next = { ...EMPTY_FILTERS, ...externalSelection.filters };
-    setDraft(next); setFilters(next); setPage(1); setRangeError(false);
+    setDraft(next); setFilters(next); setPage(1); setRangeError(false); setReferenceLabel(''); setView('list');
   }, [externalSelection]);
   useEffect(() => {
+    if (view !== 'list') return undefined;
     const controller = new AbortController();
     setState((previous) => ({ ...previous, loading: true, error: false }));
     marketApi.listings({ ...filters, deals_only: filters.deals_only ? 1 : undefined, page, page_size: 24 }, controller.signal).then((data) => { if (!controller.signal.aborted) setState({ loading: false, error: false, data }); }).catch(() => { if (!controller.signal.aborted) setState({ loading: false, error: true, data: null }); });
     return () => controller.abort();
-  }, [filters, page, revision, summary.snapshot_id]);
+  }, [filters, page, revision, summary.snapshot_id, view]);
   function update(key, value) { setDraft((previous) => ({ ...previous, [key]: value })); setRangeError(false); }
   function apply(event) {
     event.preventDefault();
@@ -369,24 +457,44 @@ function MarketListings({ summary, sectionRef, externalSelection }) {
     }
     setFilters({ ...draft }); setPage(1); setRangeError(false);
   }
+  function chooseReference(area) {
+    const next = { ...filters, location_key: area.key };
+    setDraft(next); setFilters(next); setReferenceLabel(area.label_bg); setPage(1); setView('list'); setRangeError(false);
+  }
+  function clearReference() {
+    setDraft((previous) => ({ ...previous, location_key: '' }));
+    setFilters((previous) => ({ ...previous, location_key: '' }));
+    setReferenceLabel(''); setPage(1);
+  }
   const items = Array.isArray(state.data?.items) ? state.data.items : [];
   return <section className="market-section market-listings-section" ref={sectionRef} aria-labelledby="market-listings-title">
-    <div className="market-section-heading"><div><div className="market-eyebrow">{tr('count')} · IMOT.BG</div><h2 id="market-listings-title">{tr('listingsTitle')}</h2><p>{tr('listingsHelp')}</p></div><SlidersHorizontal className="market-heading-icon" size={24} /></div>
+    <div className="market-section-heading"><div><div className="market-eyebrow">{tr('count')} · IMOT.BG</div><h2 id="market-listings-title">{tr('listingsTitle')}</h2><p>{tr('listingsHelp')}</p></div><div className="market-view-toggle" role="group" aria-label={tr('viewMode')}><button type="button" aria-pressed={view === 'list'} onClick={() => setView('list')}><List size={15} />{tr('listView')}</button><button type="button" aria-pressed={view === 'map'} onClick={() => { setMapVisited(true); setView('map'); }}><MapIcon size={15} />{tr('offersMap')}</button></div></div>
     <form className="market-filter-form" onSubmit={apply}>
       <div className="market-filter-grid"><label><span>{tr('neighborhood')}</span><select value={draft.neighborhood} onChange={(event) => update('neighborhood', event.target.value)}><option value="">{tr('anyNeighborhood')}</option>{(options.neighborhoods || []).map((item) => <option value={item.key} key={item.key}>{item.label_bg} ({item.count})</option>)}</select></label><label><span>{tr('type')}</span><select value={draft.type} onChange={(event) => update('type', event.target.value)}><option value="">{tr('anyType')}</option>{(options.types || []).map((item) => <option value={item.key} key={item.key}>{typeText(item.label_bg, lang)} ({item.count})</option>)}</select></label><label><span>{tr('vat')}</span><select value={draft.vat} onChange={(event) => update('vat', event.target.value)}><option value="">{tr('anyVat')}</option>{(options.vat_bases || []).map((item) => <option value={item.key} key={item.key}>{vatText(item.key, tr)} ({item.count})</option>)}</select></label><label><span>{tr('minDiscount')}</span><select value={draft.min_discount} onChange={(event) => update('min_discount', event.target.value)}><option value="">{tr('discountNone')}</option>{[10, 20, 25, 30, 40, 50].map((n) => <option key={n} value={n}>{n}%</option>)}</select></label></div>
+      <div className="market-filter-grid market-location-filter-grid"><label><span>{tr('seller')}</span><select value={draft.seller} onChange={(event) => update('seller', event.target.value)}><option value="">{tr('anySeller')}</option>{['agency', 'private', 'unknown'].map((key) => <option key={key} value={key}>{sellerText(key, tr)}</option>)}</select></label><label><span>{tr('precision')}</span><select value={draft.precision} onChange={(event) => update('precision', event.target.value)}><option value="">{tr('anyPrecision')}</option>{['street', 'neighborhood', 'unknown'].map((key) => <option key={key} value={key}>{precisionText(key, tr)}</option>)}</select></label></div>
+      {filters.location_key && <div className="market-reference-filter"><MapPin size={13} /><span>{tr('referenceFilter', { name: referenceLabel || filters.location_key })}</span><button type="button" onClick={clearReference} aria-label={tr('clearReference')}><X size={14} /></button></div>}
       <div className="market-filter-second-row"><label className="market-checkbox"><input type="checkbox" checked={draft.deals_only} onChange={(event) => update('deals_only', event.target.checked)} /><span>{tr('onlyDeals')}</span></label><label className="market-sort-field"><span>{tr('order')}</span><select value={draft.sort} onChange={(event) => update('sort', event.target.value)}><option value="discount">{tr('sortDiscount')}</option><option value="eur_per_sqm">{tr('sortUnit')}</option><option value="price">{tr('sortPrice')}</option><option value="newest">{tr('sortNewest')}</option></select></label></div>
       <details className="market-more-filters"><summary><Filter size={14} />{tr('moreFilters')}<ChevronDown size={14} /></summary><div className="market-filter-grid is-advanced">{['min_area', 'max_area', 'min_price', 'max_price'].map((key) => <label key={key}><span>{tr({ min_area: 'minArea', max_area: 'maxArea', min_price: 'minPrice', max_price: 'maxPrice' }[key])}</span><input type="number" min="0" max={key.endsWith('area') ? 100000 : 10000000000} step="any" value={draft[key]} onChange={(event) => update(key, event.target.value)} placeholder="—" /></label>)}<label><span>{tr('change')}</span><select value={draft.change} onChange={(event) => update('change', event.target.value)}><option value="">{tr('anyChange')}</option>{[['new', 'newOffer'], ['price_drop', 'priceDrop'], ['became_eligible', 'newlyEligible']].map(([value, key]) => <option key={value} value={value}>{tr(key)}</option>)}</select></label></div></details>
       {rangeError && <p className="market-inline-note is-warning" role="alert">{tr('rangeError')}</p>}
-      <div className="market-filter-actions"><button className="market-button is-primary" type="submit"><Search size={15} />{tr('apply')}</button><button className="market-button is-quiet" type="button" onClick={() => { setDraft({ ...EMPTY_FILTERS }); setFilters({ ...EMPTY_FILTERS }); setPage(1); setRangeError(false); }}><X size={14} />{tr('reset')}</button>{!state.loading && !state.error && <span className="market-result-count" aria-live="polite">{tr('resultCount', { n: formatNumber(state.data?.total, lang) })}</span>}</div>
+      <div className="market-filter-actions"><button className="market-button is-primary" type="submit"><Search size={15} />{tr('apply')}</button><button className="market-button is-quiet" type="button" onClick={() => { setDraft({ ...EMPTY_FILTERS }); setFilters({ ...EMPTY_FILTERS }); setPage(1); setRangeError(false); setReferenceLabel(''); }}><X size={14} />{tr('reset')}</button>{view === 'list' && !state.loading && !state.error && <span className="market-result-count" aria-live="polite">{tr('resultCount', { n: formatNumber(state.data?.total, lang) })}</span>}</div>
     </form>
-    <div className="market-listings-results" aria-live="polite" aria-busy={state.loading}>{state.loading ? <div className="market-loading is-inline"><Loader2 size={21} className="animate-spin" /><span>{tr('listingsLoading')}</span></div> : state.error ? <div className="market-empty" role="alert"><p>{tr('listingsError')}</p><button className="market-button" type="button" onClick={() => setRevision((n) => n + 1)}><RefreshCw size={15} />{tr('retry')}</button></div> : items.length === 0 ? <p className="market-empty">{tr('emptyListings')}</p> : <><div className="market-offer-grid">{items.map((offer) => <OfferCard key={offer.id} offer={offer} mode={state.data?.mode || summary.mode} />)}</div><Pagination page={state.data?.page || page} pages={state.data?.pages || 1} onPage={(next) => { setPage(next); sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} /></>}</div>
+    <div hidden={view !== 'list'} className="market-listings-results" aria-live="polite" aria-busy={view === 'list' && state.loading}>{state.loading ? <div className="market-loading is-inline"><Loader2 size={21} className="animate-spin" /><span>{tr('listingsLoading')}</span></div> : state.error ? <div className="market-empty" role="alert"><p>{tr('listingsError')}</p><button className="market-button" type="button" onClick={() => setRevision((n) => n + 1)}><RefreshCw size={15} />{tr('retry')}</button></div> : items.length === 0 ? <p className="market-empty">{tr('emptyListings')}</p> : <><div className="market-offer-grid">{items.map((offer) => <OfferCard key={offer.id} offer={offer} mode={state.data?.mode || summary.mode} />)}</div><Pagination page={state.data?.page || page} pages={state.data?.pages || 1} onPage={(next) => { setPage(next); sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} /></>}</div>
+    {mapVisited && <div hidden={view !== 'map'}><OffersMap summary={summary} filters={filters} active={view === 'map'} onSelectReference={chooseReference} /></div>}
   </section>;
+}
+
+function EnrichmentCoverage({ summary }) {
+  const { lang, tr } = useText();
+  const counts = summary.counts || {};
+  if (numeric(counts.description_analyzed_count) === null && numeric(counts.located_count) === null) return null;
+  const classified = (numeric(counts.seller_types?.agency) || 0) + (numeric(counts.seller_types?.private) || 0);
+  return <aside className="market-enrichment-coverage" aria-label={tr('analysisTitle')}><div>{numeric(counts.located_count) !== null && <span><MapPin size={14} />{tr('locatedCoverage', { n: formatNumber(counts.located_count, lang) })}</span>}<span><ShieldCheck size={14} />{tr('sellerCoverage', { n: formatNumber(classified, lang) })}</span>{numeric(counts.description_analyzed_count) !== null && <span><Layers3 size={14} />{tr('analysisCoverage', { n: formatNumber(counts.description_analyzed_count, lang), total: formatNumber(counts.listing_count, lang) })}</span>}</div><p>{tr('analysisCoverageHelp')}</p></aside>;
 }
 
 function Methodology({ summary }) {
   const { lang, tr } = useText();
   const series = Array.isArray(summary.history?.series) ? summary.history.series.slice(-8) : [];
-  return <section className="market-section market-methodology" aria-labelledby="market-methodology-title"><div className="market-section-heading"><div><div className="market-eyebrow">{tr('methodologyIntro')}</div><h2 id="market-methodology-title">{tr('methodology')}</h2></div><ShieldCheck className="market-heading-icon" size={25} /></div><div className="market-method-grid">{[['Price', BarChart3], ['Peers', Layers3], ['Deals', CircleHelp], ['Source', ExternalLink]].map(([key, Icon]) => <article key={key}><Icon size={20} /><h3>{tr(`methodology${key}`)}</h3><p>{tr(`methodology${key}Help`)}</p></article>)}</div><details className="market-history"><summary><CalendarDays size={16} />{tr('history')}<ChevronDown size={16} /></summary>{series.length <= 1 ? <p>{tr('historyEmpty')}</p> : <><p>{tr('historyHelp', { n: series.length })}</p><div className="market-history-series">{series.map((point, index) => <div key={`${point.captured_at}-${index}`}><span>{formatDate(point.captured_at, lang)}</span><strong>{formatNumber(point.median_eur_per_sqm, lang)} {tr('unit')}</strong><small>{formatNumber(point.listing_count, lang)} {tr('count').toLocaleLowerCase()}</small></div>)}</div></>}</details><div className="market-method-footer"><a href="https://www.imot.bg/" target="_blank" rel="noreferrer">{tr('sourceLink')}<ArrowUpRight size={14} /></a><span>{tr('captured', { date: formatDate(summary.captured_at, lang, true) })}</span></div></section>;
+  return <section className="market-section market-methodology" aria-labelledby="market-methodology-title"><div className="market-section-heading"><div><div className="market-eyebrow">{tr('methodologyIntro')}</div><h2 id="market-methodology-title">{tr('methodology')}</h2></div><ShieldCheck className="market-heading-icon" size={25} /></div><div className="market-method-grid">{[['Price', BarChart3], ['Peers', Layers3], ['Deals', CircleHelp], ['Source', ExternalLink]].map(([key, Icon]) => <article key={key}><Icon size={20} /><h3>{tr(`methodology${key}`)}</h3><p>{tr(key === 'Peers' && summary.methodology?.method_version === 2 ? 'methodologyPeersV2Help' : `methodology${key}Help`)}</p></article>)}</div><details className="market-history"><summary><CalendarDays size={16} />{tr('history')}<ChevronDown size={16} /></summary>{series.length <= 1 ? <p>{tr('historyEmpty')}</p> : <><p>{tr('historyHelp', { n: series.length })}</p><div className="market-history-series">{series.map((point, index) => <div key={`${point.captured_at}-${index}`}><span>{formatDate(point.captured_at, lang)}</span><strong>{formatNumber(point.median_eur_per_sqm, lang)} {tr('unit')}</strong><small>{formatNumber(point.listing_count, lang)} {tr('count').toLocaleLowerCase()}</small></div>)}</div></>}</details><div className="market-method-footer"><a href="https://www.imot.bg/" target="_blank" rel="noreferrer">{tr('sourceLink')}<ArrowUpRight size={14} /></a><span>{tr('captured', { date: formatDate(summary.captured_at, lang, true) })}</span></div></section>;
 }
 
 export default function MarketDashboard({ onBackToMap, onSummaryChange, onAlertCountChange }) {
@@ -432,6 +540,7 @@ export default function MarketDashboard({ onBackToMap, onSummaryChange, onAlertC
       {!historical && (stale || summary.history?.baseline) && <p className="market-inline-note is-warning"><Info size={15} />{tr(stale ? 'stale' : 'baseline')}</p>}
       <div className="market-stats-grid"><article><span>{tr('ads')}</span><strong>{formatNumber(summary.counts?.listing_count, lang)}</strong><p>{tr('adHint')}</p></article><article><span>{tr('neighborhoods')}</span><strong>{formatNumber(summary.coverage?.neighborhood_count ?? summary.neighborhoods?.length, lang)}</strong><p>{tr('pricedHint', { n: formatNumber(summary.counts?.priced_count, lang) })}</p></article><article className="is-emphasis"><span>{tr('median')}</span><strong>{formatNumber(headline.median_eur_per_sqm, lang)}<small> €</small></strong><p>{tr('medianHint', { n: formatNumber(headline.priced_count, lang), vat: vatText(headline.vat_basis, tr) })}</p></article><article><span>{tr('opportunities')}</span><strong>{formatNumber(summary.counts?.eligible_count, lang)}</strong><p>{tr('opportunityHint')}</p></article></div>
       <div className="market-scope"><span>{tr('scope')}</span><p>{lang === 'bg' ? summary.coverage?.scope_bg || 'Обяви за апартаменти в София и населените места в каталога' : 'Apartment listings in Sofia and settlements in the source catalogue · advertised asking prices'}{summary.coverage?.construction_year_min && <small>{tr('constructionScope', { year: summary.coverage.construction_year_min })}</small>}</p></div>
+      <EnrichmentCoverage summary={summary} />
       <section className="market-section market-top-section" aria-labelledby="market-top-title"><div className="market-section-heading"><div><div className="market-eyebrow"><TrendingDown size={13} />{tr('opportunities')}</div><h2 id="market-top-title">{tr('topTitle')}</h2><p>{tr('topHelp')}</p></div><button className="market-button" type="button" onClick={() => showListings({ deals_only: true, min_discount: 20 })}>{tr('viewAll')}<ArrowRight size={15} /></button></div>{summary.top_offers?.length ? <div className="market-offer-grid">{summary.top_offers.slice(0, 6).map((offer) => <OfferCard key={offer.id} offer={offer} mode={summary.mode} />)}</div> : <p className="market-empty">{tr('noTop')}</p>}</section>
       <NeighborhoodTable summary={summary} onSelect={(neighborhood) => showListings({ neighborhood })} />
       <AlertPanel summary={summary} onCountChange={onAlertCountChange} />

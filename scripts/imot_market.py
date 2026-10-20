@@ -17,6 +17,8 @@ import re
 import statistics
 from uuid import uuid4
 
+from imot_location import LocationResolver
+
 from imot_market_format import (
     VERSION, MAX_LISTINGS, MAX_SHARD_BYTES, MAX_SUMMARY_BYTES, MAX_MANIFEST_BYTES,
     MAX_STATE_BYTES, MAX_STATE_COMPRESSED_BYTES, MAX_CAPTURE_BYTES, MAX_SHARDS, SHARD_ROWS, canonical_offer_id, digest,
@@ -26,8 +28,44 @@ from imot_market_format import (
 MIN_PEERS = 8
 DEAL_DISCOUNT_PCT = 20
 EXTREME_DISCOUNT_PCT = 60
+COMPARISON_METHOD_VERSION = 2
+AREA_TOLERANCE = 0.25
 BGN_PER_EUR = 1.95583
 VAT_LABELS = {"included": "Включен ДДС / не се начислява", "excluded": "Без ДДС", "unknown": "ДДС не е посочен"}
+
+
+def normalized_analysis(raw, label, checked_at):
+    source = raw.get("analysis") if isinstance(raw.get("analysis"), dict) else {}
+    stage = source.get("completion_stage", "unknown")
+    label = (label or "").casefold()
+    if re.search(r"ще\s+бъде|планиран|в строеж|в процес|на проект|акт\s*1[45]", label):
+        stage = "planned"
+    elif re.search(r"въведен[ао]?\s+в\s+експлоатация|завършен", label):
+        stage = "completed"
+    allowed = {
+        "completion_stage": {"planned", "completed", "unknown"},
+        "condition": {"renovated", "needs_renovation", "unknown"},
+        "area_basis": {"net", "gross", "terrace_included", "unknown"},
+    }
+    answer = {field: source.get(field) if source.get(field) in values else "unknown" for field, values in allowed.items()}
+    answer["completion_stage"] = stage if stage in allowed["completion_stage"] else "unknown"
+    risks = {"share_sale", "auction", "tenanted", "nonresidential", "mandatory_extra_cost"}
+    answer["risk_flags"] = sorted({x for x in source.get("risk_flags", []) if isinstance(x, str) and x in risks})
+    answer["checked_at"] = timestamp(source.get("checked_at")) or checked_at
+    answer["description_analyzed"] = source.get("description_analyzed") is True
+    return answer
+
+
+def floor_band(value):
+    raw = (value or "").casefold()
+    if re.search(r"сутерен|партер|приземен|подзем", raw):
+        return "ground_or_below"
+    match = re.search(r"(?<!\d)(\d{1,2})(?:\s*-?\s*(?:ви|ри|ти|ми))?\s*(?:ет\.?\s*)?(?:от|/)\s*(\d{1,2})(?!\d)", raw)
+    if match:
+        current, total = map(int, match.groups())
+        if 0 <= current <= total <= 60:
+            return "ground_or_below" if current == 0 else "top" if current == total else "middle"
+    return "unknown"
 
 
 def normalize_vat(value):
@@ -60,7 +98,7 @@ def normalize_neighborhood(value):
     return raw or None
 
 
-def normalize_offer(raw, default_observed, historical):
+def normalize_offer(raw, default_observed, historical, resolver=None):
     identifier, url = canonical_offer_id(raw.get("url"), raw.get("id"))
     neighborhood = normalize_neighborhood(raw.get("neighborhood", raw.get("neighborhood_bg")))
     kind = text(raw.get("property_type", raw.get("type_bg")), 64)
@@ -111,6 +149,12 @@ def normalize_offer(raw, default_observed, historical):
     observed = timestamp(raw.get("observed_at")) or (None if historical else default_observed)
     if historical and observed is None:
         quality.append("unknown_observed_at")
+    seller = raw.get("seller_type")
+    evidence = raw.get("seller_evidence")
+    if (seller, evidence) not in {("agency", "agency_profile"), ("private", "explicit_private_claim"), ("unknown", "not_reported"), ("unknown", "conflicting_signals")}:
+        seller, evidence = "unknown", "not_reported"
+    analysis = normalized_analysis(raw, construction_label, observed)
+    location = resolver.resolve(neighborhood_bg=neighborhood, address_bg=raw.get("address_bg"), location_hints=raw.get("location_hints")) if resolver else None
     return {
         "id": identifier, "url": url,
         "neighborhood_key": stable_key("neighborhood", neighborhood) if neighborhood else None,
@@ -131,6 +175,9 @@ def normalize_offer(raw, default_observed, historical):
         "observed_at": observed, "first_seen_at": observed,
         "comparison": None, "change": None, "historical": historical,
         "quality_flags": quality,
+        "seller_type": seller, "seller_evidence": evidence,
+        "seller_checked_at": timestamp(raw.get("seller_checked_at")),
+        "analysis": analysis, "location": location, "asking_estimate": None,
     }
 
 
@@ -215,7 +262,28 @@ def vat_statistics(offers):
 
 
 def cohort_key(offer):
-    return ":".join([offer["neighborhood_key"] or "unknown", offer["type_key"] or "unknown", offer["vat_basis"], offer["construction_cohort"]])
+    return ":".join([offer["neighborhood_key"] or "unknown", offer["type_key"] or "unknown", offer["vat_basis"], offer["construction_cohort"], offer["analysis"]["completion_stage"], offer["analysis"]["area_basis"], floor_band(offer["floor_bg"])])
+
+
+def peer_sample(offer, peers):
+    """Property text supplies claims, not independently verified attributes."""
+    rows = [x for x in peers if x["id"] != offer["id"]
+            and offer["area_sqm"] * (1 - AREA_TOLERANCE) <= x["area_sqm"] <= offer["area_sqm"] * (1 + AREA_TOLERANCE)
+            and (offer["analysis"]["condition"] == "unknown" or x["analysis"]["condition"] == offer["analysis"]["condition"])]
+    location = offer.get("location") or {}
+    if location.get("precision") == "street":
+        local = [x for x in rows if (x.get("location") or {}).get("key") == location["key"]]
+        if len(local) >= MIN_PEERS:
+            return local, "street"
+    return rows, "neighborhood"
+
+
+def quartile(values, fraction):
+    ordered = sorted(values)
+    point = (len(ordered) - 1) * fraction
+    low = int(point)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (point - low)
 
 
 def build_snapshot(capture, output, previous=None):
@@ -231,6 +299,8 @@ def build_snapshot(capture, output, previous=None):
             "captured_neighborhood_count": context.get("captured_neighborhood_count"),
             "completion": {"sources": context.get("searches", []), "total_unique": context.get("captured_count")},
             "offers": capture["listings"], "audit": {"capture": context},
+            "enrichment_cache": capture.get("enrichment_cache", {}),
+            "enrichment": capture.get("enrichment", {}),
         }
     historical = capture.get("mode") == "historical_bootstrap"
     if type(capture.get("version")) is not int or capture["version"] != VERSION or capture.get("source") != "imot.bg" or not isinstance(capture.get("offers"), list) or len(capture["offers"]) > MAX_LISTINGS * 2:
@@ -253,11 +323,12 @@ def build_snapshot(capture, output, previous=None):
             if not isinstance(key, str) or not key or key in source_keys:
                 raise ValueError("Daily source keys are missing or repeated")
             source_keys.add(key)
+    resolver = LocationResolver()
     normalized = []
     rejected = 0
     for raw in capture["offers"]:
         try:
-            normalized.append(normalize_offer(raw, captured_at, historical))
+            normalized.append(normalize_offer(raw, captured_at, historical, resolver))
         except (ValueError, TypeError, AttributeError):
             rejected += 1
     if not historical and rejected:
@@ -280,45 +351,62 @@ def build_snapshot(capture, output, previous=None):
         raise ValueError("Complete daily unique listing total does not reconcile")
     peers = defaultdict(list)
     for offer in listings:
-        if comparable(offer):
-            peers[cohort_key(offer)].append((offer["eur_per_sqm"], offer["id"]))
-    # Cohorts are sorted once; self is removed before each median comparison.
-    for values in peers.values():
-        values.sort()
+        if comparable(offer) and not offer["analysis"]["risk_flags"]:
+            peers[cohort_key(offer)].append(offer)
     for offer in listings:
         key = cohort_key(offer)
-        values = [price for price, identifier in peers.get(key, []) if identifier != offer["id"]]
-        comparison = {"cohort_key": key, "peer_count": len(values), "eligible": False, "alert_eligible": False, "vat_basis_known": offer["vat_basis"] != "unknown", "construction_year_known": offer["construction_year"] is not None, "construction_cohort_known": offer["construction_cohort"] != "unknown", "reason": "invalid_comparable_fields"}
+        rows, location_basis = peer_sample(offer, peers.get(key, [])) if comparable(offer) else ([], "neighborhood")
+        values = [x["eur_per_sqm"] for x in rows]
+        comparison = {"method_version": COMPARISON_METHOD_VERSION, "cohort_key": key, "peer_count": len(values), "eligible": False, "alert_eligible": False, "vat_basis_known": offer["vat_basis"] != "unknown", "construction_year_known": offer["construction_year"] is not None, "construction_cohort_known": offer["construction_cohort"] != "unknown", "reason": "invalid_comparable_fields"}
+        estimate = {"status": "invalid_inputs", "method_version": COMPARISON_METHOD_VERSION, "peer_count": len(values), "location_basis": location_basis,
+                    "median_eur_per_sqm": None, "p25_eur_per_sqm": None, "p75_eur_per_sqm": None,
+                    "indicated_price_eur": None, "range_low_eur": None, "range_high_eur": None}
         if comparable(offer):
             metrics = stats(values)
             median = statistics.median(values) if values else None
             discount = round((1 - offer["eur_per_sqm"] / median) * 100, 2) if median else None
             comparison.update({**metrics, "peer_count": len(values), "below_median_pct": discount})
             comparison.pop("count", None)
-            if len(values) < MIN_PEERS:
+            if offer["analysis"]["risk_flags"]:
+                comparison["reason"] = "advertised_terms_review"
+                estimate["status"] = "needs_review"
+            elif len(values) < MIN_PEERS:
                 comparison["reason"] = "insufficient_peers"
+                estimate["status"] = "insufficient_comparables"
             elif discount is not None and discount >= EXTREME_DISCOUNT_PCT:
                 comparison["reason"] = "extreme_discount_review"
+                estimate["status"] = "needs_review"
             elif discount is not None and discount >= DEAL_DISCOUNT_PCT:
                 comparison.update({"eligible": True, "reason": "below_peer_asking_median"})
+                estimate["status"] = "available"
             else:
                 comparison["reason"] = "below_threshold"
+                estimate["status"] = "available"
+            if len(values) >= MIN_PEERS and median:
+                low, high = quartile(values, 0.25), quartile(values, 0.75)
+                estimate.update({"median_eur_per_sqm": round(median, 2), "p25_eur_per_sqm": round(low, 2), "p75_eur_per_sqm": round(high, 2),
+                                 "indicated_price_eur": round(median * offer["area_sqm"], 2), "range_low_eur": round(low * offer["area_sqm"], 2), "range_high_eur": round(high * offer["area_sqm"], 2)})
         comparison["alert_eligible"] = comparison["eligible"] and comparison["vat_basis_known"]
         offer["comparison"] = comparison
+        offer["asking_estimate"] = estimate
     previous = previous or {}
     if previous and previous.get("version") != VERSION:
         raise ValueError("Unsupported previous market state")
     prior = previous.get("listings", {})
-    baseline = historical or previous.get("mode") != "daily"
+    initial_baseline = historical or previous.get("mode") != "daily"
+    methodology_changed = previous.get("comparison_method_version") != COMPARISON_METHOD_VERSION
+    baseline = initial_baseline or methodology_changed
     state_rows = {}
     for offer in listings:
-        old = prior.get(offer["id"], {}) if not baseline else {}
+        old = prior.get(offer["id"], {}) if not initial_baseline else {}
         first_seen = old.get("first_seen_at") or offer["observed_at"]
         offer["first_seen_at"] = first_seen
         previous_price = old.get("price_eur")
         same_basis = old.get("vat_basis") == offer["vat_basis"] and old.get("price_currency") == offer["price_currency"] and bool(old.get("price_total_derived", False)) == offer["price_total_derived"]
         area_changed = bool(old) and "area_sqm" in old and old.get("area_sqm") != offer["area_sqm"]
         basis_changed = bool(old) and not same_basis
+        comparison_basis = digest(json_bytes({"cohort": cohort_key(offer), "condition": offer["analysis"]["condition"], "location_key": (offer.get("location") or {}).get("key")}))
+        comparison_basis_changed = bool(old) and old.get("comparison_basis") != comparison_basis
         if offer["price_total_derived"]:
             # An edited area changes the calculated total without a price cut.
             same_basis = same_basis and old.get("area_sqm") == offer["area_sqm"]
@@ -327,17 +415,18 @@ def build_snapshot(capture, output, previous=None):
         else:
             previous_quote, current_quote = previous_price, offer["price_eur"]
         drop = round((1 - current_quote / previous_quote) * 100, 2) if same_basis and previous_quote and current_quote else None
-        change = "historical" if historical else "baseline" if baseline else "new" if not old else "price_drop" if drop and drop > 0 else "became_eligible" if offer["comparison"]["eligible"] and not old.get("eligible") else "unchanged"
-        offer["change"] = {"kind": change, "previous_price_eur": previous_price if same_basis else None, "price_drop_pct": drop if drop and drop > 0 else None, "price_basis_changed": basis_changed, "area_changed": area_changed}
-        if basis_changed or area_changed:
+        change = "historical" if historical else "baseline" if baseline else "new" if not old else "attributes_changed" if comparison_basis_changed else "price_drop" if drop and drop > 0 else "became_eligible" if offer["comparison"]["eligible"] and not old.get("eligible") else "unchanged"
+        offer["change"] = {"kind": change, "previous_price_eur": previous_price if same_basis else None, "price_drop_pct": drop if drop and drop > 0 else None, "price_basis_changed": basis_changed, "area_changed": area_changed, "comparison_basis_changed": comparison_basis_changed}
+        if basis_changed or area_changed or comparison_basis_changed:
             offer["comparison"]["alert_eligible"] = False
         history = list(old.get("price_history", []))
-        observation = {"observed_at": offer["observed_at"], "price_eur": offer["price_eur"], "price_currency": offer["price_currency"], "vat_basis": offer["vat_basis"], "price_total_derived": offer["price_total_derived"], "quoted_eur_per_sqm": offer["quoted_eur_per_sqm"], "area_sqm": offer["area_sqm"]}
-        if not history or any(history[-1].get(field) != observation[field] for field in ("price_eur", "price_currency", "vat_basis", "price_total_derived", "quoted_eur_per_sqm", "area_sqm")):
+        observation = {"observed_at": offer["observed_at"], "price_eur": offer["price_eur"], "price_currency": offer["price_currency"], "vat_basis": offer["vat_basis"], "price_total_derived": offer["price_total_derived"], "quoted_eur_per_sqm": offer["quoted_eur_per_sqm"], "area_sqm": offer["area_sqm"], "area_basis": offer["analysis"]["area_basis"]}
+        if not history or any(history[-1].get(field) != observation[field] for field in ("price_eur", "price_currency", "vat_basis", "price_total_derived", "quoted_eur_per_sqm", "area_sqm", "area_basis")):
             history.append(observation)
         state_rows[offer["id"]] = {"first_seen_at": first_seen, "last_seen_at": offer["observed_at"], "price_eur": offer["price_eur"], "price_currency": offer["price_currency"], "vat_basis": offer["vat_basis"], "price_total_derived": offer["price_total_derived"], "quoted_eur_per_sqm": offer["quoted_eur_per_sqm"], "area_sqm": offer["area_sqm"], "eligible": offer["comparison"]["eligible"], "observation_count": old.get("observation_count", 0) + 1, "price_history": history[-64:]}
+        state_rows[offer["id"]].update({"comparison_basis": comparison_basis, "area_basis": offer["analysis"]["area_basis"]})
     # Inactive IDs and price changes survive for 90 days. Absence is not a sale.
-    if not baseline:
+    if not initial_baseline:
         current_date = datetime.fromisoformat(captured_at.replace("Z", "+00:00")).date()
         for identifier, row in prior.items():
             if identifier in state_rows:
@@ -384,6 +473,12 @@ def build_snapshot(capture, output, previous=None):
     flags = Counter(flag for x in listings for flag in x["quality_flags"])
     counts = {"source_row_count": len(capture["offers"]), "valid_id_row_count": len(normalized), "listing_count": len(listings), "duplicate_row_count": len(normalized) - len(listings), "rejected_id_row_count": rejected, "priced_count": sum(x["price_eur"] is not None for x in listings), "comparable_count": sum(comparable(x) for x in listings), "eligible_count": len(eligible), "daily_candidate_count": len(daily_candidates), "quality_flags": dict(flags)}
     counts["derived_total_count"] = sum(x["price_total_derived"] for x in listings)
+    counts["seller_types"] = dict(Counter(x["seller_type"] for x in listings))
+    counts["location_precisions"] = dict(Counter(x["location"]["precision"] if x["location"] else "unknown" for x in listings))
+    counts["located_count"] = sum(x["location"] is not None for x in listings)
+    counts["description_analyzed_count"] = sum(x["analysis"]["description_analyzed"] for x in listings)
+    counts["asking_estimate_count"] = sum(x["asking_estimate"]["status"] == "available" for x in listings)
+    counts["terms_review_count"] = sum(bool(x["analysis"]["risk_flags"]) for x in listings)
     source_dates = [x["observed_at"] for x in listings if x["observed_at"]]
     sources = capture.get("completion", {}).get("sources", [])
     coverage = {"city_bg": "София", "scope_bg": capture.get("scope_bg") or "Продажби на 2-, 3- и 4-стайни апартаменти; обяви, а не сключени сделки", "construction_year_min": capture.get("scope", {}).get("construction_year_min"), "price_min_eur": capture.get("scope", {}).get("price_min_eur"), "price_scope": capture.get("scope", {}).get("price_scope"), "source_date_min": min(source_dates), "source_date_max": max(source_dates), "captured_source_count": len(sources), "requested_neighborhood_count": capture.get("requested_neighborhood_count"), "captured_neighborhood_count": capture.get("captured_neighborhood_count"), "neighborhood_count": len(neighborhoods), "is_historical": historical, "availability_verified": False, "capture_complete": not historical, "notes_bg": "Исторически импорт от септември 2024 г. Наличността на обявите не е проверена." if historical else "Завършен обход на избраните категории и ценови диапазони. Обява, видяна при обхода, не гарантира наличност."}
@@ -391,7 +486,7 @@ def build_snapshot(capture, output, previous=None):
     totals = {"headline_vat_basis": "included", "headline_priced_count": len(included), **stats([x["eur_per_sqm"] for x in included]), "median_price_eur": round(statistics.median([x["price_eur"] for x in included]), 2) if included else None}
     totals.pop("count", None)
     totals["by_vat_basis"] = vat_statistics([x for x in listings if comparable(x)])
-    history = list(previous.get("summary_history", [])) if not baseline else []
+    history = list(previous.get("summary_history", [])) if not initial_baseline else []
     history_point = {"captured_at": captured_at, "listing_count": len(listings), "headline_priced_count": len(included), "median_eur_per_sqm": totals["median_eur_per_sqm"]}
     history_point["vat_medians"] = {x["vat_basis"]: x["median_eur_per_sqm"] for x in totals["by_vat_basis"]}
     if history and timestamp(history[-1]["captured_at"], date_only=True) == timestamp(captured_at, date_only=True):
@@ -404,14 +499,27 @@ def build_snapshot(capture, output, previous=None):
     vat_count = Counter(x["vat_basis"] for x in listings)
     summary = {"version": VERSION, "snapshot_id": identifier, "generated_at": generated, "captured_at": captured_at, "mode": "historical_bootstrap" if historical else "daily", "coverage": coverage, "counts": counts, "totals": totals, "neighborhoods": neighborhoods,
         "filter_options": {"neighborhoods": [{"key": x["key"], "label_bg": x["label_bg"], "count": x["count"]} for x in neighborhoods], "types": [{"key": key, "label_bg": type_labels[key], "count": count} for key, count in sorted(type_count.items())], "vat_bases": [{"key": key, "label_bg": VAT_LABELS[key], "count": count} for key, count in sorted(vat_count.items())]},
-        "methodology": {"price_basis": "advertised_asking_price", "currency": "EUR", "bgn_per_eur": BGN_PER_EUR, "minimum_peer_count": MIN_PEERS, "deal_discount_pct": DEAL_DISCOUNT_PCT, "extreme_discount_pct": EXTREME_DISCOUNT_PCT, "peer_fields": ["neighborhood_key", "type_key", "vat_basis", "construction_cohort"], "comparison_excludes_self": True, "trimmed_mean_each_tail_pct": 10, "trimmed_mean_min_count": 20,
+        "methodology": {"method_version": COMPARISON_METHOD_VERSION, "price_basis": "advertised_asking_price", "currency": "EUR", "bgn_per_eur": BGN_PER_EUR, "minimum_peer_count": MIN_PEERS, "deal_discount_pct": DEAL_DISCOUNT_PCT, "extreme_discount_pct": EXTREME_DISCOUNT_PCT, "peer_fields": ["neighborhood_key", "type_key", "vat_basis", "construction_cohort", "completion_stage", "area_basis", "floor_band"], "area_tolerance_pct": AREA_TOLERANCE * 100, "condition_when_known": True, "street_sample_minimum": MIN_PEERS, "comparison_excludes_self": True, "trimmed_mean_each_tail_pct": 10, "trimmed_mean_min_count": 20,
             "notes_bg": ["Сравняваме офертни цени, а не продажни сделки или оценка на имота.", "Референтната група е същият квартал, тип апартамент, ДДС и година на строеж преди/от 2021 г. Неизвестните години и неизвестният ДДС образуват отделни групи.", "Самата обява е изключена от референтната медиана. Нужни са поне 8 други обяви.", "Годината на строеж и площта са заявени от рекламодателя. Групата с неизвестна година може да съдържа различни възрасти на сградите. Няма автоматично свързване с кадастър или официален Акт 16.", "Една обява се брои веднъж по ID. Различни обяви за един физически имот може да останат отделни.", "Средните стойности в заглавните показатели включват само цените с включен/неначисляван ДДС. Цени без или с неизвестен ДДС не се смесват с тях.", "Неизвестният ДДС позволява само сравнение с други цени с неизвестен ДДС. Тези сравнения не предполагат крайна цена и по подразбиране не изпращат известия.", "При обявена цена за кв.м общата сума се изчислява като тази цена × обявената площ и е отбелязана като изчислена. Промяна на площта или ценовата база не създава известие за намалена цена.", "Липсваща валута не се предполага. Не начисляваме ДДС автоматично."]},
         "top_offers": eligible[:30], "daily_candidates": daily_candidates[:50], "daily_candidates_total": len(daily_candidates), "history": {"baseline": baseline, "alert_baseline_at": captured_at if baseline else previous.get("alert_baseline_at"), "same_day_refresh": same_capture_date, "series": history[-180:], "notes_bg": "До 180 завършени дневни снимки. Историята на отделна обява пази до 64 промени в цената за 90 дни; отсъствието не означава продажба."}}
+    summary["history"]["methodology_changed"] = methodology_changed
+    summary["coverage"]["enrichment"] = capture.get("enrichment", {})
+    summary["coverage"]["location_reference_date"] = resolver.reference_date
+    summary["coverage"]["location_source_url"] = "https://kais.cadastre.bg/bg/OpenData"
+    summary["filter_options"]["sellers"] = [{"key": key, "count": count} for key, count in sorted(counts["seller_types"].items())]
+    summary["filter_options"]["precisions"] = [{"key": key, "count": count} for key, count in sorted(counts["location_precisions"].items())]
+    summary["methodology"]["notes_bg"][1] = "Референтната група е същият квартал, тип, ДДС, възрастова група, заявен етап, база на площта и етажна група. Площите са в рамките на ±25%; при известно състояние сравняваме същото състояние. При поне 8 подходящи обяви на същата референтна улица използваме тях, иначе квартала."
+    summary["methodology"]["notes_bg"].extend([
+        "Ориентирът е медиана на сравними офертни цени × заявената площ. Диапазонът е между 25-ия и 75-ия персентил на тези обяви; не е доверителен интервал или експертна оценка на пазарна стойност.",
+        "Текстовите признаци са заявления на рекламодателя. Дялове, търгове, наематели, нежилищен статут и задължителни доплащания изискват проверка и изключват автоматичното определяне като възможност.",
+        "Показаното местоположение е обобщена референтна зона на улица или квартал от кадастралните отворени данни. Не е местоположение на конкретен апартамент. Не използваме адреса на офиса на агенцията.",
+        "Профил на агенция означава брокер/агенция; частен продавач се отбелязва само при изрично заявление. Липсата на профил не доказва частен продавач."
+    ])
     audit = dict(capture.get("audit", {}))
     full_completion = capture.get("completion", {})
     if not historical:
         audit["completion"] = full_completion
-    state = {"version": VERSION, "snapshot_id": identifier, "mode": summary["mode"], "captured_at": captured_at, "alert_baseline_at": summary["history"]["alert_baseline_at"], "listings": state_rows, "summary_history": history[-180:], "audit": audit}
+    state = {"version": VERSION, "snapshot_id": identifier, "mode": summary["mode"], "captured_at": captured_at, "comparison_method_version": COMPARISON_METHOD_VERSION, "alert_baseline_at": summary["history"]["alert_baseline_at"], "listings": state_rows, "summary_history": history[-180:], "audit": audit, "enrichment_cache": capture.get("enrichment_cache", {})}
     root = Path(output)
     folder = root / "market-snapshots" / identifier
     folder.mkdir(parents=True, exist_ok=False)

@@ -10,8 +10,63 @@ set_error_handler(static function (int $severity, string $message, string $file,
 });
 
 const MARKET_MAX_LISTINGS = 50000;
-const MARKET_MAX_SHARDS = 256;
-const MARKET_PUBLIC_FIELDS = ['id', 'url', 'neighborhood_key', 'neighborhood_bg', 'type_key', 'type_bg', 'area_sqm', 'price_eur', 'eur_per_sqm', 'price_currency', 'vat_basis', 'construction_year', 'construction_cohort', 'last_modified_at', 'observed_at', 'first_seen_at', 'comparison', 'change', 'historical', 'quality_flags', 'floor_bg', 'construction_label_bg', 'address_bg', 'price_total_derived', 'quoted_eur_per_sqm'];
+const MARKET_MAX_SHARDS = 512;
+const MARKET_PUBLIC_FIELDS = ['id', 'url', 'neighborhood_key', 'neighborhood_bg', 'type_key', 'type_bg', 'area_sqm', 'price_eur', 'eur_per_sqm', 'price_currency', 'vat_basis', 'construction_year', 'construction_cohort', 'last_modified_at', 'observed_at', 'first_seen_at', 'comparison', 'change', 'historical', 'quality_flags', 'floor_bg', 'construction_label_bg', 'address_bg', 'price_total_derived', 'quoted_eur_per_sqm', 'seller_type', 'seller_evidence', 'seller_checked_at', 'location', 'analysis', 'asking_estimate'];
+
+function market_optional_text($value, int $limit): bool {
+    return $value === null || (is_string($value) && strlen($value) <= $limit && preg_match('//u', $value) === 1);
+}
+
+function market_finite_number($value, float $minimum, float $maximum): bool {
+    return (is_int($value) || is_float($value)) && is_finite((float)$value) && $value >= $minimum && $value <= $maximum;
+}
+
+function market_location($value): void {
+    if ($value === null) return;
+    $fields = ['key', 'lat', 'lng', 'precision', 'label_bg', 'radius_m', 'method', 'source_url', 'reference_date', 'evidence'];
+    if (!is_array($value) || array_diff(array_keys($value), $fields) !== []
+        || !is_string($value['key'] ?? null) || !preg_match('/^[a-zA-Z0-9_.:-]{1,160}$/', $value['key'])
+        || !market_finite_number($value['lat'] ?? null, 41, 44.5) || !market_finite_number($value['lng'] ?? null, 22, 29)
+        || !in_array($value['precision'] ?? null, ['address', 'street', 'neighborhood'], true)
+        || !is_string($value['label_bg'] ?? null) || !market_optional_text($value['label_bg'], 600)
+        || !market_finite_number($value['radius_m'] ?? null, 1, 50000)
+        || !in_array($value['method'] ?? null, ['cadastre_street_reference', 'cadastre_neighborhood_reference'], true)
+        || !in_array($value['evidence'] ?? null, ['listed_address', 'description_street', 'listed_neighborhood'], true)
+        || !market_optional_text($value['reference_date'] ?? null, 80)
+        || !is_string($value['source_url'] ?? null)) throw new RuntimeException('Market reference location is invalid.');
+    $source = parse_url($value['source_url']);
+    if (!is_array($source) || ($source['scheme'] ?? '') !== 'https' || ($source['host'] ?? '') !== 'kais.cadastre.bg'
+        || isset($source['user']) || isset($source['pass']) || isset($source['port']) || strlen($value['source_url']) > 1200) throw new RuntimeException('Market location source is invalid.');
+}
+
+function market_analysis($value): void {
+    if ($value === null) return;
+    $fields = ['completion_stage', 'condition', 'area_basis', 'risk_flags', 'checked_at', 'description_analyzed'];
+    if (!is_array($value) || array_diff(array_keys($value), $fields) !== []
+        || !in_array($value['completion_stage'] ?? null, ['planned', 'completed', 'unknown'], true)
+        || !in_array($value['condition'] ?? null, ['renovated', 'needs_renovation', 'unknown'], true)
+        || !in_array($value['area_basis'] ?? null, ['net', 'gross', 'terrace_included', 'unknown'], true)
+        || !is_bool($value['description_analyzed'] ?? null) || !market_optional_text($value['checked_at'] ?? null, 80)
+        || !is_array($value['risk_flags'] ?? null) || !array_is_list($value['risk_flags']) || count($value['risk_flags']) > 5
+        || array_diff($value['risk_flags'], ['share_sale', 'auction', 'tenanted', 'nonresidential', 'mandatory_extra_cost']) !== []) throw new RuntimeException('Market text analysis is invalid.');
+}
+
+function market_estimate($value): void {
+    if ($value === null) return;
+    $fields = ['status', 'method_version', 'peer_count', 'median_eur_per_sqm', 'p25_eur_per_sqm', 'p75_eur_per_sqm', 'indicated_price_eur', 'range_low_eur', 'range_high_eur', 'location_basis'];
+    if (!is_array($value) || array_diff(array_keys($value), $fields) !== []
+        || !in_array($value['status'] ?? null, ['available', 'insufficient_comparables', 'needs_review', 'invalid_inputs'], true)
+        || ($value['method_version'] ?? null) !== 2 || !is_int($value['peer_count'] ?? null) || $value['peer_count'] < 0 || $value['peer_count'] > MARKET_MAX_LISTINGS
+        || !in_array($value['location_basis'] ?? null, ['street', 'neighborhood', null], true)) throw new RuntimeException('Market asking-price estimate is invalid.');
+    foreach (['median_eur_per_sqm', 'p25_eur_per_sqm', 'p75_eur_per_sqm', 'indicated_price_eur', 'range_low_eur', 'range_high_eur'] as $field) {
+        if (($value[$field] ?? null) !== null && !market_finite_number($value[$field], 0.000001, 1e12)) throw new RuntimeException('Market asking-price range is invalid.');
+    }
+    if ($value['status'] === 'available' && ($value['peer_count'] < 8
+        || !market_finite_number($value['indicated_price_eur'] ?? null, 0.000001, 1e12)
+        || !market_finite_number($value['range_low_eur'] ?? null, 0.000001, 1e12)
+        || !market_finite_number($value['range_high_eur'] ?? null, 0.000001, 1e12)
+        || $value['range_low_eur'] > $value['range_high_eur'])) throw new RuntimeException('Market available estimate is inconsistent.');
+}
 
 function market_respond(array $body, int $status = 200): void {
     http_response_code($status);
@@ -91,6 +146,12 @@ function market_offer($row): array {
         || !in_array($row['vat_basis'] ?? null, ['included', 'excluded', 'unknown'], true)
         || !is_bool($row['historical'] ?? null) || !is_array($row['comparison'] ?? null) || !is_array($row['change'] ?? null)) throw new RuntimeException('Public market offer is invalid.');
     if (isset($row['price_total_derived']) && !is_bool($row['price_total_derived'])) throw new RuntimeException('Market price basis is invalid.');
+    if (isset($row['seller_type']) && !in_array($row['seller_type'], ['agency', 'private', 'unknown'], true)) throw new RuntimeException('Market seller type is invalid.');
+    if (isset($row['seller_evidence']) && !in_array($row['seller_evidence'], ['agency_profile', 'explicit_private_claim', 'not_reported', 'conflicting_signals'], true)) throw new RuntimeException('Market seller evidence is invalid.');
+    if (!market_optional_text($row['seller_checked_at'] ?? null, 80)) throw new RuntimeException('Market seller date is invalid.');
+    market_location($row['location'] ?? null);
+    market_analysis($row['analysis'] ?? null);
+    market_estimate($row['asking_estimate'] ?? null);
     foreach (['area_sqm', 'price_eur', 'eur_per_sqm', 'quoted_eur_per_sqm'] as $key) {
         $value = $row[$key] ?? null;
         if ($value !== null && ((!is_float($value) && !is_int($value)) || !is_finite((float)$value) || $value <= 0 || $value > 1e12)) throw new RuntimeException('Market numeric field is invalid.');
@@ -127,6 +188,12 @@ function market_listing_filters(array $summary): array {
         if ($value !== '' && !in_array($value, array_column($summary['filter_options'][$dimension] ?? [], 'key'), true)) throw new InvalidArgumentException('Unknown market filter.');
         $filters[$parameter] = $value;
     }
+    $filters['seller'] = market_filter_string('seller', 20);
+    if (!in_array($filters['seller'], ['', 'agency', 'private', 'unknown'], true)) throw new InvalidArgumentException('Invalid seller filter.');
+    $filters['precision'] = market_filter_string('precision', 20);
+    if (!in_array($filters['precision'], ['', 'address', 'street', 'neighborhood', 'unknown'], true)) throw new InvalidArgumentException('Invalid location filter.');
+    $filters['location_key'] = market_filter_string('location_key', 160);
+    if ($filters['location_key'] !== '' && !preg_match('/^[a-zA-Z0-9_.:-]{1,160}$/', $filters['location_key'])) throw new InvalidArgumentException('Invalid reference-area filter.');
     foreach (['min_area', 'max_area'] as $key) $filters[$key] = market_number($key, 100000);
     foreach (['min_price', 'max_price'] as $key) $filters[$key] = market_number($key, 1e10);
     $filters['min_discount'] = market_number('min_discount', 100);
@@ -148,6 +215,9 @@ function market_listing_filters(array $summary): array {
 
 function market_matches(array $row, array $filters): bool {
     foreach (['neighborhood' => 'neighborhood_key', 'type' => 'type_key', 'vat' => 'vat_basis'] as $parameter => $field) if ($filters[$parameter] !== '' && $row[$field] !== $filters[$parameter]) return false;
+    if ($filters['seller'] !== '' && ($row['seller_type'] ?? 'unknown') !== $filters['seller']) return false;
+    if ($filters['precision'] !== '' && ($row['location']['precision'] ?? 'unknown') !== $filters['precision']) return false;
+    if ($filters['location_key'] !== '' && ($row['location']['key'] ?? '') !== $filters['location_key']) return false;
     foreach (['area' => 'area_sqm', 'price' => 'price_eur'] as $range => $field) {
         if ($filters['min_' . $range] !== null && ($row[$field] === null || $row[$field] < $filters['min_' . $range])) return false;
         if ($filters['max_' . $range] !== null && ($row[$field] === null || $row[$field] > $filters['max_' . $range])) return false;
@@ -173,6 +243,101 @@ function market_shard(string $folder, array $descriptor, string $id): array {
     return $data['listings'];
 }
 
+function market_coordinate(string $key, float $minimum, float $maximum): float {
+    $raw = market_filter_string($key, 40);
+    if ($raw === '' || !preg_match('/^-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/', $raw)) throw new InvalidArgumentException('Invalid map bounds.');
+    $value = (float)$raw;
+    if (!is_finite($value) || $value < $minimum || $value > $maximum) throw new InvalidArgumentException('Map bounds are out of range.');
+    return $value;
+}
+
+function market_viewport(string $folder, array $manifest, array $summary, array $filters): void {
+    $north = market_coordinate('north', -85, 85);
+    $south = market_coordinate('south', -85, 85);
+    $west = market_coordinate('west', -180, 180);
+    $east = market_coordinate('east', -180, 180);
+    if ($north < $south || $east < $west) throw new InvalidArgumentException('Map bounds are reversed.');
+    $zoom = market_integer('zoom', 12, 19);
+    $groups = [];
+    $seen = [];
+    $total = 0;
+    $located = 0;
+    $viewportTotal = 0;
+    foreach ($manifest['listing_shards'] as $descriptor) {
+        $rows = market_shard($folder, $descriptor, $manifest['snapshot_id']);
+        foreach ($rows as $raw) {
+            $row = market_offer($raw);
+            if (isset($seen[$row['id']])) throw new RuntimeException('Duplicate market offer ID.');
+            $seen[$row['id']] = true;
+            if (!market_matches($row, $filters)) continue;
+            $total++;
+            $location = $row['location'] ?? null;
+            if ($location === null) continue;
+            $located++;
+            if ($location['lat'] < $south || $location['lat'] > $north || $location['lng'] < $west || $location['lng'] > $east) continue;
+            $viewportTotal++;
+            $key = $location['key'];
+            if (!isset($groups[$key])) {
+                if (count($groups) >= 10000) throw new RuntimeException('Market reference-area limit exceeded.');
+                $groups[$key] = ['kind' => 'reference', 'location' => $location, 'lat' => $location['lat'], 'lng' => $location['lng'], 'count' => 0, 'eligible_count' => 0, 'seller_counts' => ['agency' => 0, 'private' => 0, 'unknown' => 0]];
+            } else {
+                foreach (['lat', 'lng', 'precision', 'label_bg', 'radius_m', 'method', 'source_url', 'reference_date'] as $field) {
+                    if (($groups[$key]['location'][$field] ?? null) != ($location[$field] ?? null)) throw new RuntimeException('Market reference-area definitions conflict.');
+                }
+            }
+            $groups[$key]['count']++;
+            if (($row['comparison']['eligible'] ?? false) === true) $groups[$key]['eligible_count']++;
+            $groups[$key]['seller_counts'][$row['seller_type'] ?? 'unknown']++;
+        }
+        unset($rows, $raw, $row);
+    }
+    if (count($seen) !== $manifest['counts']['listing_count']) throw new RuntimeException('Market listing totals are inconsistent.');
+    unset($seen);
+    // Aggregate reference centers, never inferred property positions. Coarsen as needed;
+    // no result truncation and no coordinate jitter for overlapping reference areas.
+    $level = min(17, $zoom);
+    do {
+        $cells = [];
+        $scale = (256 * (2 ** $level)) / 100;
+        foreach ($groups as $key => $group) {
+            $x = (int)floor(($group['lng'] + 180) / 360 * $scale);
+            $latitude = max(-85.0, min(85.0, (float)$group['lat'])) * M_PI / 180;
+            $y = (int)floor((1 - log(tan($latitude) + 1 / cos($latitude)) / M_PI) / 2 * $scale);
+            $cellKey = $x . ':' . $y;
+            if (!isset($cells[$cellKey])) $cells[$cellKey] = [];
+            $cells[$cellKey][] = $key;
+        }
+        if (count($cells) <= 800 || $level <= 1) break;
+        $level--;
+    } while (true);
+    $items = [];
+    foreach ($cells as $cellKey => $keys) {
+        if (count($keys) === 1) { $items[] = $groups[$keys[0]]; continue; }
+        $item = ['kind' => 'cluster', 'key' => $level . ':' . $cellKey, 'count' => 0, 'eligible_count' => 0, 'reference_count' => count($keys), 'lat' => 0.0, 'lng' => 0.0,
+            'bounds' => ['south' => 85.0, 'north' => -85.0, 'west' => 180.0, 'east' => -180.0], 'precision_counts' => ['address' => 0, 'street' => 0, 'neighborhood' => 0], 'references' => []];
+        foreach ($keys as $key) {
+            $group = $groups[$key];
+            $item['count'] += $group['count'];
+            $item['eligible_count'] += $group['eligible_count'];
+            $item['lat'] += $group['lat'] * $group['count'];
+            $item['lng'] += $group['lng'] * $group['count'];
+            $item['bounds']['south'] = min($item['bounds']['south'], $group['lat']);
+            $item['bounds']['north'] = max($item['bounds']['north'], $group['lat']);
+            $item['bounds']['west'] = min($item['bounds']['west'], $group['lng']);
+            $item['bounds']['east'] = max($item['bounds']['east'], $group['lng']);
+            $item['precision_counts'][$group['location']['precision']] += $group['count'];
+            // Overlapping reference centers remain selectable at maximum zoom.
+            // At lower zoom, the cluster's bounds provide the next navigation step.
+            if ($zoom >= 17) $item['references'][] = ['key' => $key, 'label_bg' => $group['location']['label_bg'], 'precision' => $group['location']['precision'], 'count' => $group['count']];
+        }
+        $item['lat'] /= $item['count'];
+        $item['lng'] /= $item['count'];
+        $items[] = $item;
+    }
+    market_respond(['snapshot_id' => $summary['snapshot_id'], 'captured_at' => $summary['captured_at'], 'mode' => $summary['mode'], 'total' => $total, 'located_total' => $located,
+        'unlocated_total' => $total - $located, 'viewport_total' => $viewportTotal, 'zoom' => $level, 'items' => $items]);
+}
+
 try {
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') { header('Allow: GET'); market_respond(['error' => 'method_not_allowed'], 405); }
     [$folder, $manifest, $summary] = market_snapshot();
@@ -182,8 +347,9 @@ try {
         $allowed = ['snapshot_id', 'generated_at', 'captured_at', 'mode', 'coverage', 'counts', 'methodology', 'totals', 'neighborhoods', 'filter_options', 'top_offers', 'daily_candidates', 'daily_candidates_total', 'history'];
         market_respond(array_intersect_key($summary, array_fill_keys($allowed, true)));
     }
-    if ($action !== 'listings') market_respond(['error' => 'unknown_action'], 404);
+    if (!in_array($action, ['listings', 'viewport'], true)) market_respond(['error' => 'unknown_action'], 404);
     $filters = market_listing_filters($summary);
+    if ($action === 'viewport') market_viewport($folder, $manifest, $summary, $filters);
     $references = [];
     $seen = [];
     foreach ($manifest['listing_shards'] as $shardIndex => $descriptor) {

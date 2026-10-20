@@ -52,6 +52,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RECOVERY_RUN_ID: ${{ inputs.reuse_capture_run_id }}
         run: python scripts/recover_imot_capture.py --run "$RECOVERY_RUN_ID" --output seed/daily/capture.json
+      - name: Analyze seller and property text with a bounded incremental detail pass
+        run: python scripts/imot_enrichment.py --input seed/daily/capture.json --previous-state seed/daily/previous-state.json --output seed/daily/capture-enriched.json --limit 400
       - name: Preserve private source evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v6
@@ -59,11 +61,12 @@ jobs:
           name: imot-source-evidence-${{ github.run_id }}
           path: |
             seed/daily/capture.json
+            seed/daily/capture-enriched.json
             seed/daily/capture-progress.json
           if-no-files-found: ignore
           retention-days: 31
       - name: Build peer comparisons and daily changes
-        run: python scripts/imot_market.py --input seed/daily/capture.json --previous-state seed/daily/previous-state.json --output seed/daily/publish
+        run: python scripts/imot_market.py --input seed/daily/capture-enriched.json --previous-state seed/daily/previous-state.json --output seed/daily/publish
       - name: Validate every prepared file and stable listing ID
         run: python scripts/deploy_imot_ftps.py validate --input seed/daily/publish
       - name: Preserve complete private prepared snapshot
@@ -95,7 +98,10 @@ jobs:
               output.write(f"Capture: {summary['captured_at']}\n\n")
               output.write(f"Listings: {summary['counts']['listing_count']:,}\n\n")
               output.write(f"New daily candidates: {summary['daily_candidates_total']:,}\n\n")
+              output.write(f"Approximate street/quarter locations: {summary['counts'].get('located_count', 0):,}\n\n")
+              output.write(f"Full descriptions analyzed (current valid cache): {summary['counts'].get('description_analyzed_count', 0):,}; incremental budget 400 per run.\n\n")
+              output.write(f"Seller labels: {summary['counts'].get('seller_types', {})}\n\n")
               if os.environ.get('RECOVERY_RUN_ID'):
                   output.write(f"Source capture recovered from completed daily run {os.environ['RECOVERY_RUN_ID']}; the original source timestamps are preserved.\n\n")
-              output.write('Asking prices, not sale transactions. First complete live capture establishes an alert baseline.\n')
+              output.write('Asking-price estimates, not transaction valuations. First complete live capture or a changed comparison method establishes an alert baseline. Approximate locations are reference areas, not verified property positions.\n')
           PY

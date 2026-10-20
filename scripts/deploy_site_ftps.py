@@ -24,6 +24,7 @@ REMOTE_ROOT = "/htdocs"
 MAX_FILE_BYTES = 10_000_000
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
 STATIC_NAMES = frozenset({"about.html", "privacy.html", "robots.txt", "sitemap.xml"})
+REFERENCE_NAME = "data/market-georeference.json"
 ASSET_EXTENSIONS = frozenset({
     ".js", ".mjs", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif",
     ".webp", ".avif", ".ico", ".woff", ".woff2", ".ttf", ".otf", ".wasm",
@@ -38,7 +39,7 @@ def digest(payload: bytes) -> str:
 
 
 def allowed_relative(relative: str) -> bool:
-    if relative == "index.html" or relative in STATIC_NAMES or GOOGLE_VERIFICATION.fullmatch(relative) is not None:
+    if relative == "index.html" or relative == REFERENCE_NAME or relative in STATIC_NAMES or GOOGLE_VERIFICATION.fullmatch(relative) is not None:
         return True
     path = PurePosixPath(relative)
     parts = path.parts
@@ -108,6 +109,9 @@ def planned_files(directory: Path) -> list[tuple[str, bytes]]:
                 raise ValueError("Google verification file content does not match its filename")
         statics.append((name, payload))
 
+    reference = root / REFERENCE_NAME
+    if reference.exists():
+        statics.append((REFERENCE_NAME, read_local(reference, root)))
     plan = sorted(assets) + sorted(statics) + [("index.html", entry_payload)]
     if sum(len(payload) for _, payload in plan) > MAX_TOTAL_BYTES:
         raise ValueError("Static deployment exceeds the 64 MiB total byte limit")
@@ -134,7 +138,7 @@ def verify_remote(ftp: FTP_TLS, remote: str, payload: bytes) -> None:
 
 def ensure_directory(ftp: FTP_TLS, directory: str) -> None:
     """Create asset directories only, preserving all existing hosting files."""
-    if directory != f"{REMOTE_ROOT}/assets" and not directory.startswith(f"{REMOTE_ROOT}/assets/"):
+    if directory != f"{REMOTE_ROOT}/data" and directory != f"{REMOTE_ROOT}/assets" and not directory.startswith(f"{REMOTE_ROOT}/assets/"):
         raise ValueError("Only approved asset directories can be created")
     parent = REMOTE_ROOT
     for component in directory[len(REMOTE_ROOT) + 1:].split("/"):
@@ -153,7 +157,7 @@ def publish_file(ftp: FTP_TLS, relative: str, payload: bytes) -> None:
     if not allowed_relative(relative):
         raise ValueError("Refusing to publish a file outside the static allowlist")
     remote = f"{REMOTE_ROOT}/{relative}"
-    if relative.startswith("assets/"):
+    if relative.startswith("assets/") or relative == REFERENCE_NAME:
         ensure_directory(ftp, posixpath.dirname(remote))
     temporary = f"{remote}.{uuid4().hex}.pending"
     ftp.storbinary(f"STOR {temporary}", io.BytesIO(payload))
