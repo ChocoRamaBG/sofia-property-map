@@ -94,8 +94,14 @@ def capture_bytes(session, artifact):
     archive.seek(0)
     with zipfile.ZipFile(archive) as zipped:
         names = [member.filename for member in zipped.infolist()]
-        if len(names) != len(set(names)) or set(names) - {"capture.json", "capture-progress.json"} or names.count("capture.json") != 1:
+        allowed_names = {"capture.json", "capture-progress.json", "capture-enriched.json"}
+        if len(names) != len(set(names)) or set(names) - allowed_names or names.count("capture.json") != 1:
             raise ValueError("Artifact contains unexpected, duplicate or unsafe ZIP members")
+        for candidate in zipped.infolist():
+            if candidate.is_dir() or stat.S_ISLNK(candidate.external_attr >> 16) or candidate.flag_bits & 1 or not 1 <= candidate.file_size <= MAX_CAPTURE_BYTES:
+                raise ValueError("Artifact member is linked, encrypted or oversized")
+        # Optional derived enrichment is permitted as evidence but never reused:
+        # recovery always runs the current enrichment pass on the source census.
         member = zipped.getinfo("capture.json")
         if member.is_dir() or stat.S_ISLNK(member.external_attr >> 16) or member.flag_bits & 1 or not 1 <= member.file_size <= MAX_CAPTURE_BYTES:
             raise ValueError("Exact capture.json member is linked, encrypted or oversized")

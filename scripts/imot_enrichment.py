@@ -77,6 +77,14 @@ def location_hints(value, source="card"):
     """Only explicit street introductions; office blocks never reach this input."""
     answer, seen = [], set()
     for match in STREET.finditer(value):
+        context = value[max(0, match.start() - 110):match.start()].casefold()
+        clause = re.split(r"[!?;]", context)[-1]
+        if re.search(r"\b(?:офис|офисът|офиса|кантора|кантората|агенцията|агенция|представителство|контакти)\b", clause):
+            continue
+        # A street mentioned in marketing text can be an amenity or an office.
+        # Structural property addresses also resolve independently from address_bg.
+        if not re.search(r"(?:\b(?:на|в)\s*$|(?:намира|разположен|разположена|разположено|находящ|находяща|находящо|адрес)\b[^.!?;]{0,45}$)", clause):
+            continue
         tail = value[match.end():match.end() + 140]
         # Stop before a new sentence, prose clause, a contact or another fact.
         name = re.split(r"[,;:()\n\r!?\"„“”«»]|\s+(?:№|номер|на|до|се|с|е|в|от|етаж|ет\.|тел\.?|телефон|апартамент|където|която|който)\b", tail, maxsplit=1, flags=re.I)[0]
@@ -91,8 +99,7 @@ def location_hints(value, source="card"):
         if house_number is None:
             numbered = re.match(r"[\s„\"'«»“”]*\s*(?:№|номер)\s*(\d{1,4}[А-Яа-яA-Za-z]?)\b", after_name, re.I)
             house_number = numbered[1] if numbered else None
-        context = value[max(0, match.start() - 70):match.start()].casefold()
-        nearby = bool(re.search(r"(?:близо|близост|метр[аи]|минути|пеша|пешеход|непосредствено\s+до|(?:^|\s)до|около|срещу|недалеч)\b", context))
+        nearby = bool(re.search(r"(?:близо|близост|метр[аи]|минути|пеша|пешеход|непосредствено\s+до|(?:^|\s)до|около|срещу|недалеч|между|пресечка|лице|изглед|гледка)\b", context[-70:]))
         key = (name.casefold(), house_number, nearby)
         if key not in seen:
             seen.add(key)

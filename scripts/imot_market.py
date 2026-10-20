@@ -37,11 +37,14 @@ VAT_LABELS = {"included": "Включен ДДС / не се начислява"
 def normalized_analysis(raw, label, checked_at):
     source = raw.get("analysis") if isinstance(raw.get("analysis"), dict) else {}
     stage = source.get("completion_stage", "unknown")
+    stated_stage = "unknown"
     label = (label or "").casefold()
     if re.search(r"ще\s+бъде|планиран|в строеж|в процес|на проект|акт\s*1[45]", label):
-        stage = "planned"
+        stated_stage = "planned"
     elif re.search(r"въведен[ао]?\s+в\s+експлоатация|завършен", label):
-        stage = "completed"
+        stated_stage = "completed"
+    conflict = stage in {"planned", "completed"} and stated_stage in {"planned", "completed"} and stage != stated_stage
+    stage = "unknown" if conflict else stated_stage if stated_stage != "unknown" else stage
     allowed = {
         "completion_stage": {"planned", "completed", "unknown"},
         "condition": {"renovated", "needs_renovation", "unknown"},
@@ -53,7 +56,7 @@ def normalized_analysis(raw, label, checked_at):
     answer["risk_flags"] = sorted({x for x in source.get("risk_flags", []) if isinstance(x, str) and x in risks})
     answer["checked_at"] = timestamp(source.get("checked_at")) or checked_at
     answer["description_analyzed"] = source.get("description_analyzed") is True
-    return answer
+    return answer, conflict
 
 
 def floor_band(value):
@@ -153,7 +156,9 @@ def normalize_offer(raw, default_observed, historical, resolver=None):
     evidence = raw.get("seller_evidence")
     if (seller, evidence) not in {("agency", "agency_profile"), ("private", "explicit_private_claim"), ("unknown", "not_reported"), ("unknown", "conflicting_signals")}:
         seller, evidence = "unknown", "not_reported"
-    analysis = normalized_analysis(raw, construction_label, observed)
+    analysis, conflicting_completion = normalized_analysis(raw, construction_label, observed)
+    if conflicting_completion:
+        quality.append("conflicting_completion_claims")
     location = resolver.resolve(neighborhood_bg=neighborhood, address_bg=raw.get("address_bg"), location_hints=raw.get("location_hints")) if resolver else None
     return {
         "id": identifier, "url": url,
