@@ -1,6 +1,12 @@
 .offers-map-workspace { min-width: 0; }
 .offers-map-intro { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 15px; color: #7c8d7a; font-size: 11px; line-height: 1.8; }
 .offers-map-intro > svg { flex-shrink: 0; margin-top: 3px; color: #ad8b59; }
+.offers-map-target-label { display: flex; align-items: flex-start; gap: 7px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid #e5d8bd; border-radius: 7px; color: #a0875c; background: #fcf8ee; font-size: 10px; line-height: 1.8; }
+.offers-map-target-label > svg { flex-shrink: 0; margin-top: 2px; }
+.offers-map-target-label strong { font-weight: 600; color: #8d7248; }
+.offers-map-target-label > span { flex: 1; }
+.offers-map-target-label > button { display: flex; align-items: center; gap: 5px; margin: -5px -4px -5px 5px; min-height: 36px; padding: 4px 7px; flex-shrink: 0; border-radius: 4px; color: #8d7248; font-size: 10px; line-height: 1.7; }
+.offers-map-target-label > button:hover { background: #f1e8d5; }
 .offers-map-canvas { position: relative; height: 550px; min-height: 360px; border: 1px solid #dbe5d8; border-radius: 10px; overflow: hidden; isolation: isolate; }
 .offers-leaflet-map { width: 100%; height: 100%; background: #e9eee1; }
 .offers-reference-icon { background: transparent; border: none; }
@@ -35,3 +41,4 @@
 .offers-map-legend i.is-street { background: #b66c35; }
 .offers-map-legend i.has-deals { background: #e9ba52; border: 2px solid #e1d7bb; }
 @media (max-width: 760px) { .offers-map-canvas { height: 470px; } .offers-map-intro { font-size: 10px; } }
+@media (max-width: 520px) { .offers-map-target-label { flex-wrap: wrap; } .offers-map-target-label > button { margin-left: 13px; } }

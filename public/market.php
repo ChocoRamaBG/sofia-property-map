@@ -26,14 +26,15 @@ function market_location($value): void {
     $fields = ['key', 'lat', 'lng', 'precision', 'label_bg', 'radius_m', 'method', 'source_url', 'reference_date', 'evidence'];
     if (!is_array($value) || array_diff(array_keys($value), $fields) !== []
         || !is_string($value['key'] ?? null) || !preg_match('/^[a-zA-Z0-9_.:-]{1,160}$/', $value['key'])
-        || !market_finite_number($value['lat'] ?? null, 41, 44.5) || !market_finite_number($value['lng'] ?? null, 22, 29)
-        || !in_array($value['precision'] ?? null, ['address', 'street', 'neighborhood'], true)
+        || !market_finite_number($value['lat'] ?? null, 42.4, 43) || !market_finite_number($value['lng'] ?? null, 22.8, 24)
+        || !in_array($value['precision'] ?? null, ['street', 'neighborhood'], true)
         || !is_string($value['label_bg'] ?? null) || !market_optional_text($value['label_bg'], 600)
-        || !market_finite_number($value['radius_m'] ?? null, 1, 50000)
+        || !market_finite_number($value['radius_m'] ?? null, 200, 12000)
         || !in_array($value['method'] ?? null, ['cadastre_street_reference', 'cadastre_neighborhood_reference'], true)
         || !in_array($value['evidence'] ?? null, ['listed_address', 'description_street', 'listed_neighborhood'], true)
-        || !market_optional_text($value['reference_date'] ?? null, 80)
-        || !is_string($value['source_url'] ?? null)) throw new RuntimeException('Market reference location is invalid.');
+        || !is_string($value['reference_date'] ?? null) || !preg_match('/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/', $value['reference_date'])
+        || ($value['method'] ?? null) !== 'cadastre_' . $value['precision'] . '_reference'
+        || ($value['source_url'] ?? null) !== 'https://kais.cadastre.bg/bg/OpenData') throw new RuntimeException('Market reference location is invalid.');
     $source = parse_url($value['source_url']);
     if (!is_array($source) || ($source['scheme'] ?? '') !== 'https' || ($source['host'] ?? '') !== 'kais.cadastre.bg'
         || isset($source['user']) || isset($source['pass']) || isset($source['port']) || strlen($value['source_url']) > 1200) throw new RuntimeException('Market location source is invalid.');
@@ -148,6 +149,7 @@ function market_offer($row): array {
     if (isset($row['price_total_derived']) && !is_bool($row['price_total_derived'])) throw new RuntimeException('Market price basis is invalid.');
     if (isset($row['seller_type']) && !in_array($row['seller_type'], ['agency', 'private', 'unknown'], true)) throw new RuntimeException('Market seller type is invalid.');
     if (isset($row['seller_evidence']) && !in_array($row['seller_evidence'], ['agency_profile', 'explicit_private_claim', 'not_reported', 'conflicting_signals'], true)) throw new RuntimeException('Market seller evidence is invalid.');
+    if (isset($row['seller_type']) && !in_array(($row['seller_type'] ?? '') . ':' . ($row['seller_evidence'] ?? ''), ['agency:agency_profile', 'private:explicit_private_claim', 'unknown:not_reported', 'unknown:conflicting_signals'], true)) throw new RuntimeException('Market seller evidence contradicts its label.');
     if (!market_optional_text($row['seller_checked_at'] ?? null, 80)) throw new RuntimeException('Market seller date is invalid.');
     market_location($row['location'] ?? null);
     market_analysis($row['analysis'] ?? null);

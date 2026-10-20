@@ -20,6 +20,7 @@ const TEXT = {
   captured: ['Снимка към {date}', 'Snapshot captured {date}'],
   stale: ['По-стара снимка · известията са временно спрени', 'Older snapshot · alerts are temporarily paused'],
   baseline: ['Първа дневна снимка · отправна база за бъдещи промени', 'First daily snapshot · baseline for future changes'],
+  methodBaseline: ['Обновен метод на сравнение · нова отправна база за известия; историята е запазена', 'Updated comparison method · a new alert baseline; price history is preserved'],
   scope: ['Обхват на наличните обяви', 'Coverage of available listings'],
   constructionScope: ['Заявена година на строеж: от {year} г.', 'Advertised construction year: {year} onwards'],
   ads: ['Обяви в набора', 'Listings in the dataset'],
@@ -86,7 +87,7 @@ const TEXT = {
   alertSaved: ['Запазено. Следенето започва от следващата завършена снимка.', 'Saved. Watching starts with the next completed snapshot.'],
   alertMin: ['Минимум под медианата', 'Minimum below median'],
   alertHistorical: ['Архивните обяви не генерират нови известия. Можете да запазите предпочитанията си за бъдещи дневни снимки.', 'Historical listings do not generate new alerts. You can save preferences for future daily snapshots.'],
-  alertBaseline: ['Първата дневна снимка установява отправна база. Известията започват при следващи нови обяви или промени.', 'The first daily snapshot sets a baseline. Alerts start with later new listings or changes.'],
+  alertBaseline: ['Първата дневна снимка или нов метод установяват отправна база. Известията започват при следващи нови обяви или промени.', 'The first daily snapshot or a new method sets a baseline. Alerts start with later new listings or changes.'],
   alertStale: ['Последната снимка е по-стара от 48 часа. Ще покажем нови известия след актуално завършено обновяване.', 'The latest snapshot is over 48 hours old. New alerts will appear after a fresh completed update.'],
   alertVatHelp: ['Известията включват само обяви с известна основа за ДДС и достатъчно сходни обяви.', 'Alerts include only listings with a known VAT basis and enough comparable peers.'],
   alertUnknownVatOption: ['Следи и офертни цени с непосочен ДДС', 'Also track asking prices with unreported VAT'],
@@ -126,6 +127,7 @@ const TEXT = {
   analysisCoverageHelp: ['Обработката на описанията е постепенна при дневните обновявания. При останалите обяви се използват наличните полета; липсващото не се предполага.', 'Description analysis progresses with daily updates. Other listings use available source fields; missing information is not inferred.'],
   listView: ['Списък', 'List'],
   offersMap: ['Карта на обявите', 'Listings map'],
+  showAreaOnMap: ['Виж зоната на картата', 'Show reference area on map'],
   viewMode: ['Изглед на обявите', 'Listings view'],
   referenceFilter: ['Референтна зона: {name}', 'Reference area: {name}'],
   clearReference: ['Премахни ограничението по зона', 'Remove reference-area filter'],
@@ -280,7 +282,7 @@ function ListingAnalysis({ offer }) {
   </div>;
 }
 
-function OfferCard({ offer, mode }) {
+function OfferCard({ offer, mode, onShowLocation }) {
   const { lang, tr } = useText();
   const comparison = offer.comparison || {};
   const discount = numeric(comparison.below_median_pct);
@@ -306,6 +308,7 @@ function OfferCard({ offer, mode }) {
       {discount !== null && (comparison.peer_count || 0) >= 8 ? <><strong>{discount > 0 ? <ArrowDownRight size={17} /> : <BarChart3 size={17} />}{discount > 0 ? tr('below', { n: formatNumber(discount, lang, 1) }) : discount < 0 ? tr('above', { n: formatNumber(Math.abs(discount), lang, 1) }) : tr('nearMedian')}</strong><span>{tr('peers', { n: comparison.peer_count })} · {formatNumber(comparison.median_eur_per_sqm, lang)} {tr('unit')}</span>{offer.vat_basis === 'unknown' && <em>{tr('comparisonVatUnknown')}</em>}{unusual && <em><Info size={12} />{tr('review')}</em>}</> : <span>{tr('noComparison')}</span>}
     </div>
     <p className="market-offer-date">{offer.last_modified_at ? tr('updated', { date: formatDate(offer.last_modified_at, lang) }) : tr('observed', { date: formatDate(offer.observed_at, lang) })}</p>
+    {offer.location && onShowLocation && <button type="button" className="market-offer-map-action" onClick={(event) => onShowLocation(offer.location, event.currentTarget)}><MapIcon size={14} />{tr('showAreaOnMap')}</button>}
     {link && <a className="market-offer-link" href={link} target="_blank" rel="noreferrer">{tr('source')}<ArrowUpRight size={16} /></a>}
   </article>;
 }
@@ -434,41 +437,74 @@ function MarketListings({ summary, sectionRef, externalSelection }) {
   const [rangeError, setRangeError] = useState(false);
   const [view, setView] = useState('list');
   const [mapVisited, setMapVisited] = useState(false);
+  const [targetedFocus, setTargetedFocus] = useState(null);
   const [referenceLabel, setReferenceLabel] = useState('');
   const [state, setState] = useState({ loading: true, error: false, data: null });
+  const focusSequence = useRef(0);
+  const mapSectionRef = useRef(null);
+  const listReturn = useRef(null);
+  const returnToListPending = useRef(false);
+  const loadedListQuery = useRef('');
+  const listingQuery = JSON.stringify({ filters, page, revision, snapshot: summary.snapshot_id });
   const options = summary.filter_options || {};
   useEffect(() => {
     if (!externalSelection) return;
     const next = { ...EMPTY_FILTERS, ...externalSelection.filters };
-    setDraft(next); setFilters(next); setPage(1); setRangeError(false); setReferenceLabel(''); setView('list');
+    setDraft(next); setFilters(next); setPage(1); setRangeError(false); setReferenceLabel(''); setView('list'); setTargetedFocus(null); listReturn.current = null;
   }, [externalSelection]);
   useEffect(() => {
     if (view !== 'list') return undefined;
+    if (loadedListQuery.current === listingQuery) return undefined;
     const controller = new AbortController();
     setState((previous) => ({ ...previous, loading: true, error: false }));
-    marketApi.listings({ ...filters, deals_only: filters.deals_only ? 1 : undefined, page, page_size: 24 }, controller.signal).then((data) => { if (!controller.signal.aborted) setState({ loading: false, error: false, data }); }).catch(() => { if (!controller.signal.aborted) setState({ loading: false, error: true, data: null }); });
+    marketApi.listings({ ...filters, deals_only: filters.deals_only ? 1 : undefined, page, page_size: 24 }, controller.signal).then((data) => { if (!controller.signal.aborted) { loadedListQuery.current = listingQuery; setState({ loading: false, error: false, data }); } }).catch(() => { if (!controller.signal.aborted) setState({ loading: false, error: true, data: null }); });
     return () => controller.abort();
-  }, [filters, page, revision, summary.snapshot_id, view]);
+  }, [filters, listingQuery, page, revision, summary.snapshot_id, view]);
+  useEffect(() => {
+    if (view !== 'list' || !returnToListPending.current || !listReturn.current || state.loading || loadedListQuery.current !== listingQuery) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const previous = listReturn.current;
+      if (!previous) return;
+      const workspace = sectionRef.current?.closest('.market-workspace');
+      if (workspace) workspace.scrollTop = previous.scrollTop;
+      if (previous.button?.isConnected) previous.button.focus({ preventScroll: true });
+      returnToListPending.current = false;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [listingQuery, sectionRef, state.data, state.loading, view]);
+  useEffect(() => {
+    if (view !== 'map' || !targetedFocus) return undefined;
+    const frame = window.requestAnimationFrame(() => mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [targetedFocus, view]);
   function update(key, value) { setDraft((previous) => ({ ...previous, [key]: value })); setRangeError(false); }
   function apply(event) {
     event.preventDefault();
     for (const [min, max] of [['min_area', 'max_area'], ['min_price', 'max_price']]) {
       if ((draft[min] !== '' && (!Number.isFinite(Number(draft[min])) || Number(draft[min]) < 0)) || (draft[max] !== '' && (!Number.isFinite(Number(draft[max])) || Number(draft[max]) < 0)) || (draft[min] !== '' && draft[max] !== '' && Number(draft[min]) > Number(draft[max]))) { setRangeError(true); return; }
     }
-    setFilters({ ...draft }); setPage(1); setRangeError(false);
+    setFilters({ ...draft }); setPage(1); setRangeError(false); setTargetedFocus(null); listReturn.current = null;
   }
+  function showLocation(location, button) {
+    const workspace = sectionRef.current?.closest('.market-workspace');
+    listReturn.current = { scrollTop: workspace?.scrollTop || 0, button };
+    returnToListPending.current = false;
+    focusSequence.current += 1;
+    setTargetedFocus({ id: focusSequence.current, location }); setMapVisited(true); setView('map');
+  }
+  function showList() { if (view === 'list') return; returnToListPending.current = Boolean(listReturn.current); setView('list'); }
   function chooseReference(area) {
     const next = { ...filters, location_key: area.key };
-    setDraft(next); setFilters(next); setReferenceLabel(area.label_bg); setPage(1); setView('list'); setRangeError(false);
+    setDraft(next); setFilters(next); setReferenceLabel(area.label_bg); setPage(1); setView('list'); setRangeError(false); setTargetedFocus(null); listReturn.current = null;
   }
   function clearReference() {
     setDraft((previous) => ({ ...previous, location_key: '' }));
     setFilters((previous) => ({ ...previous, location_key: '' }));
-    setReferenceLabel(''); setPage(1);
+    setReferenceLabel(''); setPage(1); setTargetedFocus(null); listReturn.current = null;
   }
   const items = Array.isArray(state.data?.items) ? state.data.items : [];
   return <section className="market-section market-listings-section" ref={sectionRef} aria-labelledby="market-listings-title">
-    <div className="market-section-heading"><div><div className="market-eyebrow">{tr('count')} · IMOT.BG</div><h2 id="market-listings-title">{tr('listingsTitle')}</h2><p>{tr('listingsHelp')}</p></div><div className="market-view-toggle" role="group" aria-label={tr('viewMode')}><button type="button" aria-pressed={view === 'list'} onClick={() => setView('list')}><List size={15} />{tr('listView')}</button><button type="button" aria-pressed={view === 'map'} onClick={() => { setMapVisited(true); setView('map'); }}><MapIcon size={15} />{tr('offersMap')}</button></div></div>
+    <div className="market-section-heading"><div><div className="market-eyebrow">{tr('count')} · IMOT.BG</div><h2 id="market-listings-title">{tr('listingsTitle')}</h2><p>{tr('listingsHelp')}</p></div><div className="market-view-toggle" role="group" aria-label={tr('viewMode')}><button type="button" aria-pressed={view === 'list'} onClick={showList}><List size={15} />{tr('listView')}</button><button type="button" aria-pressed={view === 'map'} onClick={() => { setMapVisited(true); setView('map'); }}><MapIcon size={15} />{tr('offersMap')}</button></div></div>
     <form className="market-filter-form" onSubmit={apply}>
       <div className="market-filter-grid"><label><span>{tr('neighborhood')}</span><select value={draft.neighborhood} onChange={(event) => update('neighborhood', event.target.value)}><option value="">{tr('anyNeighborhood')}</option>{(options.neighborhoods || []).map((item) => <option value={item.key} key={item.key}>{item.label_bg} ({item.count})</option>)}</select></label><label><span>{tr('type')}</span><select value={draft.type} onChange={(event) => update('type', event.target.value)}><option value="">{tr('anyType')}</option>{(options.types || []).map((item) => <option value={item.key} key={item.key}>{typeText(item.label_bg, lang)} ({item.count})</option>)}</select></label><label><span>{tr('vat')}</span><select value={draft.vat} onChange={(event) => update('vat', event.target.value)}><option value="">{tr('anyVat')}</option>{(options.vat_bases || []).map((item) => <option value={item.key} key={item.key}>{vatText(item.key, tr)} ({item.count})</option>)}</select></label><label><span>{tr('minDiscount')}</span><select value={draft.min_discount} onChange={(event) => update('min_discount', event.target.value)}><option value="">{tr('discountNone')}</option>{[10, 20, 25, 30, 40, 50].map((n) => <option key={n} value={n}>{n}%</option>)}</select></label></div>
       <div className="market-filter-grid market-location-filter-grid"><label><span>{tr('seller')}</span><select value={draft.seller} onChange={(event) => update('seller', event.target.value)}><option value="">{tr('anySeller')}</option>{['agency', 'private', 'unknown'].map((key) => <option key={key} value={key}>{sellerText(key, tr)}</option>)}</select></label><label><span>{tr('precision')}</span><select value={draft.precision} onChange={(event) => update('precision', event.target.value)}><option value="">{tr('anyPrecision')}</option>{['street', 'neighborhood', 'unknown'].map((key) => <option key={key} value={key}>{precisionText(key, tr)}</option>)}</select></label></div>
@@ -476,10 +512,10 @@ function MarketListings({ summary, sectionRef, externalSelection }) {
       <div className="market-filter-second-row"><label className="market-checkbox"><input type="checkbox" checked={draft.deals_only} onChange={(event) => update('deals_only', event.target.checked)} /><span>{tr('onlyDeals')}</span></label><label className="market-sort-field"><span>{tr('order')}</span><select value={draft.sort} onChange={(event) => update('sort', event.target.value)}><option value="discount">{tr('sortDiscount')}</option><option value="eur_per_sqm">{tr('sortUnit')}</option><option value="price">{tr('sortPrice')}</option><option value="newest">{tr('sortNewest')}</option></select></label></div>
       <details className="market-more-filters"><summary><Filter size={14} />{tr('moreFilters')}<ChevronDown size={14} /></summary><div className="market-filter-grid is-advanced">{['min_area', 'max_area', 'min_price', 'max_price'].map((key) => <label key={key}><span>{tr({ min_area: 'minArea', max_area: 'maxArea', min_price: 'minPrice', max_price: 'maxPrice' }[key])}</span><input type="number" min="0" max={key.endsWith('area') ? 100000 : 10000000000} step="any" value={draft[key]} onChange={(event) => update(key, event.target.value)} placeholder="—" /></label>)}<label><span>{tr('change')}</span><select value={draft.change} onChange={(event) => update('change', event.target.value)}><option value="">{tr('anyChange')}</option>{[['new', 'newOffer'], ['price_drop', 'priceDrop'], ['became_eligible', 'newlyEligible']].map(([value, key]) => <option key={value} value={value}>{tr(key)}</option>)}</select></label></div></details>
       {rangeError && <p className="market-inline-note is-warning" role="alert">{tr('rangeError')}</p>}
-      <div className="market-filter-actions"><button className="market-button is-primary" type="submit"><Search size={15} />{tr('apply')}</button><button className="market-button is-quiet" type="button" onClick={() => { setDraft({ ...EMPTY_FILTERS }); setFilters({ ...EMPTY_FILTERS }); setPage(1); setRangeError(false); setReferenceLabel(''); }}><X size={14} />{tr('reset')}</button>{view === 'list' && !state.loading && !state.error && <span className="market-result-count" aria-live="polite">{tr('resultCount', { n: formatNumber(state.data?.total, lang) })}</span>}</div>
+      <div className="market-filter-actions"><button className="market-button is-primary" type="submit"><Search size={15} />{tr('apply')}</button><button className="market-button is-quiet" type="button" onClick={() => { setDraft({ ...EMPTY_FILTERS }); setFilters({ ...EMPTY_FILTERS }); setPage(1); setRangeError(false); setReferenceLabel(''); setTargetedFocus(null); listReturn.current = null; }}><X size={14} />{tr('reset')}</button>{view === 'list' && !state.loading && !state.error && <span className="market-result-count" aria-live="polite">{tr('resultCount', { n: formatNumber(state.data?.total, lang) })}</span>}</div>
     </form>
-    <div hidden={view !== 'list'} className="market-listings-results" aria-live="polite" aria-busy={view === 'list' && state.loading}>{state.loading ? <div className="market-loading is-inline"><Loader2 size={21} className="animate-spin" /><span>{tr('listingsLoading')}</span></div> : state.error ? <div className="market-empty" role="alert"><p>{tr('listingsError')}</p><button className="market-button" type="button" onClick={() => setRevision((n) => n + 1)}><RefreshCw size={15} />{tr('retry')}</button></div> : items.length === 0 ? <p className="market-empty">{tr('emptyListings')}</p> : <><div className="market-offer-grid">{items.map((offer) => <OfferCard key={offer.id} offer={offer} mode={state.data?.mode || summary.mode} />)}</div><Pagination page={state.data?.page || page} pages={state.data?.pages || 1} onPage={(next) => { setPage(next); sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} /></>}</div>
-    {mapVisited && <div hidden={view !== 'map'}><OffersMap summary={summary} filters={filters} active={view === 'map'} onSelectReference={chooseReference} /></div>}
+    <div hidden={view !== 'list'} className="market-listings-results" aria-live="polite" aria-busy={view === 'list' && state.loading}>{state.loading ? <div className="market-loading is-inline"><Loader2 size={21} className="animate-spin" /><span>{tr('listingsLoading')}</span></div> : state.error ? <div className="market-empty" role="alert"><p>{tr('listingsError')}</p><button className="market-button" type="button" onClick={() => setRevision((n) => n + 1)}><RefreshCw size={15} />{tr('retry')}</button></div> : items.length === 0 ? <p className="market-empty">{tr('emptyListings')}</p> : <><div className="market-offer-grid">{items.map((offer) => <OfferCard key={offer.id} offer={offer} mode={state.data?.mode || summary.mode} onShowLocation={showLocation} />)}</div><Pagination page={state.data?.page || page} pages={state.data?.pages || 1} onPage={(next) => { setPage(next); sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} /></>}</div>
+    {mapVisited && <div hidden={view !== 'map'} ref={mapSectionRef}><OffersMap summary={summary} filters={filters} active={view === 'map'} onSelectReference={chooseReference} targetedFocus={targetedFocus} onReturnToList={showList} /></div>}
   </section>;
 }
 
@@ -537,7 +573,7 @@ export default function MarketDashboard({ onBackToMap, onSummaryChange, onAlertC
     {state.loading ? <div className="market-loading"><Loader2 size={28} className="animate-spin" /><span>{tr('loading')}</span></div> : state.error || !summary ? <div className="market-empty market-main-error" role="alert"><Info size={25} /><p>{tr('loadError')}</p><button className="market-button is-primary" type="button" onClick={() => setRevision((n) => n + 1)}><RefreshCw size={15} />{tr('retry')}</button></div> : <>
       {state.backgroundError && <p className="market-inline-note is-warning" role="status"><Info size={15} />{tr('backgroundError')}</p>}
       {historical && <div className="market-data-notice"><div className="market-notice-icon"><Clock3 size={22} /></div><div><strong>{tr('archive')} · {range}</strong><p>{tr('archiveHelp', { period: range })}</p></div></div>}
-      {!historical && (stale || summary.history?.baseline) && <p className="market-inline-note is-warning"><Info size={15} />{tr(stale ? 'stale' : 'baseline')}</p>}
+      {!historical && (stale || summary.history?.baseline) && <p className="market-inline-note is-warning"><Info size={15} />{tr(stale ? 'stale' : summary.history?.methodology_changed ? 'methodBaseline' : 'baseline')}</p>}
       <div className="market-stats-grid"><article><span>{tr('ads')}</span><strong>{formatNumber(summary.counts?.listing_count, lang)}</strong><p>{tr('adHint')}</p></article><article><span>{tr('neighborhoods')}</span><strong>{formatNumber(summary.coverage?.neighborhood_count ?? summary.neighborhoods?.length, lang)}</strong><p>{tr('pricedHint', { n: formatNumber(summary.counts?.priced_count, lang) })}</p></article><article className="is-emphasis"><span>{tr('median')}</span><strong>{formatNumber(headline.median_eur_per_sqm, lang)}<small> €</small></strong><p>{tr('medianHint', { n: formatNumber(headline.priced_count, lang), vat: vatText(headline.vat_basis, tr) })}</p></article><article><span>{tr('opportunities')}</span><strong>{formatNumber(summary.counts?.eligible_count, lang)}</strong><p>{tr('opportunityHint')}</p></article></div>
       <div className="market-scope"><span>{tr('scope')}</span><p>{lang === 'bg' ? summary.coverage?.scope_bg || 'Обяви за апартаменти в София и населените места в каталога' : 'Apartment listings in Sofia and settlements in the source catalogue · advertised asking prices'}{summary.coverage?.construction_year_min && <small>{tr('constructionScope', { year: summary.coverage.construction_year_min })}</small>}</p></div>
       <EnrichmentCoverage summary={summary} />

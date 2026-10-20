@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Circle, MapContainer, Marker, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
-import { divIcon } from 'leaflet';
-import { Info, Loader2, MapPin, RefreshCw } from 'lucide-react';
+import { divIcon, latLng } from 'leaflet';
+import { ArrowLeft, Info, Loader2, MapPin, RefreshCw } from 'lucide-react';
 import { marketApi } from '@/api/marketApi';
 import { useI18n } from '@/lib/i18n';
 import 'leaflet/dist/leaflet.css';
@@ -13,8 +13,9 @@ function sourceUrl(value) {
   try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'kais.cadastre.bg' ? url.href : null; } catch { return null; }
 }
 
-function MapBridge({ active, onBounds }) {
+function MapBridge({ active, onBounds, targetedFocus }) {
   const map = useMapEvents({ moveend: () => emit(), zoomend: () => emit() });
+  const lastFocusId = useRef(null);
   const emit = useCallback(() => {
     const bounds = map.getBounds();
     onBounds({ north: Math.min(85, bounds.getNorth()), south: Math.max(-85, bounds.getSouth()), west: Math.max(-180, bounds.getWest()), east: Math.min(180, bounds.getEast()), zoom: map.getZoom() });
@@ -24,6 +25,20 @@ function MapBridge({ active, onBounds }) {
     const frame = window.requestAnimationFrame(() => { map.invalidateSize({ pan: true, animate: false }); emit(); });
     return () => window.cancelAnimationFrame(frame);
   }, [active, emit, map]);
+  useEffect(() => {
+    const location = targetedFocus?.location;
+    if (!active || !location || lastFocusId.current === targetedFocus.id || !Number.isFinite(location.lat) || !Number.isFinite(location.lng) || !Number.isFinite(location.radius_m) || location.radius_m <= 0) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const container = map.getContainer();
+      if (!container.clientWidth || !container.clientHeight) return;
+      map.stop();
+      map.invalidateSize({ pan: false, animate: false });
+      map.fitBounds(latLng(location.lat, location.lng).toBounds(Math.max(200, location.radius_m * 2)), { padding: [38, 38], maxZoom: 17, animate: false });
+      lastFocusId.current = targetedFocus.id;
+      emit();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, emit, map, targetedFocus]);
   useEffect(() => {
     let frame;
     const observer = new ResizeObserver(() => {
@@ -84,7 +99,7 @@ function ReferenceMarkers({ items, lang, onSelectReference, onFocus }) {
   });
 }
 
-export default function OffersMap({ summary, filters, active, onSelectReference }) {
+export default function OffersMap({ summary, filters, active, onSelectReference, targetedFocus, onReturnToList }) {
   const { lang } = useI18n();
   const bg = lang === 'bg';
   const [bounds, setBounds] = useState(null);
@@ -113,14 +128,16 @@ export default function OffersMap({ summary, filters, active, onSelectReference 
   }, [active, bounds, dataKey, filterKey, filters.deals_only, revision, summary.snapshot_id]);
   const data = state.key === dataKey ? state.data : null;
   const items = useMemo(() => data?.items || [], [data]);
+  const highlightedReference = focus || targetedFocus?.location;
   return <div className="offers-map-workspace">
     <div className="offers-map-intro"><Info size={17} /><p>{bg ? 'Картата показва приблизителни ориентири по улица или квартал, извлечени от обявите и съпоставени с референтните данни на КАИС. Балонът е група обяви, а не конкретна сграда. Изберете балон, за да разгледате обявите.' : 'The map shows approximate street or neighborhood references extracted from listings and matched to KAIS reference data. Each bubble is a group of listings. Select it to explore the ads.'}</p></div>
+    {targetedFocus?.location && <div className="offers-map-target-label"><MapPin size={14} /><span>{precisionLabel(targetedFocus.location.precision, bg)} · <strong>{targetedFocus.location.label_bg}</strong></span>{onReturnToList && <button type="button" onClick={onReturnToList}><ArrowLeft size={13} />{bg ? 'Към обявата в списъка' : 'Back to the listing'}</button>}</div>}
     <div className="offers-map-canvas">
       <MapContainer center={[42.69, 23.33]} zoom={12} minZoom={8} maxZoom={19} maxBounds={[[40.5, 21], [45, 30]]} maxBoundsViscosity={1} preferCanvas scrollWheelZoom={false} className="offers-leaflet-map">
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" maxZoom={19} />
-        {focus && <Circle center={[focus.lat, focus.lng]} radius={focus.radius_m} pathOptions={{ color: '#b66c35', weight: 1.5, dashArray: '6 5', fillColor: '#dcac73', fillOpacity: 0.12, interactive: false }} />}
+        {highlightedReference && <Circle center={[highlightedReference.lat, highlightedReference.lng]} radius={highlightedReference.radius_m} pathOptions={{ color: '#b66c35', weight: 2, dashArray: '6 5', fillColor: '#dcac73', fillOpacity: 0.14, interactive: false }} />}
         <ReferenceMarkers items={items} lang={lang} onSelectReference={onSelectReference} onFocus={setFocus} />
-        <MapBridge active={active} onBounds={changeBounds} />
+        <MapBridge active={active} onBounds={changeBounds} targetedFocus={targetedFocus} />
       </MapContainer>
       {state.loading && <div className="offers-map-progress" role="status"><Loader2 className="animate-spin" size={16} />{bg ? 'Обновяване на зоните…' : 'Updating areas…'}</div>}
       {state.error && <div className="offers-map-message is-error" role="alert"><p>{bg ? 'Картата на обявите не се зареди. Опитайте отново.' : 'The listings map could not load. Please try again.'}</p><button className="market-button" type="button" onClick={() => setRevision((value) => value + 1)}><RefreshCw size={14} />{bg ? 'Опитай отново' : 'Try again'}</button></div>}
