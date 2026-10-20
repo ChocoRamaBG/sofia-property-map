@@ -308,7 +308,7 @@ function OfferCard({ offer, mode, onShowLocation }) {
       {discount !== null && (comparison.peer_count || 0) >= 8 ? <><strong>{discount > 0 ? <ArrowDownRight size={17} /> : <BarChart3 size={17} />}{discount > 0 ? tr('below', { n: formatNumber(discount, lang, 1) }) : discount < 0 ? tr('above', { n: formatNumber(Math.abs(discount), lang, 1) }) : tr('nearMedian')}</strong><span>{tr('peers', { n: comparison.peer_count })} · {formatNumber(comparison.median_eur_per_sqm, lang)} {tr('unit')}</span>{offer.vat_basis === 'unknown' && <em>{tr('comparisonVatUnknown')}</em>}{unusual && <em><Info size={12} />{tr('review')}</em>}</> : <span>{tr('noComparison')}</span>}
     </div>
     <p className="market-offer-date">{offer.last_modified_at ? tr('updated', { date: formatDate(offer.last_modified_at, lang) }) : tr('observed', { date: formatDate(offer.observed_at, lang) })}</p>
-    {offer.location && onShowLocation && <button type="button" className="market-offer-map-action" onClick={(event) => onShowLocation(offer.location, event.currentTarget)}><MapIcon size={14} />{tr('showAreaOnMap')}</button>}
+    {offer.location && onShowLocation && <button type="button" className="market-offer-map-action" data-offer-id={offer.id} onClick={(event) => onShowLocation(offer.location, event.currentTarget, offer.id)}><MapIcon size={14} />{tr('showAreaOnMap')}</button>}
     {link && <a className="market-offer-link" href={link} target="_blank" rel="noreferrer">{tr('source')}<ArrowUpRight size={16} /></a>}
   </article>;
 }
@@ -467,7 +467,8 @@ function MarketListings({ summary, sectionRef, externalSelection }) {
       if (!previous) return;
       const workspace = sectionRef.current?.closest('.market-workspace');
       if (workspace) workspace.scrollTop = previous.scrollTop;
-      if (previous.button?.isConnected) previous.button.focus({ preventScroll: true });
+      const button = previous.button?.isConnected ? previous.button : Array.from(sectionRef.current?.querySelectorAll('.market-offer-map-action[data-offer-id]') || []).find((item) => item.dataset.offerId === previous.offerId);
+      button?.focus({ preventScroll: true });
       returnToListPending.current = false;
     });
     return () => window.cancelAnimationFrame(frame);
@@ -485,9 +486,9 @@ function MarketListings({ summary, sectionRef, externalSelection }) {
     }
     setFilters({ ...draft }); setPage(1); setRangeError(false); setTargetedFocus(null); listReturn.current = null;
   }
-  function showLocation(location, button) {
+  function showLocation(location, button, offerId) {
     const workspace = sectionRef.current?.closest('.market-workspace');
-    listReturn.current = { scrollTop: workspace?.scrollTop || 0, button };
+    listReturn.current = { scrollTop: workspace?.scrollTop || 0, button, offerId };
     returnToListPending.current = false;
     focusSequence.current += 1;
     setTargetedFocus({ id: focusSequence.current, location }); setMapVisited(true); setView('map');
