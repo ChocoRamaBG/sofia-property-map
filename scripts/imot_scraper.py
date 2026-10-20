@@ -34,7 +34,7 @@ COUNT = re.compile(r"^(\d+)\s*-\s*(\d+)\s+от общо\s+(\d+)(\+?)\s+обяв[
 ID = re.compile(r"^1[a-z][0-9]{12,20}$")
 NEIGHBOR_PATH = re.compile(r"^/obiavi/prodazhbi/grad-sofiya/([a-z0-9-]+)$")
 PRICE = re.compile(r"^([0-9][0-9\s.,]*)\s*(€|EUR|euro|лв\.?|BGN|\$)(?:\s+(на кв\.м|/m2|/m²))?$", re.I)
-CARD_SCHEMA_VERSION = 2
+CARD_SCHEMA_VERSION = 3
 
 
 def timestamp():
@@ -260,7 +260,7 @@ def cards(soup, neighbor, kind, minimum, maximum):
             "floor_bg": floor[1] if floor else None, "address_bg": address_text,
             "observed_at": checked_at, "last_modified_at": None,
             **seller_claim(professional_profile, info, checked_at),
-            **analyze_text(info, source="card", checked_at=checked_at, completion_label=construction_label),
+            **analyze_text(info, source="card", checked_at=checked_at, completion_label=construction_label, area_sqm=area),
         }
         row["enrichment_card_sha256"] = card_fingerprint(row, info, professional_profile)
         output.append(row)

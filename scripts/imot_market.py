@@ -51,6 +51,10 @@ def normalized_analysis(raw, label, checked_at):
         "area_basis": {"net", "gross", "terrace_included", "unknown"},
     }
     answer = {field: source.get(field) if source.get(field) in values else "unknown" for field, values in allowed.items()}
+    # Earlier captures recognized area words without establishing which number
+    # they described. A net-area mention must not relabel a gross-area quote.
+    if raw.get("analysis_method_version") != 2:
+        answer["area_basis"] = "unknown"
     answer["completion_stage"] = stage if stage in allowed["completion_stage"] else "unknown"
     risks = {"share_sale", "auction", "tenanted", "nonresidential", "mandatory_extra_cost"}
     answer["risk_flags"] = sorted({x for x in source.get("risk_flags", []) if isinstance(x, str) and x in risks})

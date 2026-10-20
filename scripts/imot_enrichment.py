@@ -12,6 +12,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import time
@@ -25,8 +26,10 @@ SELLER_EVIDENCE = {"agency_profile", "explicit_private_claim", "not_reported", "
 RISK_FLAGS = {"share_sale", "auction", "tenanted", "nonresidential", "mandatory_extra_cost"}
 PRIVATE_CLAIM = re.compile(r"(?:частно\s+лице\s+(?:продава|предлага)|(?:продава|продавам)\s+(?:като\s+)?собственик|(?:директно\s+)?от\s+собственик(?:а)?\b)", re.I)
 STREET = re.compile(r"\b(улица\b|ул\.|ул\b|булевард\b|бул\.|бул\b|площад\b|пл\.|пл\b)\s*[„\"'«]?", re.I)
-CLAIM_FIELDS = ("seller_type", "seller_evidence", "seller_checked_at", "analysis", "location_hints")
-CACHE_FIELDS = ("card_sha256", "checked_at", "status", "description_sha256", *CLAIM_FIELDS)
+ANALYSIS_METHOD_VERSION = 2
+CACHE_VERSION = 2
+CLAIM_FIELDS = ("seller_type", "seller_evidence", "seller_checked_at", "analysis", "location_hints", "analysis_method_version")
+CACHE_FIELDS = ("version", "card_sha256", "checked_at", "status", "description_sha256", *CLAIM_FIELDS)
 
 
 def timestamp():
@@ -109,7 +112,47 @@ def location_hints(value, source="card"):
     return answer
 
 
-def analyze_text(value, *, source="card", checked_at=None, completion_label=None):
+def matched_area_basis(value, area_sqm):
+    """Associate the advertised area only with matching, explicitly labeled m².
+
+    Mentioning another net area, or simply having a terrace, says nothing about
+    the basis of the price-card area. Ambiguous matching labels remain unknown.
+    """
+    try:
+        area = float(area_sqm)
+    except (TypeError, ValueError):
+        return "unknown"
+    if not math.isfinite(area) or area <= 0:
+        return "unknown"
+    # Both absolute and relative differences must be small.
+    tolerance = min(0.5, area * 0.01)
+    amount = r"(?P<area>\d{1,4}(?:[.,]\d{1,3})?)"
+    unit = r"(?:кв\.?\s*м\.?|м[2²]|m[2²])"
+    gap = r"\s*(?:\([^\d()]{0,20}\)\s*)?(?:(?:е|от|около|приблизително|в\s+размер\s+на)\s*)?[:=\-–—]?\s*"
+    labels = {
+        "net": r"(?:чиста|нетна|застроена)\s+(?:жилищна\s+)?площ|(?:чиста|нетна)\s+квадратура",
+        "gross": r"(?:обща|брутна)\s+(?:застроена\s+)?площ|площ\s+с\s+общи(?:те)?\s+части|(?:обща|брутна)\s+квадратура|с\s+общи(?:те)?\s+части",
+        "terrace_included": r"(?:площ|квадратура)\s+(?:заедно\s+)?с\s+(?:включени(?:те)?\s+)?(?:терас(?:а|и|ите)|балкон(?:а|и|ите)?)",
+    }
+    found = set()
+    for basis, label in labels.items():
+        patterns = [r"(?:" + label + r")" + gap + amount + r"\s*" + unit + r"(?!\w)",
+                    r"(?<![\d.,])" + amount + r"\s*" + unit + r"\s*[,;:=\-–—]?\s*\(?\s*(?:" + label + r")\b"]
+        if basis == "terrace_included":
+            # An explicit inclusion attached directly to the matching total;
+            # 'с тераса' as a generic amenity deliberately does not qualify.
+            patterns.append(r"(?<![\d.,])" + amount + r"\s*" + unit + r"\s*[,;:]?\s*(?:с\s+включен(?:а|и|и\s+те)|включващ(?:а|и|о)?|която\s+включва)\s+(?:терас(?:а|и|ите)|балкон(?:а|и|ите)?)\b")
+        for pattern in patterns:
+            for match in re.finditer(pattern, value, re.I):
+                if basis == "net" and re.search(r"(?:обща|брутна)\s+$", value[max(0, match.start() - 15):match.start()], re.I):
+                    continue
+                stated = float(match["area"].replace(",", "."))
+                if abs(stated - area) <= tolerance + 1e-9:
+                    found.add(basis)
+    return next(iter(found)) if len(found) == 1 else "unknown"
+
+
+def analyze_text(value, *, source="card", checked_at=None, completion_label=None, area_sqm=None):
     value = clean(value)
     lower = value.casefold()
     stage_text = clean(completion_label) + " " + value
@@ -119,14 +162,7 @@ def analyze_text(value, *, source="card", checked_at=None, completion_label=None
     needs = re.search(r"(?:нуждае\s+се\s+от|за|нужен\s+е|предстои)\s+(?:основен\s+)?ремонт|за\s+освежаване|нуждае\s+се\s+от\s+освежаване", lower)
     renovated = re.search(r"след\s+(?:основен\s+|цялостен\s+)?ремонт|напълно\s+ремонтиран|новоремонтиран|изцяло\s+реновиран", lower)
     condition = "needs_renovation" if needs else "renovated" if renovated else "unknown"
-    if re.search(r"(?:включва|включени|с)\s+(?:площта\s+на\s+)?(?:терас|балкон)|терас.{0,20}(?:включен|в\s+площ)", lower):
-        basis = "terrace_included"
-    elif re.search(r"(?:чиста|застроена|нетна)\s+(?:жилищна\s+)?площ", lower):
-        basis = "net"
-    elif re.search(r"(?:обща|брутна)\s+площ|площ.{0,20}(?:с\s+общи\s+части|включва\s+общи\s+части)", lower):
-        basis = "gross"
-    else:
-        basis = "unknown"
+    basis = matched_area_basis(lower, area_sqm)
     risks = []
     patterns = {
         "share_sale": r"(?:продава(?:т\s+се)?|продажба\s+на)\s+(?:само\s+)?(?:\d+\s*/\s*\d+\s+)?идеални\s+части|(?:продава|продажба).{0,25}\d+\s*/\s*\d+\s+(?:от\s+)?(?:имота|апартамента)|дял\s+от\s+(?:имот|апартамент)",
@@ -143,6 +179,7 @@ def analyze_text(value, *, source="card", checked_at=None, completion_label=None
         "analysis": {"completion_stage": completion, "condition": condition, "area_basis": basis,
                      "risk_flags": risks, "checked_at": checked_at or timestamp(), "description_analyzed": source == "description"},
         "location_hints": location_hints(value, source),
+        "analysis_method_version": ANALYSIS_METHOD_VERSION,
     }
 
 
@@ -150,7 +187,7 @@ def card_fingerprint(row, teaser, profile):
     # Dates and contact suffixes do not turn unchanged claims into cache misses.
     scrubbed = re.split(r"(?:тел\.?\s*:|телефон|gsm\s*:|e-?mail\s*:)", clean(teaser), maxsplit=1, flags=re.I)[0]
     fields = {key: row.get(key) for key in ("id", "url", "neighborhood_bg", "type_bg", "price", "price_currency", "vat_basis", "area_sqm", "construction_year", "construction_label_bg", "floor_bg", "address_bg")}
-    fields.update({"teaser": scrubbed, "agency_profile": bool(profile)})
+    fields.update({"teaser": scrubbed, "agency_profile": bool(profile), "analysis_method_version": ANALYSIS_METHOD_VERSION})
     return hashlib.sha256(json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -167,7 +204,7 @@ def detail_description(soup):
 
 
 def _valid_cache(entry, fingerprint, now):
-    if not isinstance(entry, dict) or entry.get("card_sha256") != fingerprint or entry.get("seller_type") not in SELLER_TYPES or entry.get("seller_evidence") not in SELLER_EVIDENCE:
+    if not isinstance(entry, dict) or entry.get("version") != CACHE_VERSION or entry.get("analysis_method_version") != ANALYSIS_METHOD_VERSION or entry.get("card_sha256") != fingerprint or entry.get("seller_type") not in SELLER_TYPES or entry.get("seller_evidence") not in SELLER_EVIDENCE:
         return False
     try:
         age = (now - datetime.fromisoformat(entry["checked_at"].replace("Z", "+00:00"))).total_seconds()
@@ -208,6 +245,12 @@ def enrich_capture(capture, previous_state=None, *, limit=400, maximum_seconds=9
               "reused": 0, "unavailable": 0, "failed": 0, "stopped_reason": None,
               "description_storage": "derived_claims_only", "maximum_cache_age_days": 30}
     for row in enriched["listings"]:
+        if row.get("analysis_method_version") != ANALYSIS_METHOD_VERSION:
+            # A recovered old capture has no discarded text to re-evaluate.
+            # Keep its other claims, but never upgrade the old area inference.
+            row["analysis_method_version"] = 1
+            if isinstance(row.get("analysis"), dict):
+                row["analysis"]["area_basis"] = "unknown"
         identifier = row.get("id")
         fingerprint = row.get("enrichment_card_sha256")
         if not isinstance(identifier, str) or not re.fullmatch(r"1[a-z][0-9]{12,20}", identifier) or not isinstance(fingerprint, str) or not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
@@ -261,7 +304,7 @@ def enrich_capture(capture, previous_state=None, *, limit=400, maximum_seconds=9
                         raise ValueError("Detail canonical identity differs")
                     description = detail_description(soup)
                     status = "analyzed" if description else "description_unavailable"
-                    claims = analyze_text(description, source="description", checked_at=checked, completion_label=row.get("construction_label_bg")) if description else {key: deepcopy(row.get(key)) for key in ("analysis", "location_hints")}
+                    claims = analyze_text(description, source="description", checked_at=checked, completion_label=row.get("construction_label_bg"), area_sqm=row.get("area_sqm")) if description else {key: deepcopy(row.get(key)) for key in ("analysis", "location_hints", "analysis_method_version")}
                     if description and not claims["location_hints"]:
                         claims["location_hints"] = deepcopy(row.get("location_hints", []))
                     profile = agency_profile(soup, detail=True) or row.get("seller_evidence") == "agency_profile"
@@ -272,7 +315,7 @@ def enrich_capture(capture, previous_state=None, *, limit=400, maximum_seconds=9
                         seller = {"seller_type": "unknown", "seller_evidence": "conflicting_signals", "seller_checked_at": checked}
                     row.update(claims)
                     row.update(seller)
-                    entry = {"card_sha256": row["enrichment_card_sha256"], "checked_at": checked, "status": status,
+                    entry = {"version": CACHE_VERSION, "card_sha256": row["enrichment_card_sha256"], "checked_at": checked, "status": status,
                              "description_sha256": hashlib.sha256(description.encode()).hexdigest() if description else None,
                              **{field: deepcopy(row[field]) for field in CLAIM_FIELDS}}
                     cache[identifier] = entry

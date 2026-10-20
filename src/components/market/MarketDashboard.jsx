@@ -150,7 +150,7 @@ const TEXT = {
   conditionRenovated: ['Заявено като ремонтирано', 'Advertised as renovated'],
   conditionNeedsRenovation: ['Нужда от ремонт', 'Needs renovation'],
   areaBasis: ['Заявена основа на площта', 'Stated area basis'],
-  areaNet: ['Чиста площ', 'Net area'],
+  areaNet: ['Чиста / застроена площ', 'Net / built area'],
   areaGross: ['С общи части', 'Including common areas'],
   areaTerrace: ['Включени тераси', 'Includes terraces'],
   riskShare: ['Дял / идеални части', 'Share / partial ownership sale'],
