@@ -91,6 +91,22 @@ function RegisterDocument({ source, document, lang, t }) {
   </article>;
 }
 
+function BoundaryDimensions({ parcel, currentKey, lang, t }) {
+  if (parcel?.boundary_status !== 'matched' || parcel.cadastral_id !== currentKey) return null;
+  const bg = lang === 'bg';
+  const source = parcel.source || {};
+  let sourceUrl = null;
+  try { const url = new URL(source.url); if (url.protocol === 'https:' && !url.username && !url.password) sourceUrl = url.href; } catch { /* Missing source links remain plain text. */ }
+  const sourceName = sourceLabel(source, lang) || (bg ? 'АГКК · КАИС, Отворени данни' : 'AGCC · KAIS Open Data');
+  const dimension = (value, unit) => typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? `${new Intl.NumberFormat(bg ? 'bg-BG' : 'en-GB', { maximumFractionDigits: 2 }).format(value)} ${unit}` : '—';
+  return <section className="property-overview mb-4" aria-label={bg ? 'Размери от избраната кадастрална геометрия' : 'Dimensions from the selected cadastral geometry'}>
+    <div className="property-overview-heading"><div><h3>{bg ? 'Размери от избраната граница' : 'Selected boundary dimensions'}</h3><p>{bg ? 'Публикувани геометрични стойности на този слой. Кадастралните атрибути по-долу имат отделна снимка и дата.' : 'Published geometry values from this layer. The cadastral attributes below have their own snapshot and capture date.'}</p></div></div>
+    <dl className="mt-3 grid grid-cols-2 gap-3 text-xs"><div><dt className="leading-relaxed text-slate-600">{bg ? 'Публикувана площ' : 'Published area'}</dt><dd className="mt-1 break-words text-sm font-semibold text-emerald-900">{dimension(parcel.area_m2, bg ? 'м²' : 'm²')}</dd></div><div><dt className="leading-relaxed text-slate-600">{bg ? 'Публикуван периметър' : 'Published perimeter'}</dt><dd className="mt-1 break-words text-sm font-semibold text-emerald-900">{dimension(parcel.published_perimeter_m, bg ? 'м' : 'm')}</dd></div></dl>
+    <div className="mt-3 text-xs leading-relaxed text-slate-600">{sourceUrl ? <a className="inline-flex min-h-9 items-center gap-1 text-emerald-800 underline underline-offset-2" href={sourceUrl} target="_blank" rel="noreferrer">{sourceName}<ArrowUpRight size={13} aria-hidden="true" /></a> : <span>{sourceName}</span>}<p>{source.captured_at ? `${bg ? 'Извлечено:' : 'Captured:'} ${displayDate(source.captured_at, lang)}` : t('dataset.dateUnknown')}</p></div>
+  </section>;
+}
+
 export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackToActivity, closeOnEscape = false }) {
   const { t, lang } = useI18n();
   const [state, setState] = useState({ key: null, loading: false, data: null, error: null });
@@ -140,6 +156,7 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
         <div className="details-header-actions"><button onClick={copyId} aria-label={t('panel.copyId')} title={copied ? t('panel.copied') : t('panel.copyId')}>{copied ? <Check size={17} className="text-emerald-700" /> : <Copy size={17} />}</button>{onClose && <button onClick={onClose} aria-label={t('panel.close')}><X size={19} /></button>}</div>
       </div>
       <div className="details-scroll" ref={scrollArea}>
+        <BoundaryDimensions parcel={parcel} currentKey={key} lang={lang} t={t} />
         {state.loading || state.key !== key ? <div className="details-loading"><Loader2 size={24} className="animate-spin" /><span>{t('panel.loading')}</span></div> : state.error ? <div className="details-error" role="alert">{t('panel.loadError')}<p>{state.error}</p></div> : <>
           <section className="property-overview">
             <div className="property-overview-heading"><div><h3>{t('panel.overview')}</h3><p>{t('panel.overviewHelp')}</p></div><span className="property-record-total">{t('panel.recordsCount', { n: count })}</span></div>
