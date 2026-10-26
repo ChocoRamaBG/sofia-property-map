@@ -4,6 +4,7 @@ import { useI18n } from '@/lib/i18n';
 import { displayDate, fieldLabel, fieldValue, REGISTER_COLORS } from '@/lib/registerUi';
 import { realEstateApi } from '@/api/realEstateApi';
 import CadastralSummary from '@/components/details/CadastralSummary';
+import DevelopmentTimeline from './DevelopmentTimeline';
 
 const REGISTER_GROUPS = ['building_permits', 'projecting_visas', 'exploitation_certificates', 'exploitation_certificates_legacy'];
 const SOURCE_ORDER = Object.fromEntries(REGISTER_GROUPS.map((code, index) => [code, index]));
@@ -90,7 +91,7 @@ function RegisterDocument({ source, document, lang, t }) {
   </article>;
 }
 
-export default function DetailsPanel({ parcel, onClose, onBackToSearch }) {
+export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackToActivity }) {
   const { t, lang } = useI18n();
   const [state, setState] = useState({ key: null, loading: false, data: null, error: null });
   const [copied, setCopied] = useState(false);
@@ -125,6 +126,7 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch }) {
   const navigationCodes = [...new Set([...REGISTER_GROUPS, ...sources.map((source) => source.code)])];
   return (
     <div className="details-panel">
+      {onBackToActivity && <button className="details-back-search" type="button" onClick={onBackToActivity}><ArrowLeft size={17} aria-hidden="true" /><span>{lang === 'bg' ? 'Обратно към списъка с документи' : 'Back to the document list'}</span></button>}
       {onBackToSearch && <button className="details-back-search" type="button" onClick={onBackToSearch}><ArrowLeft size={17} aria-hidden="true" /><span>{t('panel.backToSearch')}</span></button>}
       <div className="details-header">
         <div><p className="eyebrow">{t('panel.title')}</p><h2>{plot.cadastral_id}</h2><span className="details-coordinate-type"><MapPin size={12} />{locationAvailable ? t('panel.coordinateMarker') : t('panel.noCoordinate')}</span></div>
@@ -145,6 +147,7 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch }) {
             {overview.length > 0 && <dl className="property-overview-fields">{overview.map((field) => <div className="property-overview-field" key={field.key}><dt>{t(`panel.overview.${field.key}`)}</dt><dd>{field.values.map((entry) => <div className="property-overview-value" key={entry.value}><p>{entry.value}</p><div className="overview-value-sources">{[...entry.sources.values()].map((source) => <button key={source.code} onClick={() => goToSource(source.code)} title={sourceLabel(source, lang)}>{sourceShortLabel(source, lang, t)}<ArrowDown size={10} /></button>)}</div></div>)}</dd></div>)}</dl>}
           </section>
           <CadastralSummary cadastre={currentData?.cadastre} status={currentData?.cadastre_status} />
+          <DevelopmentTimeline sources={sources} lang={lang} onOpenSource={goToSource} />
           <section className={`certificate-status certificate-status-compact ${hasCertificate ? 'certificate-found' : 'certificate-unknown'}`}>
             <div className="certificate-status-top"><span className="certificate-icon"><FileCheck2 size={18} /></span><div><p>{t('certificate.heading')} · „{t('panel.act16')}“</p><h3>{hasCertificate ? t('certificate.found') : t('certificate.notLinked')}</h3></div>{hasCertificate && <span className="certificate-linked-count">{certificateDocuments.length}</span>}</div>
             <p className="certificate-explanation">{hasCertificate ? t('certificate.foundHelp') : t('certificate.notLinkedHelp')}</p>

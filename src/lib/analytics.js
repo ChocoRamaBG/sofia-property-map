@@ -245,7 +245,7 @@ export function trackEvent(name, parameters = {}) {
   if (name === 'search_submit' || name === 'address_locate') {
     // Record the action without the text the visitor entered.
   } else if (name === 'workspace_open') {
-    if (!['map', 'offers'].includes(values.workspace)) return false;
+    if (!['map', 'offers', 'activity'].includes(values.workspace)) return false;
     safe.workspace = values.workspace;
   } else if (name === 'property_open') {
     if (values.entry_point === 'map' || values.entry_point === 'search') {

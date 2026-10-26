@@ -1,0 +1,51 @@
+name: Publish SofiaPermits website
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-sofiapermits-website
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the website and read-only API
+        uses: actions/checkout@v6
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.16.0'
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compile PHP source syntax before publication
+        run: |
+          php -l public/development-data.php
+          php -l public/api.php
+      - name: Build the production website
+        run: pnpm run build
+      - name: Publish and verify the API and static website
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/deploy_website_ftps.py --public public --input dist --backup seed/website-previous-${{ github.run_id }}
+      - name: Keep previous API source for recovery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: previous-api-source-${{ github.run_id }}
+          path: seed/website-previous-${{ github.run_id }}/
+          retention-days: 31
+          if-no-files-found: ignore

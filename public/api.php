@@ -1494,6 +1494,18 @@ try {
         PDO::ATTR_EMULATE_PREPARES => false,
     ]);
     $registry = load_registry_snapshot($filter);
+    if ($action === 'development') {
+        require_once __DIR__ . '/development-data.php';
+        if ($registry !== null) {
+            // The dashboard streams every validated document without a parcel
+            // or candidate selection. Retain the exact-ID integrity references,
+            // but release map-only parcel arrays before its grouped analysis.
+            $registry['source_plot_counts'] = array_map('count', $registry['source_ids']);
+            unset($registry['by_id'], $registry['flags'], $registry['source_ids'],
+                $registry['certificate_ids'], $registry['qualified_ids'], $registry['filter_options']);
+        }
+        respond(development_response($pdo, $registry, development_params()));
+    }
     $cadastre = load_cadastre_snapshot();
     if ($filter !== null) validate_cadastre_filter_selection($cadastre, $filter);
     if ($action === 'meta') {

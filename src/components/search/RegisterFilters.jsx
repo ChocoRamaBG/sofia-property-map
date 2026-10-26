@@ -3,6 +3,7 @@ import { Check, ChevronDown, FileCheck2, RotateCcw, SlidersHorizontal, X } from 
 import { useI18n } from '@/lib/i18n';
 import { REGISTER_FILTERS, REGISTER_COLORS, displayCount, displayDate } from '@/lib/registerUi';
 import { activeFilterCount, invalidFilterArea } from '@/lib/propertyFilters';
+import DocumentPeriods from './DocumentPeriods';
 
 const EMPTY_FILTERS = { searchTerms: [], searchMatch: 'all', recordTypes: [], match: 'any', district: '', descriptionTag: '', dateFrom: '', dateTo: '', hasAddress: false, areaMin: '', areaMax: '', cadastreDistricts: [], cadastrePurposes: [], cadastreUses: [], cadastrePropertyTypes: [] };
 const DOCUMENT_TYPES = REGISTER_FILTERS.filter((code) => code !== 'all' && code !== 'no_records');
@@ -13,10 +14,6 @@ const CADASTRAL_FACETS = [
   { field: 'cadastrePropertyTypes', options: 'property_types', label: 'filter.cadastrePropertyType' },
 ];
 const emptyDocumentDates = () => Object.fromEntries(DOCUMENT_TYPES.map((type) => [type, { from: '', to: '' }]));
-
-function inputDate(date) {
-  return String(date.getFullYear()) + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
-}
 
 function cadastralOptionLabel(option) {
   return String(option?.label_bg || option?.label || option?.key || '');
@@ -69,7 +66,6 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
   const advancedAvailable = options?.available === true;
   const scopedDatesAvailable = options?.scoped_dates_available === true;
   const advancedDisabled = noRecords || !advancedAvailable;
-  const dateRangeError = Boolean(filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo);
   const areaRangeError = invalidFilterArea(filters);
   const areaOptions = options?.parcel_area;
   const areaAvailable = areaOptions?.available === true;
@@ -130,14 +126,6 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
       <button type="button" className={'filter-all-preset ' + (activeCount === 0 ? 'is-active' : '')} onClick={reset}>
         <span>{t('filter.all')}</span>{counts?.plots != null && <span className="filter-count">{displayCount(counts.plots, lang)}</span>}{activeCount === 0 && <Check size={14} aria-hidden="true" />}
       </button>
-      <section className="cadastre-filters" aria-labelledby={id + '-cadastre-heading'}>
-        <div className="cadastre-filters-heading"><h3 id={id + '-cadastre-heading'}>{t('filter.cadastreTitle')}</h3>{cadastralCount > 0 && <span className="filter-active-count">{cadastralCount}</span>}</div>
-        {!cadastralAvailable && <p className="filter-selection-help">{options ? t('filter.cadastreUnavailable') : t('filter.cadastreLoading')}</p>}
-        <div className="cadastre-filter-controls">{CADASTRAL_FACETS.map((facet) => <CadastralFacetSelect key={facet.field} id={id + '-' + facet.field} label={t(facet.label)} selected={filters[facet.field]} options={Array.isArray(cadastralOptions?.[facet.options]) ? cadastralOptions[facet.options] : []} available={cadastralAvailable} onChange={(selected) => update({ [facet.field]: selected })} t={t} lang={lang} />)}</div>
-        <p className="filter-field-help">{t('filter.cadastreCombineHelp')}</p>
-        <p className="filter-field-help">{t('filter.cadastreEvidenceHelp')}</p>
-        {cadastralAvailable && cadastralOptions.source_url && <a className="filter-area-source" href={cadastralOptions.source_url} target="_blank" rel="noreferrer">{t('filter.parcelAreaSource')}</a>}
-      </section>
       <fieldset className="filter-types">
         <legend>{t('filter.documentTypes')}</legend>
         <div className="filter-options">{DOCUMENT_TYPES.map(typeOption)}</div>
@@ -149,6 +137,15 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
         </div>
         <p>{t('filter.matchHelp.' + filters.match)}</p>
       </div>}
+      <DocumentPeriods filters={filters} options={options} disabled={advancedDisabled || !scopedDatesAvailable} onChange={updateDocumentDates} />
+      <section className="cadastre-filters" aria-labelledby={id + '-cadastre-heading'}>
+        <div className="cadastre-filters-heading"><h3 id={id + '-cadastre-heading'}>{t('filter.cadastreTitle')}</h3>{cadastralCount > 0 && <span className="filter-active-count">{cadastralCount}</span>}</div>
+        {!cadastralAvailable && <p className="filter-selection-help">{options ? t('filter.cadastreUnavailable') : t('filter.cadastreLoading')}</p>}
+        <div className="cadastre-filter-controls">{CADASTRAL_FACETS.map((facet) => <CadastralFacetSelect key={facet.field} id={id + '-' + facet.field} label={t(facet.label)} selected={filters[facet.field]} options={Array.isArray(cadastralOptions?.[facet.options]) ? cadastralOptions[facet.options] : []} available={cadastralAvailable} onChange={(selected) => update({ [facet.field]: selected })} t={t} lang={lang} />)}</div>
+        <p className="filter-field-help">{t('filter.cadastreCombineHelp')}</p>
+        <p className="filter-field-help">{t('filter.cadastreEvidenceHelp')}</p>
+        {cadastralAvailable && cadastralOptions.source_url && <a className="filter-area-source" href={cadastralOptions.source_url} target="_blank" rel="noreferrer">{t('filter.parcelAreaSource')}</a>}
+      </section>
       <div className="filter-no-records-wrap">{typeOption('no_records')}</div>
       {noRecords && <p className="filter-selection-help">{t('filter.noRecordsHelp')}</p>}
       <div className="filter-advanced">
@@ -177,39 +174,6 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
             <legend className="sr-only">{t('filter.more')}</legend>
             <label className="filter-field" htmlFor={id + '-district'}><span>{t('filter.district')}</span><select id={id + '-district'} value={filters.district} onChange={(event) => update({ district: event.target.value })}><option value="">{t('filter.allDistricts')}</option>{districts.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
             <label className="filter-field" htmlFor={id + '-description'}><span>{t('filter.descriptionTag')}</span><select id={id + '-description'} value={filters.descriptionTag} onChange={(event) => update({ descriptionTag: event.target.value })}><option value="">{t('filter.anyDescription')}</option>{descriptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select><small>{t('filter.descriptionTagHelp')}</small></label>
-            <div className="filter-date-section filter-document-date-section">
-              <span className="filter-field-heading">{t('filter.documentDates')}</span>
-              <p className="filter-field-help">{t('filter.documentDatesHelp')}</p>
-              {advancedAvailable && !scopedDatesAvailable && <p className="filter-selection-help">{t('filter.documentDatesUnavailable')}</p>}
-              {(filters.dateFrom || filters.dateTo) && <div className="filter-legacy-date-block">
-                <div className="filter-document-date-heading"><strong>{t('filter.legacyDateTitle')}</strong><button type="button" className="filter-document-date-clear" onClick={() => update({ dateFrom: '', dateTo: '' })}>{t('filter.clearPeriod')}</button></div>
-                <p>{filters.dateFrom && filters.dateTo ? displayDate(filters.dateFrom, lang) + ' – ' + displayDate(filters.dateTo, lang) : filters.dateFrom ? t('filter.fromChip', { date: displayDate(filters.dateFrom, lang) }) : t('filter.toChip', { date: displayDate(filters.dateTo, lang) })}</p>
-                <p className="filter-field-help">{t('filter.legacyDateHelp')}</p>
-                {dateRangeError && <p className="filter-field-error" role="alert">{t('filter.dateRangeError')}</p>}
-              </div>}
-              <div className="filter-document-date-list">{DOCUMENT_TYPES.map((type) => {
-                const range = filters.documentDates[type];
-                const rangeError = Boolean(range.from && range.to && range.from > range.to);
-                const typeId = id + '-dates-' + type;
-                const available = options?.document_date_ranges?.[type];
-                const document = t('filter.' + type);
-                return <fieldset key={type} disabled={!scopedDatesAvailable} className={'filter-document-date-card ' + (range.from || range.to ? 'is-active' : '')}>
-                  <legend>{document}</legend>
-                  {(range.from || range.to) && <div className="filter-document-date-heading"><span>{t('filter.periodSelected')}</span><button type="button" className="filter-document-date-clear" aria-label={t('filter.clearDocumentPeriod', { document })} onClick={() => updateDocumentDates(type, { from: '', to: '' })}>{t('filter.clearPeriod')}</button></div>}
-                  <div className="filter-date-fields">
-                    <label className="filter-field" htmlFor={typeId + '-from'}><span>{t('filter.dateFrom')}</span><input id={typeId + '-from'} type="date" value={range.from} max={range.to || undefined} aria-label={t('filter.documentDateFrom', { document })} aria-invalid={rangeError || undefined} aria-describedby={rangeError ? typeId + '-error' : undefined} onChange={(event) => updateDocumentDates(type, { from: event.target.value })} /></label>
-                    <label className="filter-field" htmlFor={typeId + '-to'}><span>{t('filter.dateTo')}</span><input id={typeId + '-to'} type="date" value={range.to} min={range.from || undefined} aria-label={t('filter.documentDateTo', { document })} aria-invalid={rangeError || undefined} aria-describedby={rangeError ? typeId + '-error' : undefined} onChange={(event) => updateDocumentDates(type, { to: event.target.value })} /></label>
-                  </div>
-                  {rangeError && <p id={typeId + '-error'} className="filter-field-error" role="alert">{t('filter.dateRangeError')}</p>}
-                  <div className="filter-date-presets">
-                    <button type="button" aria-label={t('filter.documentDatePreset', { document, period: t('filter.thisYear') })} onClick={() => { const today = new Date(); updateDocumentDates(type, { from: today.getFullYear() + '-01-01', to: inputDate(today) }); }}>{t('filter.thisYear')}</button>
-                    <button type="button" aria-label={t('filter.documentDatePreset', { document, period: t('filter.lastYear') })} onClick={() => { const today = new Date(); updateDocumentDates(type, { from: inputDate(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())), to: inputDate(today) }); }}>{t('filter.lastYear')}</button>
-                  </div>
-                  {available?.date_min && available?.date_max && <p className="filter-field-help">{t('filter.dateRange', { from: displayDate(available.date_min, lang), to: displayDate(available.date_max, lang) })}</p>}
-                </fieldset>;
-              })}</div>
-              <p className="filter-field-help">{t('filter.dateHelp')}</p>
-            </div>
             <label className="filter-address-option"><input type="checkbox" checked={filters.hasAddress} onChange={(event) => update({ hasAddress: event.target.checked })} /><span>{t('filter.hasAddress')}<small>{t('filter.addressHelp')}</small></span></label>
           </fieldset>
           {!advancedDisabled && <p className="filter-selection-help">{t('filter.combineHelp')}</p>}

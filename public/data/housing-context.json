@@ -1,0 +1,590 @@
+{
+  "schema_version": 1,
+  "status": "available",
+  "retrieved_at": "2026-10-26T08:19:58Z",
+  "base_label": "2025 = 100",
+  "source": {
+    "name": "НСИ — индекси на цените на жилищата, гр. София",
+    "url": "https://www.nsi.bg/en/statistical-data/98/328",
+    "published_at": "2026-09-23",
+    "files": [
+      {
+        "metric": "index",
+        "url": "https://www.nsi.bg/sites/default/files/files/data/timeseries/HPI_2.4-en.xlsx",
+        "page_url": "https://www.nsi.bg/en/statistical-data/98/328",
+        "sha256": "f9cdfeee92414dc08c3f558640fa540772d92993bdc850b41bd22411a416de17",
+        "published_at": "2026-09-23"
+      },
+      {
+        "metric": "qoq_pct",
+        "url": "https://www.nsi.bg/sites/default/files/files/data/timeseries/HPI_2.5-en.xlsx",
+        "page_url": "https://www.nsi.bg/en/statistical-data/98/327",
+        "sha256": "60ade4836dfcb798b7f710e722f1123f13b1c7b9dbfd557162a10326c61a6dce",
+        "published_at": "2026-09-23"
+      },
+      {
+        "metric": "yoy_pct",
+        "url": "https://www.nsi.bg/sites/default/files/files/data/timeseries/HPI_2.6-en.xlsx",
+        "page_url": "https://www.nsi.bg/en/statistical-data/98/326",
+        "sha256": "d8b514229e9cdd859eace219dab388807f210532d7da101eb62016c27d60fb32",
+        "published_at": "2026-09-23"
+      }
+    ]
+  },
+  "coverage": {
+    "geography": "гр. София",
+    "geography_key": "sofia_city",
+    "frequency": "quarterly",
+    "from": "2015-Q1",
+    "through": "2026-Q2",
+    "observations": 46,
+    "dwelling_type": "Всички жилища — нови и съществуващи",
+    "unit": "index",
+    "seasonally_adjusted": false
+  },
+  "series": [
+    {
+      "period": "2015-Q1",
+      "index": 34.49,
+      "qoq_pct": 1,
+      "yoy_pct": 6.7,
+      "provisional": false
+    },
+    {
+      "period": "2015-Q2",
+      "index": 34.95,
+      "qoq_pct": 1.3,
+      "yoy_pct": 6.6,
+      "provisional": false
+    },
+    {
+      "period": "2015-Q3",
+      "index": 34.5,
+      "qoq_pct": -1.3,
+      "yoy_pct": 3,
+      "provisional": false
+    },
+    {
+      "period": "2015-Q4",
+      "index": 36.49,
+      "qoq_pct": 5.8,
+      "yoy_pct": 6.9,
+      "provisional": false
+    },
+    {
+      "period": "2016-Q1",
+      "index": 36.74,
+      "qoq_pct": 0.7,
+      "yoy_pct": 6.5,
+      "provisional": false
+    },
+    {
+      "period": "2016-Q2",
+      "index": 38.89,
+      "qoq_pct": 5.9,
+      "yoy_pct": 11.3,
+      "provisional": false
+    },
+    {
+      "period": "2016-Q3",
+      "index": 39.45,
+      "qoq_pct": 1.4,
+      "yoy_pct": 14.3,
+      "provisional": false
+    },
+    {
+      "period": "2016-Q4",
+      "index": 40.74,
+      "qoq_pct": 3.3,
+      "yoy_pct": 11.6,
+      "provisional": false
+    },
+    {
+      "period": "2017-Q1",
+      "index": 41.39,
+      "qoq_pct": 1.6,
+      "yoy_pct": 12.7,
+      "provisional": false
+    },
+    {
+      "period": "2017-Q2",
+      "index": 43.02,
+      "qoq_pct": 3.9,
+      "yoy_pct": 10.6,
+      "provisional": false
+    },
+    {
+      "period": "2017-Q3",
+      "index": 43.9,
+      "qoq_pct": 2,
+      "yoy_pct": 11.3,
+      "provisional": false
+    },
+    {
+      "period": "2017-Q4",
+      "index": 44.49,
+      "qoq_pct": 1.3,
+      "yoy_pct": 9.2,
+      "provisional": false
+    },
+    {
+      "period": "2018-Q1",
+      "index": 44.81,
+      "qoq_pct": 0.7,
+      "yoy_pct": 8.3,
+      "provisional": false
+    },
+    {
+      "period": "2018-Q2",
+      "index": 46.61,
+      "qoq_pct": 4,
+      "yoy_pct": 8.3,
+      "provisional": false
+    },
+    {
+      "period": "2018-Q3",
+      "index": 46.99,
+      "qoq_pct": 0.8,
+      "yoy_pct": 7,
+      "provisional": false
+    },
+    {
+      "period": "2018-Q4",
+      "index": 47.45,
+      "qoq_pct": 1,
+      "yoy_pct": 6.7,
+      "provisional": false
+    },
+    {
+      "period": "2019-Q1",
+      "index": 49.11,
+      "qoq_pct": 3.5,
+      "yoy_pct": 9.6,
+      "provisional": false
+    },
+    {
+      "period": "2019-Q2",
+      "index": 49.37,
+      "qoq_pct": 0.5,
+      "yoy_pct": 5.9,
+      "provisional": false
+    },
+    {
+      "period": "2019-Q3",
+      "index": 50.18,
+      "qoq_pct": 1.6,
+      "yoy_pct": 6.8,
+      "provisional": false
+    },
+    {
+      "period": "2019-Q4",
+      "index": 51.26,
+      "qoq_pct": 2.2,
+      "yoy_pct": 8,
+      "provisional": false
+    },
+    {
+      "period": "2020-Q1",
+      "index": 52.13,
+      "qoq_pct": 1.7,
+      "yoy_pct": 6.1,
+      "provisional": false
+    },
+    {
+      "period": "2020-Q2",
+      "index": 51.24,
+      "qoq_pct": -1.7,
+      "yoy_pct": 3.8,
+      "provisional": false
+    },
+    {
+      "period": "2020-Q3",
+      "index": 54.5,
+      "qoq_pct": 6.4,
+      "yoy_pct": 8.6,
+      "provisional": false
+    },
+    {
+      "period": "2020-Q4",
+      "index": 55.66,
+      "qoq_pct": 2.1,
+      "yoy_pct": 8.6,
+      "provisional": false
+    },
+    {
+      "period": "2021-Q1",
+      "index": 58.2,
+      "qoq_pct": 4.6,
+      "yoy_pct": 11.6,
+      "provisional": false
+    },
+    {
+      "period": "2021-Q2",
+      "index": 57.34,
+      "qoq_pct": -1.5,
+      "yoy_pct": 11.9,
+      "provisional": false
+    },
+    {
+      "period": "2021-Q3",
+      "index": 59.88,
+      "qoq_pct": 4.4,
+      "yoy_pct": 9.9,
+      "provisional": false
+    },
+    {
+      "period": "2021-Q4",
+      "index": 60.7,
+      "qoq_pct": 1.4,
+      "yoy_pct": 9.1,
+      "provisional": false
+    },
+    {
+      "period": "2022-Q1",
+      "index": 65.13,
+      "qoq_pct": 7.3,
+      "yoy_pct": 11.9,
+      "provisional": false
+    },
+    {
+      "period": "2022-Q2",
+      "index": 67.27,
+      "qoq_pct": 3.3,
+      "yoy_pct": 17.3,
+      "provisional": false
+    },
+    {
+      "period": "2022-Q3",
+      "index": 71.02,
+      "qoq_pct": 5.6,
+      "yoy_pct": 18.6,
+      "provisional": false
+    },
+    {
+      "period": "2022-Q4",
+      "index": 69.24,
+      "qoq_pct": -2.5,
+      "yoy_pct": 14.1,
+      "provisional": false
+    },
+    {
+      "period": "2023-Q1",
+      "index": 69.8,
+      "qoq_pct": 0.8,
+      "yoy_pct": 7.2,
+      "provisional": false
+    },
+    {
+      "period": "2023-Q2",
+      "index": 73.21,
+      "qoq_pct": 4.9,
+      "yoy_pct": 8.8,
+      "provisional": false
+    },
+    {
+      "period": "2023-Q3",
+      "index": 76.02,
+      "qoq_pct": 3.8,
+      "yoy_pct": 7,
+      "provisional": false
+    },
+    {
+      "period": "2023-Q4",
+      "index": 75.94,
+      "qoq_pct": -0.1,
+      "yoy_pct": 9.7,
+      "provisional": false
+    },
+    {
+      "period": "2024-Q1",
+      "index": 82.49,
+      "qoq_pct": 8.6,
+      "yoy_pct": 18.2,
+      "provisional": false
+    },
+    {
+      "period": "2024-Q2",
+      "index": 84.92,
+      "qoq_pct": 2.9,
+      "yoy_pct": 16,
+      "provisional": false
+    },
+    {
+      "period": "2024-Q3",
+      "index": 89.5,
+      "qoq_pct": 5.4,
+      "yoy_pct": 17.7,
+      "provisional": false
+    },
+    {
+      "period": "2024-Q4",
+      "index": 91.48,
+      "qoq_pct": 2.2,
+      "yoy_pct": 20.5,
+      "provisional": false
+    },
+    {
+      "period": "2025-Q1",
+      "index": 94.11,
+      "qoq_pct": 2.9,
+      "yoy_pct": 14.1,
+      "provisional": false
+    },
+    {
+      "period": "2025-Q2",
+      "index": 98.77,
+      "qoq_pct": 5,
+      "yoy_pct": 16.3,
+      "provisional": false
+    },
+    {
+      "period": "2025-Q3",
+      "index": 103.99,
+      "qoq_pct": 5.3,
+      "yoy_pct": 16.2,
+      "provisional": false
+    },
+    {
+      "period": "2025-Q4",
+      "index": 103.13,
+      "qoq_pct": -0.8,
+      "yoy_pct": 12.7,
+      "provisional": false
+    },
+    {
+      "period": "2026-Q1",
+      "index": 109.14,
+      "qoq_pct": 5.8,
+      "yoy_pct": 16,
+      "provisional": false
+    },
+    {
+      "period": "2026-Q2",
+      "index": 111.81,
+      "qoq_pct": 2.4,
+      "yoy_pct": 13.2,
+      "provisional": true
+    }
+  ],
+  "construction": {
+    "status": "available",
+    "retrieved_at": "2026-10-26T08:19:59Z",
+    "published_at": "2026-08-03",
+    "geography": "София (столица)",
+    "geography_key": "sofia_capital_province",
+    "frequency": "quarterly",
+    "coverage": {
+      "from": "2024-Q1",
+      "through": "2026-Q2",
+      "observations": 10,
+      "building_type": "Жилищни сгради",
+      "seasonally_adjusted": false
+    },
+    "sources": [
+      {
+        "kind": "permitted",
+        "name": "НСИ — издадени разрешителни за строеж на нови сгради",
+        "url": "https://www.nsi.bg/sites/default/files/files/data/timeseries/Construction_1_2.xlsx",
+        "page_url": "https://www.nsi.bg/statistical-data/414/927",
+        "published_at": "2026-08-03",
+        "sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+      },
+      {
+        "kind": "started",
+        "name": "НСИ — започнато строителство на нови сгради",
+        "url": "https://www.nsi.bg/sites/default/files/files/data/timeseries/Construction_1_3.xlsx",
+        "page_url": "https://www.nsi.bg/statistical-data/415/926",
+        "published_at": "2026-08-03",
+        "sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+      }
+    ],
+    "series": [
+      {
+        "period": "2024-Q1",
+        "permitted": {
+          "buildings": 217,
+          "dwellings": 3329,
+          "floor_area_m2": 346442,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 229,
+          "dwellings": 2506,
+          "floor_area_m2": 304863,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      },
+      {
+        "period": "2024-Q2",
+        "permitted": {
+          "buildings": 250,
+          "dwellings": 3365,
+          "floor_area_m2": 342881,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 320,
+          "dwellings": 2653,
+          "floor_area_m2": 311923,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      },
+      {
+        "period": "2024-Q3",
+        "permitted": {
+          "buildings": 261,
+          "dwellings": 2414,
+          "floor_area_m2": 281605,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 225,
+          "dwellings": 1759,
+          "floor_area_m2": 305639,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      },
+      {
+        "period": "2024-Q4",
+        "permitted": {
+          "buildings": 247,
+          "dwellings": 2539,
+          "floor_area_m2": 263833,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 212,
+          "dwellings": 2581,
+          "floor_area_m2": 278678,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      },
+      {
+        "period": "2025-Q1",
+        "permitted": {
+          "buildings": 349,
+          "dwellings": 3089,
+          "floor_area_m2": 327551,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 195,
+          "dwellings": 1005,
+          "floor_area_m2": 143877,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      },
+      {
+        "period": "2025-Q2",
+        "permitted": {
+          "buildings": 216,
+          "dwellings": 2531,
+          "floor_area_m2": 397448,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 295,
+          "dwellings": 1914,
+          "floor_area_m2": 258208,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      },
+      {
+        "period": "2025-Q3",
+        "permitted": {
+          "buildings": 230,
+          "dwellings": 3000,
+          "floor_area_m2": 287571,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 308,
+          "dwellings": 1897,
+          "floor_area_m2": 312345,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      },
+      {
+        "period": "2025-Q4",
+        "permitted": {
+          "buildings": 299,
+          "dwellings": 3864,
+          "floor_area_m2": 502193,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 194,
+          "dwellings": 1805,
+          "floor_area_m2": 236700,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      },
+      {
+        "period": "2026-Q1",
+        "permitted": {
+          "buildings": 265,
+          "dwellings": 3948,
+          "floor_area_m2": 602160,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 312,
+          "dwellings": 2885,
+          "floor_area_m2": 345196,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      },
+      {
+        "period": "2026-Q2",
+        "permitted": {
+          "buildings": 268,
+          "dwellings": 2878,
+          "floor_area_m2": 373367,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "8f5fd044b9cfc1338cd86a9b9033445ba26d385fbf782c0a1f87c4e4307e9f6e"
+        },
+        "started": {
+          "buildings": 202,
+          "dwellings": 1986,
+          "floor_area_m2": 268402,
+          "source_published_at": "2026-08-03",
+          "source_sha256": "4403dc48638c2f59b586df73dcd76a42845dc8ece8a0f6f4555e14f56ce7450f"
+        }
+      }
+    ],
+    "notes": [
+      "Официални тримесечни данни на НСИ за жилищните сгради в област София (столица). Това е различен обхват от индекса на жилищните цени за град София и от свързаното кадастрално подмножество на общинските регистри.",
+      "Брой сгради, брой жилища и разгъната застроена площ са различни показатели. Броят сгради не е брой документи. По-малко разрешени сгради може да съдържат повече жилища и по-голяма разгъната застроена площ.",
+      "Разрешеното и започнатото строителство са отделни наблюдения за тримесечието. Те не проследяват еднакви индивидуални проекти и отношението между тях не е процент на реализация.",
+      "НСИ публикува текущ динамичен ред с ограничен период. Вече извлечените валидирани по-стари тримесечия се запазват с датата и хеша на техния източник. По-новите публикации заменят припокриващите се периоди.",
+      "Не се добавят непубликувани тримесечия. Празните и конфиденциалните стойности остават неизвестни. Знакът „-“ в оригиналните таблици означава, че няма случай, и се отчита като нула.",
+      "Това са агрегирани сигнали за строителна активност, без разбивка по квартали. Те не доказват покупка на конкретен терен, финансово затруднение, завършване на жилища или посока на цените след 12 месеца."
+    ]
+  },
+  "notes": [
+    "Официален индекс на цените по сделки с жилища, закупени от домакинства, за град София. Не е цена в евро/м² и не е оценка на конкретен имот.",
+    "Тримесечни наблюдения. Месечни стойности не се изчисляват, липсващите стойности остават неизвестни. По-нови непубликувани тримесечия не се добавят.",
+    "Процентните изменения са публикуваните от НСИ стойности. Историческите данни могат да се ревизират. Последното отбелязано предварително тримесечие е означено отделно.",
+    "От началото на 2022 г. НСИ използва административни данни от Имотния регистър вместо извадково наблюдение. От 2024 г. се променя основата на годишните тегла. От 2026 г. серията е преизчислена при база 2025 = 100.",
+    "Индексът не е сезонно изгладен. Данните са за целия град, без разбивка по квартали, и не доказват причинна връзка с броя разрешения за строеж.",
+    "Промяна в броя разрешения сама по себе си не позволява прогноза за посоката на цените след 12 месеца. Нужни са съпоставими данни за започнати и завършени жилища, обем сделки, кредитиране и търсене."
+  ]
+}
