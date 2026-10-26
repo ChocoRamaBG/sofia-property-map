@@ -211,7 +211,8 @@ def validate_publish_tree(root: Path) -> dict:
 
 
 def projection(prj: str):
-    from pyproj import CRS, Transformer
+    from pyproj import CRS, Transformer, network
+    network.set_network_enabled(False)
     if 'PROJCS["BGS2005"' not in prj or len(prj) > 8192:
         raise ValueError('Unexpected published parcel projection')
     source = CRS.from_wkt(prj)

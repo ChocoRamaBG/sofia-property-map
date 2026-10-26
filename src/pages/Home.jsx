@@ -26,6 +26,9 @@ const AddressSearch = lazy(() => import('@/components/search/AddressSearch'));
 function watchingEnabled() {
   try { return JSON.parse(localStorage.getItem('sofiapermits.market.watching.v1') || 'null')?.enabled === true; } catch { return false; }
 }
+function initialParcelMode() {
+  try { return localStorage.getItem('sofiapermits.parcel-display.v1') === 'boundaries' ? 'boundaries' : 'points'; } catch { return 'points'; }
+}
 const readWorkspace = () => {
   const fragment = window.location.hash.slice(1);
   if (['map', 'offers', 'activity'].includes(fragment)) return fragment;
@@ -64,6 +67,9 @@ export default function Home() {
   const [canReturnToSearch, setCanReturnToSearch] = useState(false);
   const [hoveredKey, setHoveredKey] = useState(null);
   const [baseLayer, setBaseLayer] = useState('standard');
+  const [parcelMode, setParcelMode] = useState(initialParcelMode);
+  const [boundaryStatus, setBoundaryStatus] = useState(null);
+  const [boundaryRevision, setBoundaryRevision] = useState(0);
   const [query, setQuery] = useState('');
   const [searchResponse, setSearchResponse] = useState(null);
   const [searchError, setSearchError] = useState(false);
@@ -101,6 +107,12 @@ export default function Home() {
   const returningToSearch = useRef(false);
   const activeCount = activeFilterCount(filters);
   const { parcels, isLoading, truncated, total, apiError, filterError, refetch: refetchViewport } = useViewportParcels(bounds, filters, workspace === 'map');
+  const changeParcelMode = useCallback((next) => {
+    if (!['points', 'boundaries'].includes(next)) return;
+    setParcelMode(next); setBoundaryStatus(null);
+    try { localStorage.setItem('sofiapermits.parcel-display.v1', next); } catch { /* This view still works without storage. */ }
+  }, []);
+  const retryMapData = useCallback(() => { setBoundaryRevision((value) => value + 1); refetchViewport(); }, [refetchViewport]);
 
   useEffect(() => { if (!mapVisited) return undefined; let active = true; realEstateApi.meta().then((data) => { if (active) setMeta(data); }).catch(() => {}); return () => { active = false; }; }, [mapVisited]);
   useEffect(() => {
@@ -412,10 +424,10 @@ export default function Home() {
       {mapVisited && <main hidden={workspace !== 'map'} className={`map-workspace ${selected ? 'has-selected' : ''}`}>
         {!isMobile && <aside ref={sidebarScroll} className="workspace-sidebar" aria-label={t('search.title')}>{sidebar}</aside>}
         <div className="map-stage">
-          <AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на картата…' : 'Loading map…'}</div>}><MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} userLocation={userLocation} addressLocation={addressLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} /></AsyncPanel>
+          <AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на картата…' : 'Loading map…'}</div>}><MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} parcelMode={parcelMode} bounds={bounds} filters={filters} active={workspace === 'map'} boundaryRevision={boundaryRevision} onBoundaryStatusChange={setBoundaryStatus} userLocation={userLocation} addressLocation={addressLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} /></AsyncPanel>
           {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{t('search.mobile')}<SlidersHorizontal size={16} />{activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : <button className="map-context" onClick={editFilters} aria-label={t('filter.edit')}><span className="context-dot" />{t('map.city')}<span className="map-context-divider" /><SlidersHorizontal size={13} />{activeCount ? t('filter.activeCount', { n: activeCount }) : t('filter.all')}</button>}
-          <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} />
-          <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={!map || isLoading} truncated={truncated} apiError={apiError} filterError={filterError} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} onRetry={() => refetchViewport()} />
+          <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} parcelMode={parcelMode} onParcelModeChange={changeParcelMode} />
+          <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={!map || isLoading} truncated={truncated} apiError={apiError} filterError={filterError} parcelMode={parcelMode} boundaryStatus={boundaryStatus} onZoomIn={() => map?.zoomIn()} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} onRetry={retryMapData} />
         </div>
         {!isMobile && selected && <aside className="workspace-details" aria-label={t('panel.title')}><AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={20} className="animate-spin" />{t('panel.loading')}</div>}><DetailsPanel closeOnEscape parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} onBackToActivity={returnToDevelopment ? backToDevelopment : undefined} /></AsyncPanel></aside>}
       </main>}

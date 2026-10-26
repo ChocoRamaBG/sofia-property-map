@@ -1481,7 +1481,7 @@ function registry_plot_sources(string $id, array $registry): array {
 
 try {
     $action = $_GET['action'] ?? '';
-    $filter = in_array($action, ['viewport', 'search'], true) ? map_filter_params() : null;
+    $filter = in_array($action, ['viewport', 'search', 'boundaries'], true) ? map_filter_params() : null;
     $configFile = __DIR__ . '/private/config.php';
     if (!is_file($configFile)) {
         respond(['error' => 'Database is not configured. Copy private/config.example.php to private/config.php and enter the hosting database credentials.'], 503);
@@ -1508,7 +1508,20 @@ try {
     }
     $cadastre = load_cadastre_snapshot();
     if ($filter !== null) validate_cadastre_filter_selection($cadastre, $filter);
+    if ($action === 'boundaries') {
+        require_once __DIR__ . '/boundary-data.php';
+        try {
+            respond(boundary_response($pdo, $registry, $cadastre, $filter));
+        } catch (InvalidArgumentException $error) {
+            throw $error;
+        } catch (Throwable $error) {
+            error_log('Sofia boundary layer error: ' . $error->getMessage());
+            respond(boundary_reply(null, 'unavailable', 'boundary_service_unavailable'), 503);
+        }
+    }
     if ($action === 'meta') {
+        require_once __DIR__ . '/boundary-data.php';
+        $boundaryMeta = boundary_metadata();
         $counts = [
             'plots' => (int)$pdo->query('SELECT COUNT(*) FROM parcels WHERE latitude IS NOT NULL AND longitude IS NOT NULL')->fetchColumn(),
             'documents' => (int)$pdo->query('SELECT COUNT(*) FROM source_documents')->fetchColumn(),
@@ -1523,7 +1536,7 @@ try {
             $counts['plots_with_exploitation_certificate'] = coordinate_backed_id_count($pdo, array_keys($registry['certificate_ids']));
             $counts['linked_exploitation_certificates'] = $registry['linked_certificates'];
             respond(['counts' => $counts, 'imports' => $registry['imports'], 'registry_generated_at' => $registry['generated_at'],
-                'filter_options' => $registry['filter_options'] + ['parcel_area' => cadastre_filter_options($cadastre), 'cadastre' => cadastre_attribute_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre)]);
+                'filter_options' => $registry['filter_options'] + ['parcel_area' => cadastre_filter_options($cadastre), 'cadastre' => cadastre_attribute_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre), 'boundaries' => $boundaryMeta]);
         }
         $counts['documents_by_source'] = [];
         $counts['plots_by_source'] = [];
@@ -1544,7 +1557,7 @@ try {
             unset($row['source_file'], $row['source_snapshot']);
             return $row;
         }, $imports);
-        respond(['counts' => $counts, 'imports' => $imports, 'filter_options' => filter_options(null) + ['parcel_area' => cadastre_filter_options($cadastre), 'cadastre' => cadastre_attribute_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre)]);
+        respond(['counts' => $counts, 'imports' => $imports, 'filter_options' => filter_options(null) + ['parcel_area' => cadastre_filter_options($cadastre), 'cadastre' => cadastre_attribute_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre), 'boundaries' => $boundaryMeta]);
     }
 
     if ($action === 'viewport') {

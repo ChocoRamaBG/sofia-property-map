@@ -57,6 +57,9 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    concurrency:
+      group: sofia-parcel-boundaries
+      cancel-in-progress: false
     env:
       NAG_HEADLESS: '1'
     steps:

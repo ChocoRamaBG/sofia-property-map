@@ -34,6 +34,7 @@ jobs:
       - name: Compile PHP source syntax before publication
         run: |
           php -l public/development-data.php
+          php -l public/boundary-data.php
           php -l public/api.php
       - name: Build the production website
         run: pnpm run build

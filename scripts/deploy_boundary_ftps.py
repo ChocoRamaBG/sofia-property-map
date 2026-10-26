@@ -95,14 +95,22 @@ def activate(ftp: FTP_TLS, payload: bytes, previous: bytes | None) -> None:
         assert_pointer(ftp, previous)
         ftp.rename(temporary, ACTIVE)
         pending = False
-        if read_remote(ftp, ACTIVE, MAX_MANIFEST_BYTES) != payload:
-            if previous is None:
-                ftp.delete(ACTIVE)
-            else:
-                restore = f'{PRIVATE}/boundaries-active.{uuid4().hex}.restore.json'
-                put_verified(ftp, restore, previous, MAX_MANIFEST_BYTES)
-                ftp.rename(restore, ACTIVE)
-            raise ValueError('Boundary activation failed; the previous state was restored')
+        try:
+            if read_remote(ftp, ACTIVE, MAX_MANIFEST_BYTES) != payload:
+                raise ValueError('Boundary active pointer differs after rename')
+        except Exception as verification_error:
+            try:
+                if previous is None:
+                    ftp.delete(ACTIVE)
+                    assert_pointer(ftp, None)
+                else:
+                    restore = f'{PRIVATE}/boundaries-active.{uuid4().hex}.restore.json'
+                    put_verified(ftp, restore, previous, MAX_MANIFEST_BYTES)
+                    ftp.rename(restore, ACTIVE)
+                    assert_pointer(ftp, previous)
+            except Exception as rollback_error:
+                raise RuntimeError('Boundary activation verification and rollback failed; inspect the private active pointer before another publication') from rollback_error
+            raise ValueError('Boundary activation verification failed; the previous state was restored') from verification_error
     finally:
         if pending:
             try:

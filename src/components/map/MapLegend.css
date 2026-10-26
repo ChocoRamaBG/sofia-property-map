@@ -22,4 +22,8 @@
 .map-status-note { margin-top: 11px; color: #5c7467; }
 .map-status-error { margin-bottom: 11px; color: #a43f33; }
 .map-status-warning { margin-top: 10px; color: #8d6825; }
+.map-boundary-evidence { margin-top: 12px; color: #516e60; }
+.map-boundary-evidence > strong { color: #2c5746; }
+.map-boundary-evidence p { margin-top: 7px; }
+.map-boundary-evidence a { display: inline-block; margin-top: 8px; color: #176a4f; text-decoration: underline; text-underline-offset: 3px; }
 @media (max-width: 600px) { .map-status-dock { left: 12px; max-width: calc(100% - 24px); } }
