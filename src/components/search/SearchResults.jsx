@@ -1,7 +1,8 @@
 import React from 'react';
-import { ArrowUpRight, FileCheck2, Loader2, MapPin } from 'lucide-react';
+import { ArrowUpRight, Loader2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { pointType, REGISTER_COLORS } from '@/lib/registerUi';
+import DocumentTypeIcon from '@/components/DocumentTypeIcon';
 
 export default function SearchResults({ results = [], onSelect, query, total, mappedTotal, unmappedTotal, truncated = false, loading = false, error }) {
   const { t, lang } = useI18n();
@@ -22,7 +23,7 @@ export default function SearchResults({ results = [], onSelect, query, total, ma
         {isPreview && <p className="search-preview-note">{knownTotal === null ? t('search.previewUnknown', { n: previews.length }) : t('search.previewOfTotal', { n: previews.length, total: knownTotal.toLocaleString(lang === 'bg' ? 'bg-BG' : 'en-GB') })}</p>}
         <ul>{previews.map((result) => <li key={result.cadastral_id}>
           <button type="button" data-search-result-id={result.cadastral_id} onClick={() => onSelect(result)}>
-            <span className="result-icon" style={{ color: REGISTER_COLORS[pointType(result)] }}>{result.has_exploitation_certificate ? <FileCheck2 size={18} /> : <MapPin size={18} />}</span>
+            <span className="result-icon" style={{ color: REGISTER_COLORS[pointType(result)] }}><DocumentTypeIcon type={pointType(result)} size={18} /></span>
             <span className="min-w-0"><strong>{result.cadastral_id}</strong><small>{result.has_exploitation_certificate ? t('certificate.foundShort') : result.secondary}</small>{(result.lat === null || result.lng === null) && <small className="search-result-unmapped">{t('search.withoutCoordinates')}</small>}</span>
             <ArrowUpRight size={15} className="ml-auto shrink-0 text-slate-400" />
           </button>

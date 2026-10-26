@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ArrowUpRight, BarChart3, Bookmark, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clipboard, ExternalLink, FileCheck2, FileText, Filter, Info, Layers3, Loader2, MapPin, RefreshCw, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, BarChart3, Bookmark, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clipboard, ExternalLink, FileText, Filter, Info, Layers3, Loader2, MapPin, RefreshCw, Search, ShieldCheck, SlidersHorizontal, X } from 'lucide-react';
 import { Bar, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useI18n } from '@/lib/i18n';
+import { REGISTER_COLORS } from '@/lib/registerUi';
 import { developmentApi } from '@/api/developmentApi';
 import { marketApi } from '@/api/marketApi';
+import { DOCUMENT_TYPE_ICONS as TYPE_ICONS } from '@/components/DocumentTypeIcon';
 import './DevelopmentDashboard.css';
 
 const STATE_KEY = 'sofiapermits-development-view-v1';
 const SAVED_KEY = 'sofiapermits-development-saved-v1';
 const TYPES = ['building_permits', 'projecting_visas', 'exploitation_certificates', 'exploitation_certificates_legacy'];
 const DEFAULT = { type: 'building_permits', year: '', date_from: '', date_to: '', district: '', investor: 'any', q: '', period: 'month' };
-const COLORS = { building_permits: '#287d68', projecting_visas: '#cd9d49', exploitation_certificates: '#578ead', exploitation_certificates_legacy: '#a1b7c4' };
+const COLORS = { ...REGISTER_COLORS, exploitation_certificates_legacy: '#477564' };
 const TYPE_TEXT = {
   building_permits: ['Разрешения за строеж', 'Building permits'],
   projecting_visas: ['Визи за проектиране', 'Design visas'],
@@ -18,7 +20,6 @@ const TYPE_TEXT = {
   exploitation_certificates_legacy: ['Архивни удостоверения', 'Archived certificates'],
 };
 const TYPE_SHORT = { building_permits: ['Разрешения', 'Permits'], projecting_visas: ['Визи', 'Visas'], exploitation_certificates: ['Удостоверения', 'Certificates'], exploitation_certificates_legacy: ['Архив', 'Archive'] };
-const TYPE_ICONS = { building_permits: Building2, projecting_visas: FileText, exploitation_certificates: FileCheck2, exploitation_certificates_legacy: FileCheck2 };
 function storedState() {
   try {
     const saved = JSON.parse(sessionStorage.getItem(STATE_KEY));

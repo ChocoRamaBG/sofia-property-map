@@ -82,9 +82,26 @@
 .filter-workbench .document-periods-body { padding: 5px 11px 12px; }
 .filter-workbench .document-periods-explanation { margin: 6px 0 9px; color: var(--filter-muted); font-size: 11px; line-height: 1.65; }
 .filter-workbench .document-period-row { margin-top: 8px; }
-.filter-workbench .document-period-row > summary { min-height: 58px; padding: 11px; }
-.filter-workbench .document-period-row > summary strong { font-size: 12px; }
-.filter-workbench .document-period-row > summary small { font-size: 11px; }
+.filter-workbench .document-period-label { display: flex; align-items: center; gap: 8px; min-height: 62px; padding: 10px 11px; }
+.filter-workbench .document-period-label > svg { flex-shrink: 0; color: var(--period-color); }
+.filter-workbench .document-period-label > div { flex: 1; min-width: 0; }
+.filter-workbench .document-period-label h3 { margin: 0; font-size: 12px; font-weight: 600; line-height: 1.5; color: var(--filter-ink); }
+.filter-workbench .document-period-label small { display: block; margin-top: 3px; font-size: 10px; line-height: 1.5; color: var(--filter-muted); }
+.filter-workbench .document-period-clear { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; margin: -3px -8px -3px 0; border: 0; border-radius: 7px; background: transparent; color: var(--filter-muted); cursor: pointer; }
+.filter-workbench .document-period-clear:hover { color: var(--filter-ink); background: #e9f1eb; }
+.filter-workbench .document-timeframe-values { display: flex; justify-content: space-between; gap: 12px; }
+.filter-workbench .document-timeframe-values > span:last-child { text-align: right; }
+.filter-workbench .document-timeframe-values small { display: block; margin-bottom: 2px; font-size: 10px; color: var(--filter-muted); }
+.filter-workbench .document-timeframe-values strong { display: block; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--filter-ink); }
+.filter-workbench .document-timeframe-slider { position: relative; display: flex; align-items: center; width: calc(100% - 24px); height: 44px; margin: 1px 12px; touch-action: none; user-select: none; cursor: pointer; }
+.filter-workbench .document-timeframe-slider[data-disabled] { opacity: .45; cursor: default; }
+.filter-workbench .document-timeframe-track { position: relative; flex-grow: 1; height: 5px; border-radius: 5px; background: #dce7df; }
+.filter-workbench .document-timeframe-range { position: absolute; height: 100%; border-radius: inherit; background: var(--period-color); }
+.filter-workbench .document-timeframe-thumb { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; cursor: grab; }
+.filter-workbench .document-timeframe-thumb::after { content: ''; width: 18px; height: 18px; border: 2px solid var(--period-color); border-radius: 50%; background: #fff; box-shadow: 0 1px 4px #173b3926; }
+.filter-workbench .document-timeframe-thumb:focus-visible { outline: 2px solid var(--period-color); outline-offset: -6px; }
+.filter-workbench .document-timeframe-thumb:active { cursor: grabbing; }
+.filter-workbench .document-timeframe-extent { margin: 0; font-size: 10px; line-height: 1.5; color: var(--filter-muted); }
 .filter-workbench .document-period-controls { padding: 12px 10px 9px; }
 .filter-workbench .document-period-controls .filter-field > input,
 .filter-workbench .document-period-controls .filter-field > select { min-height: 44px; padding: 8px 6px; }
@@ -93,6 +110,9 @@
 .filter-workbench .document-custom-range > summary > svg { flex-shrink: 0; }
 .filter-workbench .document-custom-range:not([open]) > summary > svg { transform: none; }
 .filter-workbench .document-custom-range > .filter-date-fields { padding: 5px 0 8px; }
+.filter-workbench .document-custom-range > div { padding: 5px 0 8px; }
+.filter-workbench .document-period-shortcuts { margin-top: 10px; }
+.filter-workbench .document-custom-range .filter-date-presets { margin-top: 10px; }
 .filter-workbench .filter-date-presets { display: flex; flex-direction: column; align-items: stretch; gap: 5px; }
 .filter-workbench .filter-date-presets > button { display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px; min-height: 44px; padding: 7px 9px; font-size: 11px; text-align: left; }
 
@@ -107,5 +127,5 @@
 }
 
 @media (max-width: 420px) {
-  .filter-workbench .document-custom-range > .filter-date-fields { grid-template-columns: minmax(0, 1fr); }
+  .filter-workbench .document-custom-range .filter-date-fields { grid-template-columns: minmax(0, 1fr); }
 }

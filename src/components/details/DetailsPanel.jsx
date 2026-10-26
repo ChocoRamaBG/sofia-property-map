@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUpRight, Check, ChevronDown, Copy, FileCheck2, FileText, Info, Link2, Loader2, MapPin, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUpRight, Check, ChevronDown, Copy, FileText, Info, Link2, Loader2, MapPin, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { displayDate, fieldLabel, fieldValue, REGISTER_COLORS } from '@/lib/registerUi';
 import { realEstateApi } from '@/api/realEstateApi';
 import CadastralSummary from '@/components/details/CadastralSummary';
 import DevelopmentTimeline from './DevelopmentTimeline';
+import DocumentTypeIcon from '@/components/DocumentTypeIcon';
 
 const REGISTER_GROUPS = ['building_permits', 'projecting_visas', 'exploitation_certificates', 'exploitation_certificates_legacy'];
 const SOURCE_ORDER = Object.fromEntries(REGISTER_GROUPS.map((code, index) => [code, index]));
@@ -81,7 +82,7 @@ function collectOverview(sources, lang) {
 function RegisterDocument({ source, document, lang, t }) {
   const entries = Object.entries(document.raw_fields || {});
   return <article className="register-document">
-    <div className="document-heading"><FileText size={15} /><strong>{recordTitle(source, document, lang, t)}</strong></div>
+    <div className="document-heading"><DocumentTypeIcon type={source.code} size={15} /><strong>{recordTitle(source, document, lang, t)}</strong></div>
     <div className="document-dates">
       {document.issued_at && <span>{t('panel.issueDate', { date: displayDate(document.issued_at, lang) })}</span>}
       <span>{document.snapshot_date ? t('dataset.snapshot', { date: displayDate(document.snapshot_date, lang) }) : t('dataset.dateUnknown')}</span>
@@ -166,7 +167,7 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
           <CadastralSummary cadastre={currentData?.cadastre} status={currentData?.cadastre_status} />
           <DevelopmentTimeline sources={sources} lang={lang} onOpenSource={goToSource} />
           <section className={`certificate-status certificate-status-compact ${hasCertificate ? 'certificate-found' : 'certificate-unknown'}`}>
-            <div className="certificate-status-top"><span className="certificate-icon"><FileCheck2 size={18} /></span><div><p>{t('certificate.heading')} · „{t('panel.act16')}“</p><h3>{hasCertificate ? t('certificate.found') : t('certificate.notLinked')}</h3></div>{hasCertificate && <span className="certificate-linked-count">{certificateDocuments.length}</span>}</div>
+            <div className="certificate-status-top"><span className="certificate-icon"><DocumentTypeIcon type="exploitation_certificates" size={18} /></span><div><p>{t('certificate.heading')} · „{t('panel.act16')}“</p><h3>{hasCertificate ? t('certificate.found') : t('certificate.notLinked')}</h3></div>{hasCertificate && <span className="certificate-linked-count">{certificateDocuments.length}</span>}</div>
             <p className="certificate-explanation">{hasCertificate ? t('certificate.foundHelp') : t('certificate.notLinkedHelp')}</p>
             <details className="certificate-term"><summary><Info size={13} />{t('certificate.term')}</summary><p>{t('certificate.termHelp')}</p></details>
           </section>
