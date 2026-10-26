@@ -1,14 +1,18 @@
 .parcel-boundary-path { cursor: pointer; }
 .parcel-boundary-path:focus { outline: none; stroke: #133e34; stroke-width: 4; filter: drop-shadow(0 0 2px #fff); }
-.parcel-boundary-tooltip { max-width: min(310px, calc(100vw - 34px)); padding: 9px 11px; white-space: normal; color: #294c3b; font-size: 11px; line-height: 1.7; }
-.parcel-boundary-tooltip strong { display: block; font-size: 12px; margin-bottom: 3px; }
-.parcel-boundary-tooltip span { display: block; }
-.parcel-boundary-tooltip span:last-child { margin-top: 4px; color: #6b775f; font-size: 10px; }
+.leaflet-tooltip.parcel-boundary-tooltip,
+.leaflet-tooltip.parcel-fallback-tooltip { box-sizing: border-box; max-width: min(310px, calc(100vw - 32px)); white-space: normal; overflow-wrap: anywhere; word-break: normal; }
+.leaflet-tooltip.parcel-boundary-tooltip *,
+.leaflet-tooltip.parcel-fallback-tooltip * { box-sizing: border-box; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.leaflet-tooltip.parcel-boundary-tooltip { padding: 9px 11px; color: #294c3b; font-size: 11px; line-height: 1.7; }
+.leaflet-tooltip.parcel-boundary-tooltip strong { display: block; font-size: 12px; margin-bottom: 3px; }
+.leaflet-tooltip.parcel-boundary-tooltip span { display: block; }
+.leaflet-tooltip.parcel-boundary-tooltip span:last-child { margin-top: 4px; color: #6b775f; font-size: 10px; }
 .map-parcel-mode { display: flex; flex-direction: column; gap: 2px; padding: 3px; border: 1px solid #d6e2d7; border-radius: 8px; background: #ffffffed; box-shadow: 0 3px 9px #173b3918; }
 .map-parcel-mode > button { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 2px; min-width: 42px; min-height: 44px; padding: 5px 4px; border: 0; border-radius: 5px; color: #55705c; background: transparent; font-size: 8px; line-height: 1.4; }
 .map-parcel-mode > button[aria-pressed="true"] { background: #e1eee1; color: #225b3e; font-weight: 650; }
 .map-parcel-mode > button:hover { background: #eff5eb; }
 .map-parcel-mode > button:focus-visible { outline: 3px solid #2b7650; outline-offset: 2px; }
-.parcel-fallback-tooltip { max-width: 250px; white-space: normal; }
-.parcel-fallback-tooltip > :is(strong, span) { display: block; }
+.leaflet-tooltip.parcel-fallback-tooltip { max-width: min(280px, calc(100vw - 32px)); line-height: 1.6; }
+.leaflet-tooltip.parcel-fallback-tooltip :is(strong, span) { display: block; }
 @media (max-width: 700px) { .map-parcel-mode > button { min-width: 40px; min-height: 44px; } }
