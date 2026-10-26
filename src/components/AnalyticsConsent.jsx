@@ -53,7 +53,8 @@ export default function AnalyticsConsent({ privacyUrl }) {
               </button>
             )}
           </div>
-          <p className="analytics-consent__description">
+          <p className="analytics-consent__description">{pick('Разрешете незадължителна статистика за ползването на сайта. Търсенията и избраните имоти не се изпращат.', 'Allow optional site usage statistics. Searches and selected properties are not sent.')}</p>
+          <details className="analytics-consent__details"><summary>{pick('Подробности и поверителност', 'Details and privacy')}</summary><p className="analytics-consent__description">
             {pick(
               'С ваше разрешение Google Analytics използва бисквитки за статистика за посещенията и действията в сайта. Не изпращаме търсенията, избраните имоти или местоположението на картата. Сайтът работи и без аналитика.',
               'With your permission, Google Analytics uses cookies to measure visits and actions on this site. We do not send your searches, selected properties or map location. The site works without analytics.',
@@ -79,6 +80,7 @@ export default function AnalyticsConsent({ privacyUrl }) {
               {pick('Поверителност в Google', 'Google privacy')}
             </a>
           </div>
+          </details>
           <div className="analytics-consent__actions">
             <button
               type="button"

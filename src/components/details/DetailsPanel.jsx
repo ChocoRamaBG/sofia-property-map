@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUpRight, Check, Copy, FileCheck2, FileText, Info, Link2, Loader2, MapPin, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUpRight, Check, ChevronDown, Copy, FileCheck2, FileText, Info, Link2, Loader2, MapPin, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { displayDate, fieldLabel, fieldValue, REGISTER_COLORS } from '@/lib/registerUi';
 import { realEstateApi } from '@/api/realEstateApi';
@@ -86,28 +86,36 @@ function RegisterDocument({ source, document, lang, t }) {
       {document.issued_at && <span>{t('panel.issueDate', { date: displayDate(document.issued_at, lang) })}</span>}
       <span>{document.snapshot_date ? t('dataset.snapshot', { date: displayDate(document.snapshot_date, lang) }) : t('dataset.dateUnknown')}</span>
     </div>
-    {entries.length ? <dl>{entries.map(([label, value]) => <div className="register-field" key={label}><dt>{fieldLabel(source.code, label, lang)}</dt><dd className={!hasValue(value) ? 'register-field-empty' : undefined}>{hasValue(value) ? documentFieldValue(source, label, value, lang) : t('panel.fieldEmpty')}</dd></div>)}</dl> : <p className="document-fields-empty">{t('panel.noFields')}</p>}
+    {entries.length ? <details className="document-fields-disclosure"><summary>{lang === 'bg' ? 'Всички полета от регистъра' : 'All register fields'} <span>{entries.length}</span><ChevronDown size={14} aria-hidden="true" /></summary><dl>{entries.map(([label, value]) => <div className="register-field" key={label}><dt>{fieldLabel(source.code, label, lang)}</dt><dd className={!hasValue(value) ? 'register-field-empty' : undefined}>{hasValue(value) ? documentFieldValue(source, label, value, lang) : t('panel.fieldEmpty')}</dd></div>)}</dl></details> : <p className="document-fields-empty">{t('panel.noFields')}</p>}
     <a className="document-source-link" href={source.source_url} target="_blank" rel="noreferrer">{t('panel.verifyRecord')}<ArrowUpRight size={13} /></a>
   </article>;
 }
 
-export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackToActivity }) {
+export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackToActivity, closeOnEscape = false }) {
   const { t, lang } = useI18n();
   const [state, setState] = useState({ key: null, loading: false, data: null, error: null });
   const [copied, setCopied] = useState(false);
   const sourceSections = useRef({});
   const scrollArea = useRef(null);
+  const heading = useRef(null);
   const key = parcel?.cadastral_id || null;
   useEffect(() => {
     if (!key) { setState({ key: null, loading: false, data: null, error: null }); return undefined; }
     let active = true;
     setState({ key, loading: true, data: null, error: null }); setCopied(false);
     scrollArea.current?.scrollTo({ top: 0 });
+    heading.current?.focus({ preventScroll: true });
     realEstateApi.plot(key).then((data) => { if (active) setState({ key, loading: false, data, error: null }); }).catch((error) => { if (active) setState({ key, loading: false, data: null, error: error.message }); });
     return () => { active = false; };
   }, [key]);
   async function copyId() { try { await navigator.clipboard.writeText(key); setCopied(true); window.setTimeout(() => setCopied(false), 1600); } catch { /* Clipboard availability depends on the browser context. */ } }
-  function goToSource(code) { sourceSections.current[code]?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  function goToSource(code) {
+    const section = sourceSections.current[code];
+    if (!section) return;
+    section.open = true;
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    section.querySelector('summary')?.focus({ preventScroll: true });
+  }
   if (!parcel) return null;
   const currentData = state.key === key ? state.data : null;
   const plot = currentData?.plot || parcel;
@@ -123,27 +131,19 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
   const hasCertificate = Boolean(certificateDocuments.length);
   const locationAvailable = plot.lat != null && plot.lng != null;
   const overview = collectOverview(sources, lang);
-  const navigationCodes = [...new Set([...REGISTER_GROUPS, ...sources.map((source) => source.code)])];
   return (
-    <div className="details-panel">
+    <div className="details-panel" onKeyDown={(event) => { if (closeOnEscape && event.key === 'Escape' && !event.defaultPrevented) { event.stopPropagation(); onClose?.(); } }}>
       {onBackToActivity && <button className="details-back-search" type="button" onClick={onBackToActivity}><ArrowLeft size={17} aria-hidden="true" /><span>{lang === 'bg' ? 'Обратно към списъка с документи' : 'Back to the document list'}</span></button>}
       {onBackToSearch && <button className="details-back-search" type="button" onClick={onBackToSearch}><ArrowLeft size={17} aria-hidden="true" /><span>{t('panel.backToSearch')}</span></button>}
       <div className="details-header">
-        <div><p className="eyebrow">{t('panel.title')}</p><h2>{plot.cadastral_id}</h2><span className="details-coordinate-type"><MapPin size={12} />{locationAvailable ? t('panel.coordinateMarker') : t('panel.noCoordinate')}</span></div>
+        <div><p className="eyebrow">{t('panel.title')}</p><h2 ref={heading} tabIndex={-1}>{plot.cadastral_id}</h2><span className="details-coordinate-type"><MapPin size={12} />{locationAvailable ? t('panel.coordinateMarker') : t('panel.noCoordinate')}</span></div>
         <div className="details-header-actions"><button onClick={copyId} aria-label={t('panel.copyId')} title={copied ? t('panel.copied') : t('panel.copyId')}>{copied ? <Check size={17} className="text-emerald-700" /> : <Copy size={17} />}</button>{onClose && <button onClick={onClose} aria-label={t('panel.close')}><X size={19} /></button>}</div>
       </div>
       <div className="details-scroll" ref={scrollArea}>
         {state.loading || state.key !== key ? <div className="details-loading"><Loader2 size={24} className="animate-spin" /><span>{t('panel.loading')}</span></div> : state.error ? <div className="details-error" role="alert">{t('panel.loadError')}<p>{state.error}</p></div> : <>
           <section className="property-overview">
             <div className="property-overview-heading"><div><h3>{t('panel.overview')}</h3><p>{t('panel.overviewHelp')}</p></div><span className="property-record-total">{t('panel.recordsCount', { n: count })}</span></div>
-            <nav className="property-record-navigation" aria-label={t('panel.recordNavigation')}>
-              {navigationCodes.map((code) => {
-                const source = sources.find((item) => item.code === code);
-                const sourceCount = source?.documents?.length || 0;
-                return <button key={code} onClick={() => goToSource(code)} disabled={!sourceCount} style={{ '--source-color': sourceColor(code) }}><span>{sourceShortLabel(source || { code }, lang, t)}</span><strong>{sourceCount}</strong>{sourceCount > 0 && <ArrowDown size={12} />}</button>;
-              })}
-            </nav>
-            <div className="property-coordinate"><MapPin size={15} /><div><span>{t('panel.location')}</span>{locationAvailable ? <strong>{Number(plot.lat).toFixed(6)}, {Number(plot.lng).toFixed(6)}</strong> : <p>{t('panel.noCoordinateHelp')}</p>}</div></div>
+            <details className="property-coordinate-details"><summary><MapPin size={14} />{lang === 'bg' ? 'Координати на точката' : 'Point coordinates'}<ChevronDown size={14} /></summary><div className="property-coordinate"><MapPin size={15} /><div><span>{t('panel.location')}</span>{locationAvailable ? <strong>{Number(plot.lat).toFixed(6)}, {Number(plot.lng).toFixed(6)}</strong> : <p>{t('panel.noCoordinateHelp')}</p>}</div></div></details>
             {overview.length > 0 && <dl className="property-overview-fields">{overview.map((field) => <div className="property-overview-field" key={field.key}><dt>{t(`panel.overview.${field.key}`)}</dt><dd>{field.values.map((entry) => <div className="property-overview-value" key={entry.value}><p>{entry.value}</p><div className="overview-value-sources">{[...entry.sources.values()].map((source) => <button key={source.code} onClick={() => goToSource(source.code)} title={sourceLabel(source, lang)}>{sourceShortLabel(source, lang, t)}<ArrowDown size={10} /></button>)}</div></div>)}</dd></div>)}</dl>}
           </section>
           <CadastralSummary cadastre={currentData?.cadastre} status={currentData?.cadastre_status} />
@@ -156,10 +156,11 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
           <div className="record-summary"><h3>{t('panel.allAvailableRecords')}</h3><span>{t('panel.recordsCount', { n: count })}</span></div>
           {count > 0 && <p className="record-versions-note">{t('panel.recordVersions')}</p>}
           {sources.length === 0 && <div className="no-records"><FileText size={25} /><p>{t('panel.noRecords')}</p><a href="https://nag.sofia.bg/RegisterCertificateForExploitationBuildings" target="_blank" rel="noreferrer">{t('panel.openSource')}<ArrowUpRight size={14} /></a></div>}
-          <div className="source-cards">{sources.map((source) => <section className="source-card" key={source.code} ref={(element) => { sourceSections.current[source.code] = element; }} style={{ '--source-color': sourceColor(source.code) }}>
+          <div className="source-cards">{sources.map((source) => <details className="source-card source-card-disclosure" key={source.code} ref={(element) => { sourceSections.current[source.code] = element; }} style={{ '--source-color': sourceColor(source.code) }}>
+            <summary className="source-disclosure-heading"><span><strong>{sourceShortLabel(source, lang, t)}</strong><small>{t('panel.recordsCount', { n: source.documents?.length || 0 })}</small></span><ChevronDown size={17} aria-hidden="true" /></summary>
             <div className="source-card-header"><div className="source-card-kind-row"><span className="source-kind">{t(`source.${source.code}`) === `source.${source.code}` ? sourceLabel(source, lang) : t(`source.${source.code}`)}</span><span className="source-record-count">{t('panel.recordsCount', { n: source.documents?.length || 0 })}</span></div><h4>{sourceLabel(source, lang)}</h4><p>{source.snapshot_date ? t('dataset.snapshot', { date: displayDate(source.snapshot_date, lang) }) : t('dataset.dateUnknown')}</p><a href={source.source_url} target="_blank" rel="noreferrer">{t('panel.openSource')}<ArrowUpRight size={15} /></a></div>
             {(source.documents || []).map((document) => <RegisterDocument key={document.id} source={source} document={document} lang={lang} t={t} />)}
-          </section>)}</div>
+          </details>)}</div>
           <details className="evidence-details"><summary><Link2 size={15} />{t('panel.matchMethod')}</summary><p>{t('panel.matchHelp')}</p></details>
           <details className="evidence-details"><summary><MapPin size={15} />{t('panel.coordinateSource')}</summary><p>{locationAvailable ? t('panel.coordinateEvidence') : t('panel.noCoordinateHelp')}</p></details>
           <p className="details-disclaimer">{t('panel.disclaimer')}</p>

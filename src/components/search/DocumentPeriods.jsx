@@ -15,8 +15,10 @@ export default function DocumentPeriods({ filters, options, disabled, onChange }
   const bg = lang === 'bg';
   const update = (type, range) => onChange(type, range);
   const active = TYPES.filter(([type]) => filters.documentDates[type]?.from || filters.documentDates[type]?.to).length;
-  return <section className="document-periods" aria-labelledby={id + '-title'}>
-    <div className="document-periods-heading"><CalendarDays size={17} /><div><h3 id={id + '-title'}>{bg ? 'Период за всеки документ' : 'A period for each document'}</h3><p>{bg ? 'Филтрира по дата на издаване, не по дата на импорт.' : 'Filters issue dates, not import dates.'}</p></div>{active > 0 && <span className="filter-active-count">{active}</span>}</div>
+  return <details className="document-periods filter-disclosure filter-period-disclosure">
+    <summary className="filter-disclosure-heading"><CalendarDays size={17} aria-hidden="true" /><span><strong id={id + '-title'}>{bg ? 'Дата на документите' : 'Document dates'}</strong><small>{active ? (bg ? `${active} зададени периода по вид документ` : `${active} selected document periods`) : bg ? 'Година, месец или точни дати за всеки вид' : 'Year, month or exact dates for each type'}</small></span>{active > 0 && <span className="filter-active-count">{active}</span>}<ChevronDown size={17} aria-hidden="true" /></summary>
+    <div className="document-periods-body" aria-labelledby={id + '-title'}>
+    <p className="document-periods-explanation">{bg ? 'Изберете документа, после периода. Използваме датата на издаване.' : 'Choose the document, then its period. Dates refer to issue dates.'}</p>
     {TYPES.map(([type, labelBg, labelEn]) => {
       const range = filters.documentDates[type] || { from: '', to: '' };
       const available = options?.document_date_ranges?.[type];
@@ -26,6 +28,7 @@ export default function DocumentPeriods({ filters, options, disabled, onChange }
       const maxYear = Number(String(available?.date_max || '').slice(0, 4));
       const years = minYear > 1800 && maxYear >= minYear ? Array.from({ length: Math.min(150, maxYear - minYear + 1) }, (_, i) => maxYear - i) : [];
       const selectedYear = range.from && range.to && range.from.slice(0, 4) === range.to.slice(0, 4) ? range.from.slice(0, 4) : '';
+      if (selectedYear && !years.includes(Number(selectedYear))) years.unshift(Number(selectedYear));
       const invalid = range.from && range.to && range.from > range.to;
       const selectedMonth = selectedYear && range.from.slice(0, 7) === range.to.slice(0, 7) ? range.from.slice(5, 7) : '';
       const monthRange = (year, month) => {
@@ -41,12 +44,13 @@ export default function DocumentPeriods({ filters, options, disabled, onChange }
             <label className="filter-field"><span>{bg ? 'Година' : 'Year'}</span><select value={selectedYear} onChange={(event) => update(type, monthRange(event.target.value, ''))}><option value="">{bg ? 'Изберете година' : 'Choose year'}</option>{years.map((year) => <option value={year} key={year}>{year}</option>)}</select></label>
             <label className="filter-field"><span>{bg ? 'Месец' : 'Month'}</span><select value={selectedMonth} disabled={!selectedYear} onChange={(event) => update(type, monthRange(selectedYear, event.target.value))}><option value="">{bg ? 'Цялата година' : 'Entire year'}</option>{Array.from({ length: 12 }, (_, month) => <option key={month} value={String(month + 1).padStart(2, '0')}>{new Intl.DateTimeFormat(bg ? 'bg-BG' : 'en-GB', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, month, 1)))}</option>)}</select></label>
           </div>
-          <div className="filter-date-fields">
-            <label className="filter-field"><span>{bg ? 'От дата' : 'From date'}</span><input type="date" value={range.from} max={range.to || undefined} aria-label={`${label} — ${bg ? 'от дата' : 'from date'}`} aria-invalid={invalid || undefined} onChange={(event) => update(type, { ...range, from: event.target.value })} /></label>
-            <label className="filter-field"><span>{bg ? 'До дата' : 'To date'}</span><input type="date" value={range.to} min={range.from || undefined} aria-label={`${label} — ${bg ? 'до дата' : 'to date'}`} aria-invalid={invalid || undefined} onChange={(event) => update(type, { ...range, to: event.target.value })} /></label>
-          </div>
-          {invalid && <p className="filter-field-error" role="alert">{bg ? 'Началната дата трябва да е преди крайната.' : 'The start date must precede the end date.'}</p>}
+          <details className="document-custom-range"><summary>{bg ? 'Задай точни начална и крайна дата' : 'Set exact start and end dates'}<ChevronDown size={14} aria-hidden="true" /></summary><div className="filter-date-fields">
+            <label className="filter-field"><span>{bg ? 'От дата' : 'From date'}</span><input type="date" value={range.from} max={range.to || undefined} aria-label={`${label} — ${bg ? 'от дата' : 'from date'}`} aria-invalid={invalid || undefined} aria-describedby={invalid ? `${id}-${type}-error` : undefined} onChange={(event) => update(type, { ...range, from: event.target.value })} /></label>
+            <label className="filter-field"><span>{bg ? 'До дата' : 'To date'}</span><input type="date" value={range.to} min={range.from || undefined} aria-label={`${label} — ${bg ? 'до дата' : 'to date'}`} aria-invalid={invalid || undefined} aria-describedby={invalid ? `${id}-${type}-error` : undefined} onChange={(event) => update(type, { ...range, to: event.target.value })} /></label>
+          </div></details>
+          {invalid && <p id={`${id}-${type}-error`} className="filter-field-error" role="alert">{bg ? 'Началната дата трябва да е преди крайната.' : 'The start date must precede the end date.'}</p>}
           <div className="filter-date-presets">
+            {available?.date_max && <button type="button" onClick={() => update(type, monthRange(available.date_max.slice(0, 4), available.date_max.slice(5, 7)))}>{bg ? 'Най-новият месец в набора' : 'Latest month in the dataset'}</button>}
             {available?.date_max && <button type="button" onClick={() => { const end = available.date_max; const start = new Date(end + 'T12:00:00Z'); start.setUTCDate(start.getUTCDate() - 89); update(type, { from: start.toISOString().slice(0, 10), to: end }); }}>{bg ? 'Най-новите 90 дни в набора' : 'Latest 90 days in the dataset'}</button>}
             {hasRange && <button type="button" onClick={() => update(type, { from: '', to: '' })}><RotateCcw size={12} />{bg ? 'Изчисти периода' : 'Clear period'}</button>}
           </div>
@@ -56,5 +60,6 @@ export default function DocumentPeriods({ filters, options, disabled, onChange }
     })}
     {active > 1 && <p className="filter-field-help">{bg ? 'Всеки зададен период изисква съответния документ за имота. За сравнение на общия брой документи отворете „Строителна активност“.' : 'Each selected period requires its named document for the parcel. Use Construction activity to compare document totals.'}</p>}
     {disabled && <p className="filter-field-help">{bg ? 'Периодите изискват свързани документи и заредени регистрови дати.' : 'Periods require linked records and loaded registry dates.'}</p>}
-  </section>;
+    </div>
+  </details>;
 }

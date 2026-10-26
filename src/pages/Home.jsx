@@ -1,5 +1,5 @@
-import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, ChevronDown, HardHat, Loader2, MapPin, Search, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import React, { lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ArrowUpRight, ChevronDown, Loader2, MapPin, Search, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -10,19 +10,22 @@ import { activeFilterCount, invalidFilterArea, invalidFilterDates, invalidFilter
 import { realEstateApi } from '@/api/realEstateApi';
 import { isAddressQuery } from '@/lib/searchIntent';
 import AppHeader from '@/components/AppHeader';
-import DataNotice from '@/components/DemoNotice';
-import MapView from '@/components/map/MapView';
+import AsyncPanel from '@/components/AsyncPanel';
 import MapToolbar from '@/components/map/MapToolbar';
 import MapLegend from '@/components/map/MapLegend';
 import SearchPanel from '@/components/search/SearchPanel';
-import AddressSearch from '@/components/search/AddressSearch';
-import MarketDashboard, { MarketTeaser } from '@/components/market/MarketDashboard';
 import RegisterFilters from '@/components/search/RegisterFilters';
-import DetailsPanel from '@/components/details/DetailsPanel';
 import useViewportParcels from '@/hooks/useViewportParcels';
 
 const INITIAL_VIEW = { center: [42.684, 23.333], zoom: 13 };
 const DevelopmentDashboard = lazy(() => import('@/components/development/DevelopmentDashboard'));
+const MarketDashboard = lazy(() => import('@/components/market/MarketDashboard'));
+const MapView = lazy(() => import('@/components/map/MapView'));
+const DetailsPanel = lazy(() => import('@/components/details/DetailsPanel'));
+const AddressSearch = lazy(() => import('@/components/search/AddressSearch'));
+function watchingEnabled() {
+  try { return JSON.parse(localStorage.getItem('sofiapermits.market.watching.v1') || 'null')?.enabled === true; } catch { return false; }
+}
 const readWorkspace = () => {
   const fragment = window.location.hash.slice(1);
   if (['map', 'offers', 'activity'].includes(fragment)) return fragment;
@@ -74,9 +77,14 @@ export default function Home() {
   const [addressProvider, setAddressProvider] = useState(null);
   const [searchTab, setSearchTab] = useState('records');
   const [workspace, setWorkspace] = useState(readWorkspace);
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  const [mapVisited, setMapVisited] = useState(() => readWorkspace() === 'map');
+  const [marketVisited, setMarketVisited] = useState(() => readWorkspace() === 'offers' || watchingEnabled());
+  const [addressVisited, setAddressVisited] = useState(false);
   const [developmentVisited, setDevelopmentVisited] = useState(() => readWorkspace() === 'activity');
   const [returnToDevelopment, setReturnToDevelopment] = useState(false);
-  const pendingDevelopmentPlot = useRef(null);
+  const pendingMapNavigation = useRef(null);
   const [marketAlertCount, setMarketAlertCount] = useState(0);
   const searchRequest = useRef(0);
   const addressRequestSequence = useRef(0);
@@ -92,14 +100,28 @@ export default function Home() {
   const pendingSearchReturn = useRef(null);
   const returningToSearch = useRef(false);
   const activeCount = activeFilterCount(filters);
-  const { parcels, isLoading, truncated, total, apiError, filterError, refetch: refetchViewport } = useViewportParcels(bounds, filters);
+  const { parcels, isLoading, truncated, total, apiError, filterError, refetch: refetchViewport } = useViewportParcels(bounds, filters, workspace === 'map');
 
-  useEffect(() => { let active = true; realEstateApi.meta().then((data) => { if (active) setMeta(data); }).catch(() => {}); return () => { active = false; }; }, []);
+  useEffect(() => { if (!mapVisited) return undefined; let active = true; realEstateApi.meta().then((data) => { if (active) setMeta(data); }).catch(() => {}); return () => { active = false; }; }, [mapVisited]);
+  useEffect(() => {
+    const updateWatching = () => { if (watchingEnabled()) setMarketVisited(true); };
+    window.addEventListener('storage', updateWatching);
+    return () => window.removeEventListener('storage', updateWatching);
+  }, []);
+  useEffect(() => { if (searchTab === 'address' || addressRequest) setAddressVisited(true); }, [searchTab, addressRequest]);
   useEffect(() => { writePropertyFilters(filters); }, [filters]);
   useEffect(() => {
     const update = () => {
       const next = readWorkspace();
+      if (workspaceRef.current !== next) {
+        navigationGeneration.current += 1;
+        pendingAddressNavigation.current = null;
+        setAddressRequest(null);
+        workspaceRef.current = next;
+      }
       if (next === 'activity') setDevelopmentVisited(true);
+      if (next === 'map') setMapVisited(true);
+      if (next === 'offers') setMarketVisited(true);
       setWorkspace(next);
     };
     window.addEventListener('hashchange', update);
@@ -108,9 +130,12 @@ export default function Home() {
   const changeWorkspace = useCallback((next) => {
     if (!['map', 'offers', 'activity'].includes(next)) return;
     if (next === 'activity') setDevelopmentVisited(true);
+    if (next === 'map') setMapVisited(true);
+    if (next === 'offers') setMarketVisited(true);
     navigationGeneration.current += 1; pendingAddressNavigation.current = null; setAddressRequest(null);
     trackEvent('workspace_open', { workspace: next });
     setSearchOpen(false);
+    workspaceRef.current = next;
     setWorkspace(next);
     window.location.hash = next;
     const nextUrl = new URL(window.location.href);
@@ -121,10 +146,14 @@ export default function Home() {
     if (workspace !== 'map' || !map) return undefined;
     const frame = window.requestAnimationFrame(() => {
       map.invalidateSize({ pan: false });
-      const plot = pendingDevelopmentPlot.current;
-      pendingDevelopmentPlot.current = null;
-      if (plot?.lat != null && plot?.lng != null && Number.isFinite(Number(plot.lat)) && Number.isFinite(Number(plot.lng))) {
-        map.stop(); map.setView([Number(plot.lat), Number(plot.lng)], 17, { animate: false });
+      const pending = pendingMapNavigation.current;
+      pendingMapNavigation.current = null;
+      if (!pending || pending.generation !== navigationGeneration.current) return;
+      map.stop();
+      if (pending.kind === 'bounds') {
+        map.fitBounds([[pending.bounds.south, pending.bounds.west], [pending.bounds.north, pending.bounds.east]], { padding: [48, 48], maxZoom: 17, animate: false });
+      } else if (pending.lat != null && pending.lng != null && Number.isFinite(Number(pending.lat)) && Number.isFinite(Number(pending.lng))) {
+        map.setView([Number(pending.lat), Number(pending.lng)], pending.zoom || 17, { animate: false });
       }
     });
     return () => window.cancelAnimationFrame(frame);
@@ -132,8 +161,8 @@ export default function Home() {
   const openDevelopmentPlot = useCallback((plot) => {
     if (!plot?.cadastral_id) return;
     searchReturn.current = null; pendingSearchReturn.current = null; setCanReturnToSearch(false);
-    pendingDevelopmentPlot.current = plot;
     setSelected(plot); setReturnToDevelopment(true); changeWorkspace('map');
+    pendingMapNavigation.current = { kind: 'point', ...plot, zoom: 17, generation: navigationGeneration.current };
   }, [changeWorkspace]);
   const backToDevelopment = useCallback(() => {
     setSelected(null); setReturnToDevelopment(false); changeWorkspace('activity');
@@ -178,12 +207,13 @@ export default function Home() {
     searchReturn.current = {
       center: center ? [center.lat, center.lng] : null,
       zoom: currentMap?.getZoom(),
+      bounds: searchResponse?.bounds,
       scrollTop: sidebarScroll.current?.scrollTop || 0,
       listScrollTop: list?.scrollTop || 0,
       resultId: plot.cadastral_id,
     };
     setCanReturnToSearch(true);
-  }, [filters.searchTerms]);
+  }, [filters.searchTerms, searchResponse]);
   const handleReturnToSearch = useCallback(() => {
     const saved = searchReturn.current;
     if (!saved) return;
@@ -208,6 +238,9 @@ export default function Home() {
         currentMap.stop();
         currentMap.invalidateSize({ pan: false });
         currentMap.setView(saved.center, saved.zoom, { animate: false });
+      } else if (saved.bounds && ['south', 'north', 'west', 'east'].every((edge) => Number.isFinite(Number(saved.bounds[edge])))) {
+        if (currentMap) currentMap.fitBounds([[saved.bounds.south, saved.bounds.west], [saved.bounds.north, saved.bounds.east]], { padding: [48, 48], maxZoom: 17, animate: false });
+        else pendingMapNavigation.current = { kind: 'bounds', bounds: saved.bounds, generation: navigationGeneration.current };
       }
       sidebarScroll.current?.scrollTo({ top: saved.scrollTop, behavior: 'instant' });
       const list = searchPanel.current?.querySelector('.search-results ul');
@@ -318,7 +351,8 @@ export default function Home() {
       const extent = response.bounds;
       const coordinates = ['south', 'north', 'west', 'east'].map((key) => Number(extent?.[key]));
       if (shouldFit && generation === navigationGeneration.current && extent && coordinates.every(Number.isFinite) && coordinates[0] <= coordinates[1] && coordinates[2] <= coordinates[3]) {
-        mapRef.current?.fitBounds([[coordinates[0], coordinates[2]], [coordinates[1], coordinates[3]]], { padding: [48, 48], maxZoom: 17 });
+        if (mapRef.current) mapRef.current.fitBounds([[coordinates[0], coordinates[2]], [coordinates[1], coordinates[3]]], { padding: [48, 48], maxZoom: 17 });
+        else pendingMapNavigation.current = { kind: 'bounds', bounds: extent, generation };
       }
     }).catch((error) => {
       if (request === searchRequest.current && error.name !== 'AbortError') setSearchError(true);
@@ -331,6 +365,7 @@ export default function Home() {
     rememberSearchView(result);
     setSearchOpen(false); setSelected(result);
     if (map && result.lat != null && result.lng != null) map.flyTo([Number(result.lat), Number(result.lng)], 18);
+    else if (result.lat != null && result.lng != null) pendingMapNavigation.current = { kind: 'point', ...result, zoom: 18, generation: navigationGeneration.current };
   }, [map, rememberSearchView]);
   const handleLocate = useCallback(() => {
     if (!map || !navigator.geolocation) { toast({ title: t('map.locateError'), variant: 'destructive' }); return; }
@@ -361,39 +396,35 @@ export default function Home() {
     </div>
     <div id="address-search-panel" className="address-panel-wrap" role="tabpanel" aria-labelledby="address-search-tab" hidden={searchTab !== 'address'}>
       {activeCount > 0 && <div className="address-filter-notice"><p>{lang === 'bg' ? `Картата остава ограничена от ${activeCount} активни условия за имоти.` : `The map still uses ${activeCount} active property conditions.`}</p><button onClick={clearFilters}>{lang === 'bg' ? 'Покажи всички имоти' : 'Show all properties'}</button></div>}
-      <AddressSearch onSelectLocation={handleAddressSelect} selectedLocation={addressLocation} onClearLocation={clearAddress}
-        externalRequest={addressRequest} isRequestCurrent={addressRequestCurrent} onRequestHandled={addressRequestHandled} onLookupStart={addressLookupStarted} onProviderChange={setAddressProvider} />
+      {addressVisited && <AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={20} className="animate-spin" />{lang === 'bg' ? 'Зареждане на търсенето по адрес…' : 'Loading address search…'}</div>}><AddressSearch onSelectLocation={handleAddressSelect} selectedLocation={addressLocation} onClearLocation={clearAddress}
+        externalRequest={addressRequest} isRequestCurrent={addressRequestCurrent} onRequestHandled={addressRequestHandled} onLookupStart={addressLookupStarted} onProviderChange={setAddressProvider} /></AsyncPanel>}
     </div>
-    <button type="button" className="development-map-teaser" onClick={() => changeWorkspace('activity')}><span className="development-teaser-icon"><HardHat size={21} /></span><span><strong>{lang === 'bg' ? 'Нови разрешения и проекти' : 'New permits & projects'}</strong><small>{lang === 'bg' ? 'Документи, възложители и активност по период' : 'Documents, contracting parties & activity by period'}</small></span><ArrowUpRight size={17} /></button>
     <div ref={filterPanel}><RegisterFilters value={filters} onChange={handleFilterChange} counts={meta?.counts} options={meta?.filter_options} /></div>
-    <div className="map-market-discovery"><MarketTeaser onOpen={() => changeWorkspace('offers')} alertCount={marketAlertCount} /></div>
-    <div className="map-instructions"><span><MapPin size={18} /></span><div><strong>{t('map.howTitle')}</strong><p>{t('map.howHelp')}</p></div></div>
     <DatasetSummary meta={meta} />
   </>;
 
   return (
     <div className="map-app">
       <AppHeader activeWorkspace={workspace} onWorkspaceChange={changeWorkspace} alertCount={marketAlertCount} />
-      {workspace === 'map' && <DataNotice />}
-      <div className="offers-workspace-host" hidden={workspace !== 'offers'}><MarketDashboard onBackToMap={() => changeWorkspace('map')} onAlertCountChange={setMarketAlertCount} /></div>
-      {developmentVisited && <div className="development-workspace-host" hidden={workspace !== 'activity'}><Suspense fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на строителната активност…' : 'Loading construction activity…'}</div>}><DevelopmentDashboard onOpenPlot={openDevelopmentPlot} onOpenMap={openDevelopmentMap} onOpenOffers={() => changeWorkspace('offers')} /></Suspense></div>}
+      {marketVisited && <div className="offers-workspace-host" hidden={workspace !== 'offers'}><AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на обявите…' : 'Loading offers…'}</div>}><MarketDashboard active={workspace === 'offers'} onBackToMap={() => changeWorkspace('map')} onAlertCountChange={setMarketAlertCount} /></AsyncPanel></div>}
+      {developmentVisited && <div className="development-workspace-host" hidden={workspace !== 'activity'}><AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на строителната активност…' : 'Loading construction activity…'}</div>}><DevelopmentDashboard onOpenPlot={openDevelopmentPlot} onOpenMap={openDevelopmentMap} onOpenOffers={() => changeWorkspace('offers')} /></AsyncPanel></div>}
       {workspace === 'map' && returnToDevelopment && <div className="development-return-bar"><button type="button" onClick={backToDevelopment}><ArrowLeft size={16} />{lang === 'bg' ? 'Обратно към строителната активност' : 'Back to construction activity'}</button><span>{lang === 'bg' ? 'Избраният период и списъкът са запазени.' : 'Your selected period and list are preserved.'}</span></div>}
-      <main hidden={workspace !== 'map'} className={`map-workspace ${selected ? 'has-selected' : ''}`}>
+      {mapVisited && <main hidden={workspace !== 'map'} className={`map-workspace ${selected ? 'has-selected' : ''}`}>
         {!isMobile && <aside ref={sidebarScroll} className="workspace-sidebar" aria-label={t('search.title')}>{sidebar}</aside>}
         <div className="map-stage">
-          <MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} userLocation={userLocation} addressLocation={addressLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} />
+          <AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на картата…' : 'Loading map…'}</div>}><MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} userLocation={userLocation} addressLocation={addressLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} /></AsyncPanel>
           {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{t('search.mobile')}<SlidersHorizontal size={16} />{activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : <button className="map-context" onClick={editFilters} aria-label={t('filter.edit')}><span className="context-dot" />{t('map.city')}<span className="map-context-divider" /><SlidersHorizontal size={13} />{activeCount ? t('filter.activeCount', { n: activeCount }) : t('filter.all')}</button>}
           <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} />
-          <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={isLoading} truncated={truncated} apiError={apiError} filterError={filterError} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} onRetry={() => refetchViewport()} />
+          <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={!map || isLoading} truncated={truncated} apiError={apiError} filterError={filterError} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} onRetry={() => refetchViewport()} />
         </div>
-        {!isMobile && selected && <aside className="workspace-details" aria-label={t('panel.title')}><DetailsPanel parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} onBackToActivity={returnToDevelopment ? backToDevelopment : undefined} /></aside>}
-      </main>
+        {!isMobile && selected && <aside className="workspace-details" aria-label={t('panel.title')}><AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={20} className="animate-spin" />{t('panel.loading')}</div>}><DetailsPanel closeOnEscape parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} onBackToActivity={returnToDevelopment ? backToDevelopment : undefined} /></AsyncPanel></aside>}
+      </main>}
       {isMobile && workspace === 'map' && <>
         <Sheet open={searchOpen} onOpenChange={setSearchOpen}><SheetContent ref={sidebarScroll} side="bottom" className="mobile-sidebar-sheet overflow-y-auto p-0" aria-describedby={undefined}
           onOpenAutoFocus={(event) => { if (pendingSearchReturn.current) event.preventDefault(); }}
           onCloseAutoFocus={(event) => { if (searchReturn.current || returningToSearch.current) event.preventDefault(); }}><SheetTitle className="sr-only">{t('search.mobile')}</SheetTitle>{sidebar}</SheetContent></Sheet>
         <Sheet open={Boolean(selected)} onOpenChange={(open) => { if (!open) handleCloseDetails(); }}><SheetContent side="bottom" className="mobile-details-sheet overflow-hidden p-0" aria-describedby={undefined}
-          onCloseAutoFocus={(event) => { if (returningToSearch.current) { event.preventDefault(); returningToSearch.current = false; } }}><SheetTitle className="sr-only">{t('panel.title')}</SheetTitle><DetailsPanel parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} onBackToActivity={returnToDevelopment ? backToDevelopment : undefined} /></SheetContent></Sheet>
+          onCloseAutoFocus={(event) => { if (returningToSearch.current) { event.preventDefault(); returningToSearch.current = false; } }}><SheetTitle className="sr-only">{t('panel.title')}</SheetTitle><AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={20} className="animate-spin" />{t('panel.loading')}</div>}><DetailsPanel parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} onBackToActivity={returnToDevelopment ? backToDevelopment : undefined} /></AsyncPanel></SheetContent></Sheet>
       </>}
     </div>
   );

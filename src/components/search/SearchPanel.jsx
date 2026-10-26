@@ -9,7 +9,7 @@ export default function SearchPanel({
   resultTotal, resultMappedTotal, resultUnmappedTotal, resultsTruncated, searchError,
   addressIntent = false, onFindAddress, onSubmitAsRecords, addressProviderLabel,
 }) {
-  const { t } = useI18n();
+  const { t, pick } = useI18n();
   const matchGroup = useId();
   const queryLength = Array.from(query.trim()).length;
   const termTooLong = queryLength > (addressIntent ? 160 : 120);
@@ -19,9 +19,8 @@ export default function SearchPanel({
   const recordLoading = !addressIntent && loading;
   return (
     <section className="search-panel" ref={panelRef}>
-      <p className="eyebrow">{t('search.eyebrow')}</p>
       <h1>{t('search.heading')}</h1>
-      <p className="search-description">{t('search.description')}</p>
+      <p className="search-description">{pick('Адрес, кадастрален номер или име на фирма.', 'Address, cadastral ID or company name.')}</p>
       <form onSubmit={(event) => { event.preventDefault(); if (canSubmit) onSubmit(); }}>
         <label className="search-input-wrap">
           <Search size={18} aria-hidden="true" />
@@ -29,12 +28,12 @@ export default function SearchPanel({
           {query && <button type="button" onClick={onClear} aria-label={t('search.clearDraft')}><X size={15} aria-hidden="true" /></button>}
         </label>
         <button className="search-submit" type="submit" disabled={!canSubmit}>
-          {recordLoading ? <Loader2 size={17} className="animate-spin" aria-hidden="true" /> : addressIntent ? <MapPin size={17} aria-hidden="true" /> : <Search size={17} aria-hidden="true" />} {recordLoading ? t('search.searching') : t(addressIntent ? 'search.findAddress' : 'search.addTerm')} {!recordLoading && <ArrowRight size={16} className="ml-auto" aria-hidden="true" />}
+          {recordLoading ? <Loader2 size={17} className="animate-spin" aria-hidden="true" /> : addressIntent ? <MapPin size={17} aria-hidden="true" /> : <Search size={17} aria-hidden="true" />} {recordLoading ? t('search.searching') : addressIntent ? t('search.findAddress') : searchTerms.length ? pick('Добави условие', 'Add condition') : pick('Търси', 'Search')} {!recordLoading && <ArrowRight size={16} className="ml-auto" aria-hidden="true" />}
         </button>
       </form>
-      {queryLength > 0 && <button type="button" className="search-intent-alternative" disabled={addressIntent ? !canAddRecordTerm : !canFindAddress} onClick={addressIntent ? onSubmitAsRecords : onFindAddress}>{addressIntent ? <Search size={14} aria-hidden="true" /> : <MapPin size={14} aria-hidden="true" />}{t(addressIntent ? 'search.asRecords' : 'search.asAddress')}</button>}
-      <p className="search-hint" id={`${matchGroup}-hint`}>{t(addressIntent ? 'search.addressHint' : 'search.hint')}</p>
-      {queryLength > 0 && <p className="search-provider-notice">{t('search.addressProvider', { provider: addressProviderLabel || t('search.addressService') })}</p>}
+      {queryLength > 0 && <button type="button" className="search-intent-alternative" disabled={addressIntent ? !canAddRecordTerm : !canFindAddress} onClick={addressIntent ? onSubmitAsRecords : onFindAddress}>{addressIntent ? <Search size={14} aria-hidden="true" /> : <MapPin size={14} aria-hidden="true" />}{t(addressIntent ? 'search.asRecords' : 'search.asAddress')}{!addressIntent && <small> · {addressProviderLabel || t('search.addressService')}</small>}</button>}
+      <p className="search-hint" id={`${matchGroup}-hint`}>{addressIntent ? t('search.addressHint') : pick('Добавяйте и премахвайте условия, без да губите резултатите.', 'Add or remove conditions without losing your results.')}</p>
+      {addressIntent && queryLength > 0 && <p className="search-provider-notice">{t('search.addressProvider', { provider: addressProviderLabel || t('search.addressService') })}</p>}
       {termTooLong && <p className="search-term-limit" id={`${matchGroup}-limit`} role="status">{t(addressIntent ? 'search.addressTooLong' : 'search.termTooLong')}</p>}
       {searchTerms.length > 0 && (
         <div className="search-active-terms">
@@ -64,13 +63,12 @@ export default function SearchPanel({
                   </label>
                 ))}
               </div>
-              <p>{t(`search.matchHelp.${searchMatch === 'any' ? 'any' : 'all'}`)}</p>
             </fieldset>
           )}
-          <p className="search-map-help">{t('search.mapHelp')}</p>
         </div>
       )}
       <SearchResults results={results} onSelect={onSelectResult} query={resultQuery} total={resultTotal} mappedTotal={resultMappedTotal} unmappedTotal={resultUnmappedTotal} truncated={resultsTruncated} loading={loading} error={searchError} />
+      <details className="search-help"><summary>{pick('Как работи търсенето?', 'How does search work?')}</summary><p>{t('search.hint')}</p><p>{t('search.mapHelp')}</p>{searchTerms.length >= 2 && <p>{t(`search.matchHelp.${searchMatch === 'any' ? 'any' : 'all'}`)}</p>}</details>
     </section>
   );
 }

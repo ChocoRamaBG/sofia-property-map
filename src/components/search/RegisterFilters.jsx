@@ -4,9 +4,11 @@ import { useI18n } from '@/lib/i18n';
 import { REGISTER_FILTERS, REGISTER_COLORS, displayCount, displayDate } from '@/lib/registerUi';
 import { activeFilterCount, invalidFilterArea } from '@/lib/propertyFilters';
 import DocumentPeriods from './DocumentPeriods';
+import './RegisterFilters.css';
 
 const EMPTY_FILTERS = { searchTerms: [], searchMatch: 'all', recordTypes: [], match: 'any', district: '', descriptionTag: '', dateFrom: '', dateTo: '', hasAddress: false, areaMin: '', areaMax: '', cadastreDistricts: [], cadastrePurposes: [], cadastreUses: [], cadastrePropertyTypes: [] };
-const DOCUMENT_TYPES = REGISTER_FILTERS.filter((code) => code !== 'all' && code !== 'no_records');
+const DOCUMENT_ORDER = ['building_permits', 'projecting_visas', 'exploitation_certificates'];
+const DOCUMENT_TYPES = REGISTER_FILTERS.filter((code) => code !== 'all' && code !== 'no_records').sort((a, b) => DOCUMENT_ORDER.indexOf(a) - DOCUMENT_ORDER.indexOf(b));
 const CADASTRAL_FACETS = [
   { field: 'cadastreDistricts', options: 'districts', label: 'filter.cadastreDistrict' },
   { field: 'cadastrePurposes', options: 'purposes', label: 'filter.cadastrePurpose' },
@@ -50,15 +52,13 @@ function CadastralFacetSelect({ id, label, selected, options, available, onChang
 }
 
 export default function RegisterFilters({ value, onChange, counts, options }) {
-  const { t, lang } = useI18n();
+  const { t, lang, pick } = useI18n();
   const id = useId();
   const filters = { ...EMPTY_FILTERS, ...value, ...Object.fromEntries(CADASTRAL_FACETS.map(({ field }) => [field, Array.isArray(value?.[field]) ? value[field] : []])), recordTypes: Array.isArray(value?.recordTypes) ? value.recordTypes : [], documentDates: Object.fromEntries(DOCUMENT_TYPES.map((type) => [type, { from: '', to: '', ...value?.documentDates?.[type] }])) };
-  const scopedDateCount = DOCUMENT_TYPES.filter((type) => filters.documentDates[type].from || filters.documentDates[type].to).length;
   const hasAreaRange = filters.areaMin !== '' || filters.areaMax !== '';
-  const [expanded, setExpanded] = useState(Boolean(filters.district || filters.descriptionTag || filters.dateFrom || filters.dateTo || filters.hasAddress || scopedDateCount || hasAreaRange));
   const noRecords = filters.recordTypes.includes('no_records');
   const selectedTypes = filters.recordTypes.filter((code) => code !== 'no_records');
-  const advancedCount = Number(Boolean(filters.district)) + Number(Boolean(filters.descriptionTag)) + Number(Boolean(filters.dateFrom || filters.dateTo)) + Number(filters.hasAddress) + scopedDateCount + Number(hasAreaRange);
+  const advancedCount = Number(Boolean(filters.district)) + Number(Boolean(filters.descriptionTag)) + Number(Boolean(filters.dateFrom || filters.dateTo)) + Number(filters.hasAddress);
   const cadastralCount = CADASTRAL_FACETS.filter(({ field }) => filters[field].length > 0).length;
   const activeCount = activeFilterCount(filters);
   const cadastralOptions = options?.cadastre;
@@ -117,18 +117,21 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
   ];
 
   return (
-    <section className="register-filters" aria-labelledby={id + '-heading'}>
+    <section className="register-filters filter-workbench" aria-labelledby={id + '-heading'}>
       <div className="filter-heading-row">
         <div className="section-heading"><SlidersHorizontal size={16} /><h2 id={id + '-heading'}>{t('filter.title')}</h2>{activeCount > 0 && <span className="filter-active-count" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</div>
         {activeCount > 0 && <button type="button" className="filter-clear" onClick={reset}><RotateCcw size={13} />{t('filter.clearAll')}</button>}
       </div>
-      <p>{t('filter.description')}</p>
-      <button type="button" className={'filter-all-preset ' + (activeCount === 0 ? 'is-active' : '')} onClick={reset}>
-        <span>{t('filter.all')}</span>{counts?.plots != null && <span className="filter-count">{displayCount(counts.plots, lang)}</span>}{activeCount === 0 && <Check size={14} aria-hidden="true" />}
-      </button>
+      <p className="filter-workbench-intro">{pick('Избирайте няколко условия. Картата се обновява веднага.', 'Combine conditions. The map updates as you choose.')}</p>
+      {chips.length > 0 ? <div className="filter-current-selection" aria-label={t('filter.activeFilters')}>
+        <div className="filter-current-heading"><strong>{pick('Избрани условия', 'Selected conditions')}</strong><span>{pick('Натиснете, за да премахнете', 'Select to remove')}</span></div>
+        <div className="filter-active-list">{chips.map((chip) => <button type="button" key={chip.key} className="filter-active-chip" onClick={chip.remove} aria-label={t('filter.remove', { filter: chip.label })}><span>{chip.label}</span><X size={13} aria-hidden="true" /></button>)}</div>
+      </div> : <p className="filter-workbench-empty">{pick('Няма допълнителни филтри за имотите.', 'No additional plot filters selected.')}</p>}
       <fieldset className="filter-types">
         <legend>{t('filter.documentTypes')}</legend>
         <div className="filter-options">{DOCUMENT_TYPES.map(typeOption)}</div>
+        <div className="filter-no-records-wrap">{typeOption('no_records')}</div>
+        {noRecords && <p className="filter-selection-help">{pick('Кадастралните условия и площта се запазват. Документните условия са изключени.', 'Cadastral conditions and area are retained. Document conditions are cleared.')}</p>}
       </fieldset>
       {selectedTypes.length > 1 && <div className="filter-match">
         <span id={id + '-match-label'}>{t('filter.matchLabel')}</span>
@@ -138,37 +141,38 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
         <p>{t('filter.matchHelp.' + filters.match)}</p>
       </div>}
       <DocumentPeriods filters={filters} options={options} disabled={advancedDisabled || !scopedDatesAvailable} onChange={updateDocumentDates} />
-      <section className="cadastre-filters" aria-labelledby={id + '-cadastre-heading'}>
-        <div className="cadastre-filters-heading"><h3 id={id + '-cadastre-heading'}>{t('filter.cadastreTitle')}</h3>{cadastralCount > 0 && <span className="filter-active-count">{cadastralCount}</span>}</div>
+      <section className="filter-parcel-area-section filter-primary-area" aria-labelledby={id + '-area-heading'}>
+        <div className="filter-document-date-heading"><h3 id={id + '-area-heading'}>{pick('Площ на терена · м²', 'Land parcel area · m²')}</h3>{hasAreaRange && <button type="button" className="filter-document-date-clear" onClick={() => update({ areaMin: '', areaMax: '' })}>{t('filter.clearArea')}</button>}</div>
+        {!areaAvailable && <p className="filter-selection-help">{options ? t('filter.parcelAreaUnavailable') : t('filter.parcelAreaLoading')}</p>}
+        <fieldset disabled={!areaAvailable} className="filter-parcel-area-fields">
+          <legend className="sr-only">{t('filter.parcelArea')}</legend>
+          <div className="filter-date-fields">
+            <label className="filter-field" htmlFor={id + '-area-min'}><span>{t('filter.areaMin')}</span><input id={id + '-area-min'} type="number" min="0" max={filters.areaMax || '1000000000'} step="any" inputMode="decimal" placeholder={pick('Без минимум', 'No minimum')} value={filters.areaMin} aria-invalid={areaRangeError || undefined} aria-describedby={areaRangeError ? id + '-area-error' : id + '-area-help'} onChange={(event) => update({ areaMin: event.target.value })} /></label>
+            <label className="filter-field" htmlFor={id + '-area-max'}><span>{t('filter.areaMax')}</span><input id={id + '-area-max'} type="number" min={filters.areaMin || '0'} max="1000000000" step="any" inputMode="decimal" placeholder={pick('Без максимум', 'No maximum')} value={filters.areaMax} aria-invalid={areaRangeError || undefined} aria-describedby={areaRangeError ? id + '-area-error' : id + '-area-help'} onChange={(event) => update({ areaMax: event.target.value })} /></label>
+          </div>
+        </fieldset>
+        {areaRangeError && <p id={id + '-area-error'} className="filter-field-error" role="alert">{t('filter.areaRangeError')}</p>}
+        <p id={id + '-area-help'} className="filter-area-caption">{pick('Кадастрална геометрична площ на терена, без РЗП на сградите.', 'Cadastral geometric land area, separate from building floor area.')}</p>
+        <details className="filter-help-details"><summary>{pick('Източник и обхват на площта', 'Area source and coverage')}<ChevronDown size={14} aria-hidden="true" /></summary><div>
+          <p>{t('filter.parcelAreaHelp')}</p>
+          {areaAvailable && <p>{t('filter.parcelAreaCoverage', { n: displayCount(areaOptions.parcel_count, lang) })}{areaOptions.min_m2 != null && areaOptions.max_m2 != null && <span>{t('filter.parcelAreaAvailableRange', { from: areaNumber(areaOptions.min_m2), to: areaNumber(areaOptions.max_m2) })}</span>}</p>}
+          {Number(areaOptions?.ambiguous_parcel_count) > 0 && <p>{t('filter.parcelAreaAmbiguous', { n: displayCount(areaOptions.ambiguous_parcel_count, lang) })}</p>}
+          {areaAvailable && areaOptions.source_url && <a className="filter-area-source" href={areaOptions.source_url} target="_blank" rel="noreferrer">{t('filter.parcelAreaSource')}</a>}
+        </div></details>
+      </section>
+      <details className="filter-disclosure filter-cadastre-disclosure">
+        <summary className="filter-disclosure-heading"><span><strong>{pick('Кадастрални характеристики', 'Cadastral attributes')}</strong><small>{pick('Район, предназначение, начин на ползване и вид собственост', 'District, purpose, use and property category')}</small></span>{cadastralCount > 0 && <span className="filter-active-count">{cadastralCount}</span>}<ChevronDown size={17} aria-hidden="true" /></summary>
+        <section className="cadastre-filters" aria-label={t('filter.cadastreTitle')}>
         {!cadastralAvailable && <p className="filter-selection-help">{options ? t('filter.cadastreUnavailable') : t('filter.cadastreLoading')}</p>}
         <div className="cadastre-filter-controls">{CADASTRAL_FACETS.map((facet) => <CadastralFacetSelect key={facet.field} id={id + '-' + facet.field} label={t(facet.label)} selected={filters[facet.field]} options={Array.isArray(cadastralOptions?.[facet.options]) ? cadastralOptions[facet.options] : []} available={cadastralAvailable} onChange={(selected) => update({ [facet.field]: selected })} t={t} lang={lang} />)}</div>
-        <p className="filter-field-help">{t('filter.cadastreCombineHelp')}</p>
-        <p className="filter-field-help">{t('filter.cadastreEvidenceHelp')}</p>
+        <p className="filter-field-help">{pick('Няколко стойности в едно поле са алтернативи.', 'Multiple values within one field are alternatives.')}</p>
+        <details className="filter-help-details"><summary>{pick('Как се комбинират тези условия?', 'How do these conditions combine?')}<ChevronDown size={14} aria-hidden="true" /></summary><div><p>{t('filter.cadastreCombineHelp')}</p><p>{t('filter.cadastreEvidenceHelp')}</p></div></details>
         {cadastralAvailable && cadastralOptions.source_url && <a className="filter-area-source" href={cadastralOptions.source_url} target="_blank" rel="noreferrer">{t('filter.parcelAreaSource')}</a>}
-      </section>
-      <div className="filter-no-records-wrap">{typeOption('no_records')}</div>
-      {noRecords && <p className="filter-selection-help">{t('filter.noRecordsHelp')}</p>}
-      <div className="filter-advanced">
-        <button type="button" className="filter-advanced-toggle" aria-expanded={expanded} aria-controls={id + '-advanced'} onClick={() => setExpanded((open) => !open)}>
-          <span><strong>{t('filter.more')}</strong><small>{t('filter.moreSummary')}</small></span>{advancedCount > 0 && <span className="filter-active-count">{advancedCount}</span>}<ChevronDown size={17} className={expanded ? 'is-open' : ''} aria-hidden="true" />
-        </button>
-        {expanded && <div id={id + '-advanced'} className="filter-advanced-body">
-          <div className="filter-parcel-area-section">
-            <div className="filter-document-date-heading"><strong>{t('filter.parcelArea')}</strong>{hasAreaRange && <button type="button" className="filter-document-date-clear" onClick={() => update({ areaMin: '', areaMax: '' })}>{t('filter.clearArea')}</button>}</div>
-            {!areaAvailable && <p className="filter-selection-help">{options ? t('filter.parcelAreaUnavailable') : t('filter.parcelAreaLoading')}</p>}
-            <fieldset disabled={!areaAvailable} className="filter-parcel-area-fields">
-              <legend className="sr-only">{t('filter.parcelArea')}</legend>
-              <div className="filter-date-fields">
-                <label className="filter-field" htmlFor={id + '-area-min'}><span>{t('filter.areaMin')}</span><input id={id + '-area-min'} type="number" min="0" max={filters.areaMax || '1000000000'} step="any" inputMode="decimal" value={filters.areaMin} aria-invalid={areaRangeError || undefined} aria-describedby={areaRangeError ? id + '-area-error' : id + '-area-help'} onChange={(event) => update({ areaMin: event.target.value })} /></label>
-                <label className="filter-field" htmlFor={id + '-area-max'}><span>{t('filter.areaMax')}</span><input id={id + '-area-max'} type="number" min={filters.areaMin || '0'} max="1000000000" step="any" inputMode="decimal" value={filters.areaMax} aria-invalid={areaRangeError || undefined} aria-describedby={areaRangeError ? id + '-area-error' : id + '-area-help'} onChange={(event) => update({ areaMax: event.target.value })} /></label>
-              </div>
-            </fieldset>
-            {areaRangeError && <p id={id + '-area-error'} className="filter-field-error" role="alert">{t('filter.areaRangeError')}</p>}
-            <p id={id + '-area-help'} className="filter-field-help">{t('filter.parcelAreaHelp')}</p>
-            {areaAvailable && <p className="filter-field-help">{t('filter.parcelAreaCoverage', { n: displayCount(areaOptions.parcel_count, lang) })}{areaOptions.min_m2 != null && areaOptions.max_m2 != null && <span>{t('filter.parcelAreaAvailableRange', { from: areaNumber(areaOptions.min_m2), to: areaNumber(areaOptions.max_m2) })}</span>}</p>}
-            {Number(areaOptions?.ambiguous_parcel_count) > 0 && <p className="filter-field-help">{t('filter.parcelAreaAmbiguous', { n: displayCount(areaOptions.ambiguous_parcel_count, lang) })}</p>}
-            {areaAvailable && areaOptions.source_url && <a className="filter-area-source" href={areaOptions.source_url} target="_blank" rel="noreferrer">{t('filter.parcelAreaSource')}</a>}
-          </div>
+        </section>
+      </details>
+      <details className="filter-disclosure filter-document-disclosure">
+        <summary className="filter-disclosure-heading"><span><strong>{pick('Подробности за документите', 'Document details')}</strong><small>{pick('Район на документа, описание и посочен адрес', 'Document district, description and stated address')}</small></span>{advancedCount > 0 && <span className="filter-active-count">{advancedCount}</span>}<ChevronDown size={17} aria-hidden="true" /></summary>
+        <div className="filter-advanced-body">
           {advancedDisabled && <p className="filter-selection-help">{noRecords ? t('filter.advancedNeedsRecords') : options ? t('filter.advancedUnavailable') : t('filter.advancedLoading')}</p>}
           <fieldset disabled={advancedDisabled} className="filter-advanced-fields">
             <legend className="sr-only">{t('filter.more')}</legend>
@@ -177,11 +181,9 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
             <label className="filter-address-option"><input type="checkbox" checked={filters.hasAddress} onChange={(event) => update({ hasAddress: event.target.checked })} /><span>{t('filter.hasAddress')}<small>{t('filter.addressHelp')}</small></span></label>
           </fieldset>
           {!advancedDisabled && <p className="filter-selection-help">{t('filter.combineHelp')}</p>}
-        </div>}
-      </div>
-
-      {chips.length > 0 && <div className="filter-active-list" aria-label={t('filter.activeFilters')}>{chips.map((chip) => <button type="button" key={chip.key} className="filter-active-chip" onClick={chip.remove} aria-label={t('filter.remove', { filter: chip.label })}><span>{chip.label}</span><X size={13} aria-hidden="true" /></button>)}</div>}
-      <p className="filter-footnote">{t('filter.note')}</p>
+        </div>
+      </details>
+      <details className="filter-help-details filter-method-help"><summary>{pick('Как да четем резултатите?', 'How should results be interpreted?')}<ChevronDown size={14} aria-hidden="true" /></summary><div><p>{t('filter.note')}</p><p>{t('filter.noRecordsHelp')}</p></div></details>
     </section>
   );
 }

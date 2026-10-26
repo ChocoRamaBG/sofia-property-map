@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { realEstateApi } from '@/api/realEstateApi';
 import { invalidFilterArea, invalidFilterDates, invalidFilterSearch, propertyFilterParams } from '@/lib/propertyFilters';
 
-export default function useViewportParcels(bounds, filters = {}) {
+export default function useViewportParcels(bounds, filters = {}, active = true) {
   const filterError = invalidFilterDates(filters) ? 'filter.dateRangeError' : invalidFilterArea(filters) ? 'filter.areaRangeError' : invalidFilterSearch(filters) ? 'search.limitError' : null;
   const filterParams = propertyFilterParams(filters);
   const viewKey = bounds
@@ -12,7 +12,7 @@ export default function useViewportParcels(bounds, filters = {}) {
     : null;
   const query = useQuery({
     queryKey: ['plots', viewKey, filterParams],
-    enabled: Boolean(bounds) && !filterError,
+    enabled: active && Boolean(bounds) && !filterError,
     staleTime: 30000,
     queryFn: ({ signal }) => realEstateApi.viewport(bounds, filters, signal),
     placeholderData: (previous, previousQuery) => JSON.stringify(previousQuery?.queryKey[2]) === JSON.stringify(filterParams) ? previous : undefined,
