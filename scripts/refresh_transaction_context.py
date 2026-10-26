@@ -19,7 +19,9 @@ import re
 import ssl
 import time
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from uuid import uuid4
@@ -31,6 +33,11 @@ MAX_PDF_BYTES = 5 * 1024 * 1024
 MAX_CATALOGUE_BYTES = 2 * 1024 * 1024
 MAX_PERIODS = 160
 MAX_REVISIONS = 8
+MAX_DOWNLOAD_ATTEMPTS = 3
+MAX_RETRY_WAIT_SECONDS = 45
+RETRY_HTTP_STATUS = {408, 429, 500, 502, 503, 504, 521, 522, 523, 524}
+ACCESS_CHALLENGE_MARKERS = (b'captcha', b'cf-chl-', b'challenge-platform', b'cf-browser-verification',
+                            b'just a moment', b'verify you are human')
 START_YEAR = 2015
 GEOGRAPHY = {'code': 'registry-office-sofia', 'name_bg': 'Служба по вписванията — София',
              'name_en': 'Registry Office — Sofia', 'scope': 'registration_office_jurisdiction'}
@@ -70,16 +77,72 @@ class OfficialRedirects(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def retry_delay(retry_after: str | None, attempt: int) -> float | None:
+    delay = float(5 * (3 ** attempt))
+    if retry_after:
+        try:
+            if re.fullmatch(r'[0-9]+', retry_after.strip()):
+                requested = float(retry_after.strip())
+            else:
+                pause_until = parsedate_to_datetime(retry_after)
+                if pause_until.tzinfo is None:
+                    return None
+                requested = max(0.0, (pause_until - datetime.now(timezone.utc)).total_seconds())
+            # A longer server-requested pause stops this capture; retrying
+            # sooner would ignore its pacing instruction.
+            if requested > MAX_RETRY_WAIT_SECONDS:
+                return None
+            delay = max(delay, requested)
+        except (ValueError, TypeError, OverflowError):
+            pass  # A malformed header leaves the ordinary polite backoff.
+    return min(delay, MAX_RETRY_WAIT_SECONDS)
+
+
 def download(url: str, limit: int) -> bytes:
     checked_url(url)
     opener = build_opener(OfficialRedirects(), HTTPSHandler(context=ssl.create_default_context()))
     request = Request(url, headers={'User-Agent': 'SofiaPermits-official-statistics/1.0'})
-    with opener.open(request, timeout=45) as response:
-        checked_url(response.url)
-        payload = response.read(limit + 1)
-    if not payload or len(payload) > limit:
-        raise ValueError('Official statistics response is empty or exceeds its byte limit')
-    return payload
+    for attempt in range(MAX_DOWNLOAD_ATTEMPTS):
+        try:
+            with opener.open(request, timeout=45) as response:
+                checked_url(response.url)
+                payload = response.read(limit + 1)
+            if not payload or len(payload) > limit:
+                raise ValueError('Official statistics response is empty or exceeds its byte limit')
+            return payload
+        except HTTPError as error:
+            if error.code not in RETRY_HTTP_STATUS or attempt == MAX_DOWNLOAD_ATTEMPTS - 1:
+                raise
+            if (error.headers.get('cf-mitigated', '').casefold() == 'challenge'
+                    or error.headers.get('Content-Encoding', 'identity').casefold() not in ('', 'identity')):
+                raise
+            # Access challenges are terminal even when returned with a 429 or
+            # 503 status. Never retry authentication failures or CAPTCHA.
+            try:
+                body = error.read(32 * 1024).lower()
+            finally:
+                error.close()
+            if any(marker in body for marker in ACCESS_CHALLENGE_MARKERS):
+                raise
+            delay = retry_delay(error.headers.get('Retry-After'), attempt)
+            if delay is None:
+                raise
+            reason = f'HTTP {error.code}'
+        except URLError as error:
+            # Certificate/TLS errors and other transport failures are not
+            # generalized into retries. Only an actual timeout is transient.
+            if isinstance(error.reason, ssl.SSLError) or not isinstance(error.reason, TimeoutError) or attempt == MAX_DOWNLOAD_ATTEMPTS - 1:
+                raise
+            delay = retry_delay(None, attempt)
+            reason = 'network timeout'
+        except TimeoutError:
+            if attempt == MAX_DOWNLOAD_ATTEMPTS - 1:
+                raise
+            delay = retry_delay(None, attempt)
+            reason = 'network timeout'
+        print(f'Official statistics {reason}; retry {attempt + 2}/{MAX_DOWNLOAD_ATTEMPTS} after {delay:g} seconds', flush=True)
+        time.sleep(delay)
+    raise RuntimeError('Official statistics download exhausted its bounded attempts')
 
 
 def timestamp(value) -> datetime:
