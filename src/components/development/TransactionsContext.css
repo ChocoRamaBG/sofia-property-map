@@ -1,0 +1,45 @@
+.transactions-context { margin-top: 24px; padding-top: 24px; border-top: 1px solid #dbe6db; }
+.transactions-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.transactions-heading h3 { margin: 6px 0 0; color: #284f43; font-size: 20px; font-weight: 600; line-height: 1.5; }
+.transactions-heading > div > p:last-child { max-width: 850px; margin-top: 8px; color: #5a7162; font-size: 12px; line-height: 1.85; }
+.transactions-quarter { flex-shrink: 0; padding: 8px 11px; border: 1px solid #c8dacf; border-radius: 6px; background: #f1f7ef; color: #3e6850; font-size: 13px; font-variant-numeric: tabular-nums; }
+.transactions-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 17px 0 23px; }
+.transactions-metrics > article { min-width: 0; padding: 17px; border: 1px solid #dce6d8; border-radius: 8px; background: #f8faf5; }
+.transactions-metrics h4 { margin: 0; color: #4c6c57; font-size: 12px; font-weight: 500; line-height: 1.6; }
+.transactions-metrics strong { display: block; margin-top: 8px; color: #2e5c42; font-size: 29px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.35; overflow-wrap: anywhere; }
+.transactions-metrics p { margin: 7px 0 0; color: #60785f; font-size: 11px; line-height: 1.75; }
+.transactions-chart-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.transactions-chart-heading > strong { display: inline-flex; align-items: center; gap: 7px; color: #385e4c; font-size: 13px; font-weight: 600; }
+.transactions-chart-heading > label { display: flex; align-items: center; gap: 8px; color: #607568; font-size: 11px; }
+.transactions-chart-heading select { min-height: 40px; padding: 6px 9px; border: 1px solid #d7e3d8; border-radius: 6px; color: #375f4b; background: #fff; font-size: 12px; }
+.transactions-chart { width: 100%; height: 260px; margin-top: 12px; }
+.transactions-tooltip { display: grid; gap: 5px; max-width: 260px; padding: 11px 13px; border: 1px solid #d4e1d5; border-radius: 7px; color: #385a49; background: #fff; box-shadow: 0 4px 16px #173b3912; font-size: 12px; }
+.transactions-gap-note { margin: 6px 0 12px; color: #6b7158; font-size: 11px; line-height: 1.8; }
+.transactions-history { margin-top: 12px; }
+.transactions-history > summary, .transactions-method > summary { display: flex; align-items: center; gap: 9px; min-height: 44px; color: #476d50; font-size: 12px; cursor: pointer; list-style: none; }
+.transactions-history > summary::-webkit-details-marker, .transactions-method > summary::-webkit-details-marker { display: none; }
+.transactions-history > summary > span { margin-left: auto; color: #72806b; font-size: 11px; }
+.transactions-history > summary > svg, .transactions-method > summary > svg { flex-shrink: 0; }
+.transactions-history[open] > summary > svg, .transactions-method[open] > summary > svg:last-child { transform: rotate(180deg); }
+.transactions-table-scroll { max-height: 430px; margin-top: 6px; overflow: auto; border: 1px solid #dce6da; border-radius: 7px; }
+.transactions-table-scroll table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 12px; text-align: left; }
+.transactions-table-scroll caption { padding: 10px 12px; color: #4d6c55; font-size: 12px; text-align: left; }
+.transactions-table-scroll :is(th, td) { padding: 10px 12px; border-top: 1px solid #e7ede4; vertical-align: top; }
+.transactions-table-scroll thead th { position: sticky; top: 0; z-index: 1; color: #46664f; background: #f2f7ee; font-size: 11px; font-weight: 600; }
+.transactions-table-scroll tbody th { color: #42644d; font-weight: 500; white-space: nowrap; }
+.transactions-table-scroll td { color: #567160; font-variant-numeric: tabular-nums; }
+.transactions-table-scroll .is-missing { background: #fafbf8; }
+.transactions-row-source a { display: inline-flex; align-items: center; gap: 3px; min-height: 30px; color: #2f6e53; text-decoration: underline; text-underline-offset: 3px; }
+.transactions-row-source small { display: block; margin-top: 2px; color: #73816c; font-size: 10px; line-height: 1.6; }
+.transactions-method { margin-top: 12px; padding: 10px 14px; border: 1px solid #dbe6d7; border-radius: 8px; background: #f5f9f1; }
+.transactions-method > summary > svg:last-child { margin-left: auto; }
+.transactions-method > div { padding: 0 0 4px; }
+.transactions-method p { margin: 8px 0 0; color: #5a735c; font-size: 12px; line-height: 1.85; }
+.transactions-source { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 24px; margin-top: 14px; color: #78836d; font-size: 11px; line-height: 1.7; }
+.transactions-source a { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; color: #3e7452; text-decoration: underline; text-underline-offset: 3px; }
+.transactions-message { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; padding: 16px; border: 1px solid #dce6da; border-radius: 8px; color: #57715f; background: #f8faf5; font-size: 12px; line-height: 1.8; }
+.transactions-message > svg { flex-shrink: 0; margin-top: 3px; }
+.transactions-message .development-button { margin-top: 10px; }
+.transactions-context :is(button, select, a, summary):focus-visible { outline: 2px solid #287d68; outline-offset: 3px; border-radius: 4px; }
+@media (max-width: 800px) { .transactions-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .transactions-metrics > article:last-child { grid-column: 1 / -1; } }
+@media (max-width: 560px) { .transactions-heading { display: block; } .transactions-heading h3 { font-size: 18px; } .transactions-quarter { display: inline-block; margin-top: 10px; } .transactions-metrics { gap: 8px; } .transactions-metrics > article { padding: 13px; } .transactions-metrics strong { font-size: 24px; } .transactions-chart-heading { align-items: flex-start; flex-direction: column; gap: 8px; } .transactions-chart-heading > label { width: 100%; justify-content: space-between; } .transactions-chart-heading select { min-height: 44px; font-size: 16px; } .transactions-chart { height: 230px; } .transactions-row-source a, .transactions-source a { min-height: 44px; } .transactions-table-scroll :is(th, td) { padding: 9px; } }

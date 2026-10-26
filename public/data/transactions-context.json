@@ -1,0 +1,636 @@
+{
+  "schema_version": 1,
+  "status": "available",
+  "retrieved_at": "2026-10-26T15:19:56Z",
+  "source": {
+    "name": "Агенция по вписванията — тримесечни справки на Имотния регистър",
+    "url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+    "published_at": "2026-10-01",
+    "catalogue_sha256": "3400a7197460e59480a13b0f119e3df89f7a509fb6816fe3024fccbd641ffc85"
+  },
+  "geography": {
+    "code": "registry-office-sofia",
+    "name_bg": "Служба по вписванията — София",
+    "name_en": "Registry Office — Sofia",
+    "scope": "registration_office_jurisdiction"
+  },
+  "metric": "registered_sales",
+  "unit": "registrations",
+  "series": [
+    {
+      "period": "2015-Q1",
+      "sales": 4805,
+      "legal_mortgages": 736,
+      "contractual_mortgages": 1406,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2016/12/08/vpisvania-imoten-registar-ianuari-mart-2015.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2015-04-08",
+        "catalogue_uploaded_at": "2015-04-08",
+        "sha256": "7460cd8d4caa219e277509620208d9ff425a02bcbe56257e4b6b1716aed27773",
+        "retrieved_at": "2026-10-26T15:13:37Z"
+      }
+    },
+    {
+      "period": "2015-Q2",
+      "sales": 6486,
+      "legal_mortgages": 1033,
+      "contractual_mortgages": 1976,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2016/12/08/vpisvania-imoten-registar-april-uni-2015.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2015-07-08",
+        "catalogue_uploaded_at": "2015-07-08",
+        "sha256": "bee712b6f0f5b6e6266feb8bd3fc025e3af82112a41a3fdb808d5ae0a71d6aac",
+        "retrieved_at": "2026-10-26T15:13:43Z"
+      }
+    },
+    {
+      "period": "2015-Q3",
+      "sales": 5547,
+      "legal_mortgages": 859,
+      "contractual_mortgages": 1837,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2016/12/08/vpisvania-imoten-registar-uli-septemvri-2015.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2015-10-08",
+        "catalogue_uploaded_at": "2015-10-08",
+        "sha256": "2a5a7089be00f4539a27c6a6fd8fd3a5114a23445da859e4152a01eb1dd4af3e",
+        "retrieved_at": "2026-10-26T15:13:47Z"
+      }
+    },
+    {
+      "period": "2015-Q4",
+      "sales": 7541,
+      "legal_mortgages": 1194,
+      "contractual_mortgages": 2456,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2016/12/08/vpisvania-imoten-registar-oktomvri-dekemvri-2015.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2016-01-08",
+        "catalogue_uploaded_at": "2016-01-08",
+        "sha256": "85ebdba00378eec2ff4b27aa8c241fd90a70e0185b1abad9af0503144cc710ba",
+        "retrieved_at": "2026-10-26T15:13:52Z"
+      }
+    },
+    {
+      "period": "2016-Q1",
+      "sales": 5149,
+      "legal_mortgages": 887,
+      "contractual_mortgages": 1657,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2016/12/08/vpisvania-imoten-registar-ianuari-mart-2016.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2016-04-08",
+        "catalogue_uploaded_at": "2016-04-08",
+        "sha256": "1e19d0b81dbb6ed9e6f9b433f8ba2027731f5b61652c5b439b88512c1abe7974",
+        "retrieved_at": "2026-10-26T15:13:56Z"
+      }
+    },
+    {
+      "period": "2016-Q2",
+      "sales": 6830,
+      "legal_mortgages": 1246,
+      "contractual_mortgages": 2399,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2016/12/08/vpisvania-imoten-registar-april-uni-2016.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": null,
+        "catalogue_uploaded_at": "2016-04-08",
+        "sha256": "c0f00820428d17e8539e16e27a101912897653a9a803c0308871f0df75fe1b19",
+        "retrieved_at": "2026-10-26T15:14:01Z"
+      }
+    },
+    {
+      "period": "2016-Q3",
+      "sales": 6073,
+      "legal_mortgages": 1178,
+      "contractual_mortgages": 2265,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2016/12/08/vpisvania-imoten-registar-uli-septemvri-2016.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2016-10-08",
+        "catalogue_uploaded_at": "2016-10-08",
+        "sha256": "e02e98e081de7ff67ca654c6397d833c47f4a04f45acd8fce92863ff3c23d267",
+        "retrieved_at": "2026-10-26T15:14:05Z"
+      }
+    },
+    {
+      "period": "2016-Q4",
+      "sales": 8428,
+      "legal_mortgages": 1473,
+      "contractual_mortgages": 3104,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2017/04/11/10-12_2016.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2017-04-11",
+        "catalogue_uploaded_at": "2017-04-11",
+        "sha256": "27237b813cff7beab6c793a5eef3c0e5ee35662925f31fc72f78f9cbb0e8560f",
+        "retrieved_at": "2026-10-26T15:14:10Z"
+      }
+    },
+    {
+      "period": "2017-Q1",
+      "sales": 5023,
+      "legal_mortgages": 1033,
+      "contractual_mortgages": 2245,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2017/04/21/01-032017.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2017-04-21",
+        "catalogue_uploaded_at": "2017-04-21",
+        "sha256": "a93bb5223917d6f69bb4159cb79360e306e19e9e6214ad368d79ae8d67aa0357",
+        "retrieved_at": "2026-10-26T15:14:15Z"
+      }
+    },
+    {
+      "period": "2017-Q2",
+      "sales": 7441,
+      "legal_mortgages": 1377,
+      "contractual_mortgages": 3401,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2017/07/11/04-062017.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2017-07-11",
+        "catalogue_uploaded_at": "2017-07-11",
+        "sha256": "b8da441b109b4800eac8706d5a64860cf2aa49130aabb4c169509ad88af97230",
+        "retrieved_at": "2026-10-26T15:14:20Z"
+      }
+    },
+    {
+      "period": "2017-Q3",
+      "sales": 6300,
+      "legal_mortgages": 1196,
+      "contractual_mortgages": 3224,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2017/10/17/07-092017.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2017-10-17",
+        "catalogue_uploaded_at": "2017-10-17",
+        "sha256": "f35bba2135e19a69d5bba848c69a6e2d2f913fcbe77a8b4f83c88ea5a502aafd",
+        "retrieved_at": "2026-10-26T15:14:25Z"
+      }
+    },
+    {
+      "period": "2017-Q4",
+      "sales": 9411,
+      "legal_mortgages": 1616,
+      "contractual_mortgages": 4042,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2018/01/09/10-12-2017.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2018-01-09",
+        "catalogue_uploaded_at": "2018-01-09",
+        "sha256": "9d1f81d4eb9cf376162fbc900c203059f5a7a59b18a27c79a76d7540afe70e00",
+        "retrieved_at": "2026-10-26T15:14:29Z"
+      }
+    },
+    {
+      "period": "2018-Q1",
+      "sales": 5631,
+      "legal_mortgages": 956,
+      "contractual_mortgages": 2861,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2018/04/23/01-032018.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2018-04-23",
+        "catalogue_uploaded_at": "2018-04-23",
+        "sha256": "edc3ef41d82061be41e3a9e2475e5a508d259986c992f557a233c3b3e821ae17",
+        "retrieved_at": "2026-10-26T15:14:34Z"
+      }
+    },
+    {
+      "period": "2018-Q2",
+      "sales": 7119,
+      "legal_mortgages": 1284,
+      "contractual_mortgages": 3684,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2018/07/16/04-062018.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2018-07-16",
+        "catalogue_uploaded_at": "2018-07-16",
+        "sha256": "6396128098d8d4f7ad415d26ef0cebc214808a8483ac6d9bcdce27f9e8986afb",
+        "retrieved_at": "2026-10-26T15:14:39Z"
+      }
+    },
+    {
+      "period": "2018-Q3",
+      "sales": 6376,
+      "legal_mortgages": 1154,
+      "contractual_mortgages": 3288,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2018/10/19/07-092018.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2018-10-19",
+        "catalogue_uploaded_at": "2018-10-19",
+        "sha256": "0e033787400db5ab783d27be47b82bef0edb143b27bcd9ae418e69997b8e0a40",
+        "retrieved_at": "2026-10-26T15:14:43Z"
+      }
+    },
+    {
+      "period": "2018-Q4",
+      "sales": 9106,
+      "legal_mortgages": 1427,
+      "contractual_mortgages": 3287,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2019/01/16/10-122018.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2019-01-16",
+        "catalogue_uploaded_at": "2019-01-16",
+        "sha256": "22faec9c4186a4bd1539920139757da9ff75a1066b7ec4ca7393d9c2e13806a8",
+        "retrieved_at": "2026-10-26T15:17:14Z"
+      }
+    },
+    {
+      "period": "2019-Q1",
+      "sales": 5641,
+      "legal_mortgages": 874,
+      "contractual_mortgages": 2009,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2019/04/18/01-03-2019.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2019-04-18",
+        "catalogue_uploaded_at": "2019-04-18",
+        "sha256": "4aa0a7d41eb78757bd3e7ac0e9b4c7bce9075f448dd0f1d0aa522d141daa87b0",
+        "retrieved_at": "2026-10-26T15:17:18Z"
+      }
+    },
+    {
+      "period": "2019-Q2",
+      "sales": 7670,
+      "legal_mortgages": 1319,
+      "contractual_mortgages": 2698,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2019/07/17/04-06-2019.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2019-07-17",
+        "catalogue_uploaded_at": "2019-07-17",
+        "sha256": "d2b310780ff48d8ed8467d7a564c5b8929bacb6354567c99c5037c0fde4c6474",
+        "retrieved_at": "2026-10-26T15:17:23Z"
+      }
+    },
+    {
+      "period": "2019-Q3",
+      "sales": 6874,
+      "legal_mortgages": 1230,
+      "contractual_mortgages": 2553,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2019/10/11/07-09-2019.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2019-10-11",
+        "catalogue_uploaded_at": "2019-10-11",
+        "sha256": "2b1456fa8d5eee57fdd341dbf88dad53605e1468b3a92b7051bdcd212c979b70",
+        "retrieved_at": "2026-10-26T15:17:28Z"
+      }
+    },
+    {
+      "period": "2019-Q4",
+      "sales": 9587,
+      "legal_mortgages": 1497,
+      "contractual_mortgages": 3324,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2020/01/15/10-12-2019_e7pn6ll.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2020-01-15",
+        "catalogue_uploaded_at": "2020-01-15",
+        "sha256": "fcdb0f30bdc8901bc06dc1caa86260efdf1696091299f67af1b66fe27cc860d4",
+        "retrieved_at": "2026-10-26T15:17:33Z"
+      }
+    },
+    {
+      "period": "2020-Q1",
+      "sales": 5285,
+      "legal_mortgages": 933,
+      "contractual_mortgages": 2116,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2020/04/24/01-03-2020.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2020-04-24",
+        "catalogue_uploaded_at": "2020-04-24",
+        "sha256": "ec7db9e9d731a618d9dd0fe5074c8939ab52f180e6e03f073d51fc4c9e29116d",
+        "retrieved_at": "2026-10-26T15:17:37Z"
+      }
+    },
+    {
+      "period": "2020-Q2",
+      "sales": 6352,
+      "legal_mortgages": 990,
+      "contractual_mortgages": 2285,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2020/07/20/04-06-2020.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2020-07-20",
+        "catalogue_uploaded_at": "2020-07-20",
+        "sha256": "fd548122a283098bc9c5f63daed8c14c67e3100d6ee7625edf4258c02e8862dd",
+        "retrieved_at": "2026-10-26T15:17:42Z"
+      }
+    },
+    {
+      "period": "2020-Q3",
+      "sales": 6969,
+      "legal_mortgages": 1005,
+      "contractual_mortgages": 2499,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2020/10/08/07-09-2020.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2020-10-08",
+        "catalogue_uploaded_at": "2020-10-08",
+        "sha256": "9313cfbc13020bd03575eac7390fe42359f346cd5ee33faef8d701153c96cff6",
+        "retrieved_at": "2026-10-26T15:17:47Z"
+      }
+    },
+    {
+      "period": "2021-Q4",
+      "sales": 11685,
+      "legal_mortgages": 1628,
+      "contractual_mortgages": 3731,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2022/01/11/10-12-2021.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2022-01-11",
+        "catalogue_uploaded_at": "2022-01-11",
+        "sha256": "c983a69ca0c9299778f6c209339ec9114765c97e2c16b3768b8c87d83e6d8f17",
+        "retrieved_at": "2026-10-26T15:17:52Z"
+      }
+    },
+    {
+      "period": "2022-Q1",
+      "sales": 7268,
+      "legal_mortgages": 964,
+      "contractual_mortgages": 2506,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2022/04/04/01-03-2022.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2022-04-04",
+        "catalogue_uploaded_at": "2022-04-04",
+        "sha256": "002b0020c56b3d1e15943d8007ce4dae5a65689d4292db0010f70b82c7315554",
+        "retrieved_at": "2026-10-26T15:17:57Z"
+      }
+    },
+    {
+      "period": "2022-Q2",
+      "sales": 9763,
+      "legal_mortgages": 1302,
+      "contractual_mortgages": 3587,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2022/07/07/04-06-2022_FuHCYfJ.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2022-07-07",
+        "catalogue_uploaded_at": "2022-07-07",
+        "sha256": "10eb3120db6fab90d4672b005ff5821bea507b73f141bf0f294f1c4c8bd151d4",
+        "retrieved_at": "2026-10-26T15:18:03Z"
+      }
+    },
+    {
+      "period": "2022-Q3",
+      "sales": 7402,
+      "legal_mortgages": 1053,
+      "contractual_mortgages": 3392,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2022/12/06/07-09-2022.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2022-12-06",
+        "catalogue_uploaded_at": "2022-12-06",
+        "sha256": "bfc9912c8608872a6213f312958318c725914cf9d9e4bca326b5b056be158feb",
+        "retrieved_at": "2026-10-26T15:18:09Z"
+      }
+    },
+    {
+      "period": "2022-Q4",
+      "sales": 9668,
+      "legal_mortgages": 1104,
+      "contractual_mortgages": 3856,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2023/01/13/10-12-2022.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2023-01-13",
+        "catalogue_uploaded_at": "2023-01-13",
+        "sha256": "f1a9fde8e41787ee7430d65a61126edced4ecfaef42ba98ab7769989be9a5ecf",
+        "retrieved_at": "2026-10-26T15:18:14Z"
+      }
+    },
+    {
+      "period": "2023-Q1",
+      "sales": 6381,
+      "legal_mortgages": 787,
+      "contractual_mortgages": 2656,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2023/04/24/01-03-2023.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2023-04-24",
+        "catalogue_uploaded_at": "2023-04-24",
+        "sha256": "16b9985203796d0e308ee6ecaa97ccfd7a972fa3f668a13980d827c23bd09abc",
+        "retrieved_at": "2026-10-26T15:18:39Z"
+      }
+    },
+    {
+      "period": "2023-Q2",
+      "sales": 8615,
+      "legal_mortgages": 1037,
+      "contractual_mortgages": 3591,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2023/07/20/04-062023_juUv2eK.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2023-07-20",
+        "catalogue_uploaded_at": "2023-07-20",
+        "sha256": "f0fe1ebb75ea728ad3bd9a9a738ce5ee97d942294921f660260144d2d4ecc8b6",
+        "retrieved_at": "2026-10-26T15:18:45Z"
+      }
+    },
+    {
+      "period": "2023-Q3",
+      "sales": 7001,
+      "legal_mortgages": 919,
+      "contractual_mortgages": 3334,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2023/10/24/01102023.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2023-10-24",
+        "catalogue_uploaded_at": "2023-10-24",
+        "sha256": "d80012799af68a1f039744e7dcc37a6102c0f9922ca2030152884ff47069be64",
+        "retrieved_at": "2026-10-26T15:18:51Z"
+      }
+    },
+    {
+      "period": "2023-Q4",
+      "sales": 10075,
+      "legal_mortgages": 1197,
+      "contractual_mortgages": 4229,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2024/01/30/10-12-2023.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2024-01-30",
+        "catalogue_uploaded_at": "2024-01-30",
+        "sha256": "f5a6cf6ae6e2b87c33770c752eb1fc09244fda07bbb88e307a2c5596ea53e02d",
+        "retrieved_at": "2026-10-26T15:18:56Z"
+      }
+    },
+    {
+      "period": "2024-Q1",
+      "sales": 7298,
+      "legal_mortgages": 972,
+      "contractual_mortgages": 3503,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2024/04/04/01-03-2024.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2024-04-04",
+        "catalogue_uploaded_at": "2024-04-04",
+        "sha256": "2bac50fca9f9084c17bbfb1c6baea349e16517173f5700288be4ffd16f3eeafb",
+        "retrieved_at": "2026-10-26T15:19:02Z"
+      }
+    },
+    {
+      "period": "2024-Q2",
+      "sales": 9641,
+      "legal_mortgages": 1209,
+      "contractual_mortgages": 4458,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2024/07/02/04-06-2024.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2024-07-02",
+        "catalogue_uploaded_at": "2024-07-02",
+        "sha256": "a3e22b03bc5492c9e707f0bdb2d7d562b9e546207aec72ad9e17eddb936ab179",
+        "retrieved_at": "2026-10-26T15:19:07Z"
+      }
+    },
+    {
+      "period": "2024-Q3",
+      "sales": 7879,
+      "legal_mortgages": 1061,
+      "contractual_mortgages": 4209,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2024/10/02/07-09-2024.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2024-10-02",
+        "catalogue_uploaded_at": "2024-10-02",
+        "sha256": "423de49f13f73e9a1ff6b1f18957a1b16dfa7752f68dbb81309d5ec18d8af1be",
+        "retrieved_at": "2026-10-26T15:19:12Z"
+      }
+    },
+    {
+      "period": "2024-Q4",
+      "sales": 10441,
+      "legal_mortgages": 1337,
+      "contractual_mortgages": 4833,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2025/01/02/10-12-2024.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2025-01-02",
+        "catalogue_uploaded_at": "2025-01-02",
+        "sha256": "1f65d3f1d9f332d30734b643e6dc3d49df1aebd3d9610a32115ca0503f12efbb",
+        "retrieved_at": "2026-10-26T15:19:17Z"
+      }
+    },
+    {
+      "period": "2025-Q1",
+      "sales": 8588,
+      "legal_mortgages": 1181,
+      "contractual_mortgages": 3881,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2025/04/02/01-03-2025.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2025-04-02",
+        "catalogue_uploaded_at": "2025-04-02",
+        "sha256": "82ee74b5a1edaf0e9410e551e75d7b66c0c22c9a03055a43a9f6c285a7360c6c",
+        "retrieved_at": "2026-10-26T15:19:22Z"
+      }
+    },
+    {
+      "period": "2025-Q2",
+      "sales": 10647,
+      "legal_mortgages": 1424,
+      "contractual_mortgages": 5005,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2025/07/08/04-06-2025.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2025-07-08",
+        "catalogue_uploaded_at": "2025-07-08",
+        "sha256": "822ad18e2b4f25ab592b6a26e09d46a9824cef97e86cd9fc542dbe7dc7e7ca8d",
+        "retrieved_at": "2026-10-26T15:19:27Z"
+      }
+    },
+    {
+      "period": "2025-Q3",
+      "sales": 9238,
+      "legal_mortgages": 1355,
+      "contractual_mortgages": 4936,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2025/10/03/07-09-2025.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2025-10-03",
+        "catalogue_uploaded_at": "2025-10-03",
+        "sha256": "64017035101a52a109ee5bff1e141646b9b656c8c11f4a1d3095c9541c3e6673",
+        "retrieved_at": "2026-10-26T15:19:32Z"
+      }
+    },
+    {
+      "period": "2025-Q4",
+      "sales": 12156,
+      "legal_mortgages": 1436,
+      "contractual_mortgages": 5857,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2026/01/13/10-12-2025.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2026-01-13",
+        "catalogue_uploaded_at": "2026-01-13",
+        "sha256": "e2552c4276fa095a4eefc91dc7176bc5d7dc2b2342c8be31774cb1278b021c31",
+        "retrieved_at": "2026-10-26T15:19:38Z"
+      }
+    },
+    {
+      "period": "2026-Q1",
+      "sales": 7529,
+      "legal_mortgages": 941,
+      "contractual_mortgages": 3948,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2026/04/06/01-03-2026.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2026-04-06",
+        "catalogue_uploaded_at": "2026-04-06",
+        "sha256": "4593d06292faeb1c34dbf825d6ec0d2a11fa1db2de7d32efccb8a227917cf409",
+        "retrieved_at": "2026-10-26T15:19:44Z"
+      }
+    },
+    {
+      "period": "2026-Q2",
+      "sales": 8874,
+      "legal_mortgages": 1110,
+      "contractual_mortgages": 5430,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2026/07/02/04-06-2026.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2026-07-02",
+        "catalogue_uploaded_at": "2026-07-02",
+        "sha256": "0815228c39f2bef102d4e27d556c6b588ebbfddc6e9b0e4a2f2ecf57c3bdfa60",
+        "retrieved_at": "2026-10-26T15:19:50Z"
+      }
+    },
+    {
+      "period": "2026-Q3",
+      "sales": 7282,
+      "legal_mortgages": 975,
+      "contractual_mortgages": 4836,
+      "source": {
+        "url": "https://www.registryagency.bg/media/filer_public/2026/10/01/07-09-2026.pdf",
+        "page_url": "https://www.registryagency.bg/bg/registri/imoten-registar/statistika/",
+        "published_at": "2026-10-01",
+        "catalogue_uploaded_at": "2026-10-01",
+        "sha256": "3e5454adbfe2cdbe923147a14e1757f65f71c0476d9f5b7fe27e6b795285a4c7",
+        "retrieved_at": "2026-10-26T15:19:56Z"
+      }
+    }
+  ],
+  "methodology_bg": "Брой вписани продажби на всички видове недвижими имоти в района на Служба по вписванията — София. Не е брой уникални жилища, сделки само с апартаменти или квартална статистика. Договорните и законните ипотеки са отделни видове вписвания и не измерват дела покупки с кредит. Липсващите тримесечия не са заместени с нули или интерполация. Данните не съдържат продажни цени или собственици.",
+  "methodology_en": "Registered sales of all real-estate types in the jurisdiction of Registry Office Sofia. These are not unique homes, apartment-only transactions or neighborhood statistics. Contractual and legal mortgages are separate registration types, not the share of purchases financed by a mortgage. Missing quarters are not replaced with zero or interpolation. No sale prices or owners are included.",
+  "coverage": {
+    "from": "2015-Q1",
+    "to": "2026-Q3",
+    "periods": 43,
+    "missing_periods": [
+      "2020-Q4",
+      "2021-Q1",
+      "2021-Q2",
+      "2021-Q3"
+    ]
+  }
+}

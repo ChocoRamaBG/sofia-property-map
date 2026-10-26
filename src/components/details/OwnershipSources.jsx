@@ -1,0 +1,27 @@
+import React, { useId } from 'react';
+import { ArrowUpRight, Copy, Landmark } from 'lucide-react';
+import { useI18n } from '@/lib/i18n';
+
+const REGISTRY_URL = 'https://portal.registryagency.bg/home-pr';
+const REPORT_HELP_URL = 'https://portal.registryagency.bg/help/topics/pr-applicationprocesses-requestforreportforproperty.html';
+const ACCESS_URL = 'https://www.registryagency.bg/bg/registri/imoten-registar/elektronni-spravki-v-imoten-registar/';
+const KAIS_URL = 'https://kais.cadastre.bg/bg/Map';
+
+export default function OwnershipSources({ cadastralId, onCopyId }) {
+  const { lang } = useI18n();
+  const id = useId();
+  const bg = lang === 'bg';
+  if (typeof cadastralId !== 'string' || !/^\d{4,6}(?:\.\d{1,6}){2,4}$/.test(cadastralId)) return null;
+  return <section className="cadastre-summary" aria-labelledby={id + '-heading'}>
+    <div className="cadastre-summary-heading"><Landmark size={18} aria-hidden="true" /><div><h3 id={id + '-heading'}>{bg ? 'Собственост и вписвания' : 'Ownership and registered acts'}</h3><p>{bg ? 'Няма заредена официална справка' : 'No official report loaded'}</p></div></div>
+    <p className="cadastre-note">{bg ? 'Собственикът, придобиванията, ипотеките и възбраните не са проверени от този сайт. Те се проверяват в Имотния регистър.' : 'This site has not checked the owner, acquisitions, mortgages or registered restraints. These are checked in the Property Register.'}</p>
+    <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white p-3 text-xs"><div className="min-w-0"><span className="block text-slate-600">{bg ? 'Идентификатор за справката' : 'Identifier for the report'}</span><code className="mt-1 block break-all font-semibold text-emerald-900">{cadastralId}</code></div>{typeof onCopyId === 'function' && <button type="button" className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md border border-slate-200 text-emerald-800 hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-700" onClick={onCopyId} aria-label={bg ? 'Копирай идентификатора за официална справка' : 'Copy identifier for an official report'} title={bg ? 'Копирай идентификатора' : 'Copy identifier'}><Copy size={16} aria-hidden="true" /></button>}</div>
+    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs"><a className="inline-flex min-h-11 items-center gap-1 font-semibold text-emerald-800 underline underline-offset-2" href={REGISTRY_URL} target="_blank" rel="noreferrer">{bg ? 'Имотен регистър' : 'Property Register'}<ArrowUpRight size={14} aria-hidden="true" /></a><a className="inline-flex min-h-11 items-center gap-1 text-emerald-800 underline underline-offset-2" href={KAIS_URL} target="_blank" rel="noreferrer">{bg ? 'Карта на КАИС' : 'KAIS map'}<ArrowUpRight size={14} aria-hidden="true" /></a></div>
+    <details className="evidence-details"><summary>{bg ? 'Как да направя проверката?' : 'How do I check?'}</summary>
+      <p>{bg ? 'В Имотния регистър изберете справка за имот и въведете идентификатора. За онлайн справка са нужни профил, средство за автентикация и заплащане на посочената в портала такса.' : 'In the Property Register, choose a property report and enter the identifier. An online report requires an account, an authentication method and payment of the fee shown in the portal.'}</p>
+      <p>{bg ? 'По-стари вписвания може да не се намират по кадастрален номер; използвайте и другите критерии. Липсата на резултат не доказва липса на собственик или тежести.' : 'Older entries may not be found by cadastral identifier; use the other search criteria too. No result does not establish that an owner or encumbrances are absent.'}</p>
+      <p>{bg ? 'Парцелът, сградата и апартаментът са отделни кадастрални обекти. Проверявайте идентификатора на конкретния обект. Възложителят по строителен документ не се приема автоматично за собственик.' : 'Land, buildings and apartments are separate cadastral objects. Check the identifier of the specific property. A construction applicant is not automatically treated as its owner.'}</p>
+      <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs"><a className="inline-flex min-h-11 items-center gap-1 text-emerald-800 underline underline-offset-2" href={REPORT_HELP_URL} target="_blank" rel="noreferrer">{bg ? 'Официални указания' : 'Official instructions'}<ArrowUpRight size={13} aria-hidden="true" /></a><a className="inline-flex min-h-11 items-center gap-1 text-emerald-800 underline underline-offset-2" href={ACCESS_URL} target="_blank" rel="noreferrer">{bg ? 'Достъп и такси' : 'Access and fees'}<ArrowUpRight size={13} aria-hidden="true" /></a></div>
+    </details>
+  </section>;
+}

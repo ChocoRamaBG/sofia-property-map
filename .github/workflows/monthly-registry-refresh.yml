@@ -20,6 +20,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  official-transactions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: official-sofia-transactions
+      cancel-in-progress: false
+    steps:
+      - name: Check out the official transaction collector
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/requirements-transactions.txt
+      - name: Install the PDF table reader
+        run: python -m pip install -r scripts/requirements-transactions.txt
+      - name: Fetch previously published transaction history
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/deploy_site_ftps.py --fetch-transactions --input public
+      - name: Capture official quarterly registered sales
+        run: python scripts/refresh_transaction_context.py --output public/data/transactions-context.json
+      - name: Publish verified transaction statistics
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/deploy_site_ftps.py --transactions-only --input public
+      - name: Keep the dated statistical snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: sofia-transaction-context-${{ github.run_id }}
+          path: public/data/transactions-context.json
+          retention-days: 90
+          if-no-files-found: error
+
   official-market-context:
     runs-on: ubuntu-latest
     timeout-minutes: 15

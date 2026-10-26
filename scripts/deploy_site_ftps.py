@@ -31,7 +31,9 @@ STATIC_NAMES = frozenset({"about.html", "privacy.html", "robots.txt", "sitemap.x
 REFERENCE_NAME = "data/market-georeference.json"
 CONTEXT_NAME = "data/housing-context.json"
 MAX_CONTEXT_BYTES = 128 * 1024
-DATA_NAMES = frozenset({REFERENCE_NAME, CONTEXT_NAME})
+TRANSACTIONS_NAME = "data/transactions-context.json"
+MAX_TRANSACTIONS_BYTES = 256 * 1024
+DATA_NAMES = frozenset({REFERENCE_NAME, CONTEXT_NAME, TRANSACTIONS_NAME})
 ASSET_EXTENSIONS = frozenset({
     ".js", ".mjs", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif",
     ".webp", ".avif", ".ico", ".woff", ".woff2", ".ttf", ".otf", ".wasm",
@@ -43,6 +45,30 @@ FORBIDDEN_ASSET_PARTS = frozenset({"php", "phtml", "phar", "env"})
 
 def digest(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def validate_transactions(payload: bytes) -> dict:
+    # PDF dependencies are lazy in the collector: ordinary static publication
+    # still uses only the standard library and cannot scrape owner data.
+    from refresh_transaction_context import validate_payload
+    return validate_payload(payload)
+
+
+def preserve_transactions(old: dict, incoming: dict) -> bool:
+    if old['geography'] != incoming['geography'] or old['metric'] != incoming['metric'] or old['unit'] != incoming['unit']:
+        raise ValueError('Transaction context scope changed')
+    old_rows = {row['period']: row for row in old['series']}
+    new_rows = {row['period']: row for row in incoming['series']}
+    if incoming['retrieved_at'] < old['retrieved_at'] or max(new_rows) < max(old_rows):
+        return True
+    if not set(old_rows).issubset(new_rows):
+        raise ValueError('Transaction context would truncate previously published quarters')
+    for period, row in old_rows.items():
+        earlier = row['source'].get('published_at')
+        newer = new_rows[period]['source'].get('published_at')
+        if earlier and (not newer or newer < earlier):
+            raise ValueError('Transaction context publication dates would regress')
+    return False
 
 
 def context_timestamp(value) -> datetime:
@@ -259,6 +285,8 @@ def planned_files(directory: Path) -> list[tuple[str, bytes]]:
             payload = read_local(reference, root)
             if name == CONTEXT_NAME:
                 validate_context(payload)
+            elif name == TRANSACTIONS_NAME:
+                validate_transactions(payload)
             statics.append((name, payload))
     plan = sorted(assets) + sorted(statics) + [("index.html", entry_payload)]
     if sum(len(payload) for _, payload in plan) > MAX_TOTAL_BYTES:
@@ -288,9 +316,9 @@ def listed_names(ftp: FTP_TLS, directory: str) -> set[str]:
     return {posixpath.basename(entry.rstrip("/")) for entry in entries}
 
 
-def read_hosted_context(ftp: FTP_TLS) -> bytes | None:
+def read_hosted_context(ftp: FTP_TLS, name: str = CONTEXT_NAME, limit: int = MAX_CONTEXT_BYTES, validator=validate_context) -> bytes | None:
     try:
-        payload = read_remote(ftp, f"{REMOTE_ROOT}/{CONTEXT_NAME}", MAX_CONTEXT_BYTES)
+        payload = read_remote(ftp, f"{REMOTE_ROOT}/{name}", limit)
     except error_perm as error:
         if not str(error).startswith("550"):
             raise
@@ -298,37 +326,39 @@ def read_hosted_context(ftp: FTP_TLS) -> bytes | None:
         # listing proving absence permits the committed fallback to remain.
         if "data" not in listed_names(ftp, REMOTE_ROOT):
             return None
-        if "housing-context.json" not in listed_names(ftp, f"{REMOTE_ROOT}/data"):
+        if posixpath.basename(name) not in listed_names(ftp, f"{REMOTE_ROOT}/data"):
             return None
-        raise ValueError("Existing hosted housing context is not readable") from error
-    validate_context(payload)
+        raise ValueError("Existing hosted official context is not readable") from error
+    validator(payload)
     return payload
 
 
-def context_output(directory: Path) -> tuple[Path, Path]:
+def context_output(directory: Path, name: str = CONTEXT_NAME) -> tuple[Path, Path]:
+    if name not in (CONTEXT_NAME, TRANSACTIONS_NAME):
+        raise ValueError('Unsupported official context filename')
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("Context input must be an existing, unlinked directory")
     root = directory.resolve()
     parent = root / "data"
     if parent.is_symlink() or (parent.exists() and not parent.is_dir()) or not parent.resolve().is_relative_to(root):
         raise ValueError("Context output directory is linked or outside the input root")
-    output = root / CONTEXT_NAME
+    output = root / name
     if output.is_symlink() or (output.exists() and not output.is_file()) or not output.resolve().is_relative_to(root):
         raise ValueError("Context output must be an unlinked regular file under the input root")
     return root, output
 
 
-def fetch_context(ftp: FTP_TLS, directory: Path) -> None:
-    root, output = context_output(directory)
-    payload = read_hosted_context(ftp)
+def fetch_context(ftp: FTP_TLS, directory: Path, name: str = CONTEXT_NAME, limit: int = MAX_CONTEXT_BYTES, validator=validate_context) -> None:
+    root, output = context_output(directory, name)
+    payload = read_hosted_context(ftp, name, limit, validator)
     if payload is None:
         # An absent host file is acceptable only when a valid committed
         # fallback actually exists. Permission and integrity failures stop.
-        validate_context(read_local(output, root))
-        print("Hosted housing context is confirmed absent; retained the validated local fallback", flush=True)
+        validator(read_local(output, root))
+        print("Hosted official context is confirmed absent; retained the validated local fallback", flush=True)
         return
     output.parent.mkdir(exist_ok=True)
-    context_output(directory)
+    context_output(directory, name)
     temporary = output.with_name(output.name + "." + uuid4().hex + ".pending")
     try:
         with temporary.open("xb") as handle:
@@ -338,7 +368,7 @@ def fetch_context(ftp: FTP_TLS, directory: Path) -> None:
         os.replace(temporary, output)
     finally:
         temporary.unlink(missing_ok=True)
-    print(f"Fetched validated official housing context: {len(payload)} bytes; SHA-256 {digest(payload)}", flush=True)
+    print(f"Fetched validated {name}: {len(payload)} bytes; SHA-256 {digest(payload)}", flush=True)
 
 
 def verify_remote(ftp: FTP_TLS, remote: str, payload: bytes) -> None:
@@ -386,15 +416,18 @@ def main() -> None:
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--context-only", action="store_true", help="Publish only the official housing-context JSON from the input directory")
     modes.add_argument("--fetch-context", action="store_true", help="Fetch the verified hosted housing context into the input directory before refreshing it")
+    modes.add_argument("--transactions-only", action="store_true", help="Publish only the official transaction-count JSON")
+    modes.add_argument("--fetch-transactions", action="store_true", help="Fetch the hosted transaction history before refreshing it")
     args = parser.parse_args()
-    if args.fetch_context:
-        context_output(args.input)
+    selected_name, selected_limit, selected_validator = (TRANSACTIONS_NAME, MAX_TRANSACTIONS_BYTES, validate_transactions) if args.fetch_transactions or args.transactions_only else (CONTEXT_NAME, MAX_CONTEXT_BYTES, validate_context)
+    if args.fetch_context or args.fetch_transactions:
+        context_output(args.input, selected_name)
         plan = []
-    elif args.context_only:
-        root, output = context_output(args.input)
-        payload = read_local(root / CONTEXT_NAME, root)
-        validate_context(payload)
-        plan = [(CONTEXT_NAME, payload)]
+    elif args.context_only or args.transactions_only:
+        root, output = context_output(args.input, selected_name)
+        payload = read_local(output, root)
+        selected_validator(payload)
+        plan = [(selected_name, payload)]
     else:
         plan = planned_files(args.input)
     credentials = {key: os.environ.get(key) for key in ("FTP_HOST", "FTP_USER", "FTP_PASSWORD")}
@@ -409,10 +442,18 @@ def main() -> None:
         ftp.login(credentials["FTP_USER"], credentials["FTP_PASSWORD"])
         ftp.prot_p()
         ftp.cwd(REMOTE_ROOT)
-        if args.fetch_context:
-            fetch_context(ftp, args.input)
+        if args.fetch_context or args.fetch_transactions:
+            fetch_context(ftp, args.input, selected_name, selected_limit, selected_validator)
             return
         for relative, payload in plan:
+            if relative == TRANSACTIONS_NAME:
+                previous = read_hosted_context(ftp, TRANSACTIONS_NAME, MAX_TRANSACTIONS_BYTES, validate_transactions)
+                if previous is not None:
+                    # Frontend publication only bootstraps this dataset. The
+                    # serialized dedicated refresh owns every later update.
+                    if not args.transactions_only or preserve_transactions(validate_transactions(previous), validate_transactions(payload)):
+                        print('Preserved the published official transaction context', flush=True)
+                        continue
             if relative == CONTEXT_NAME:
                 # A frontend checkout can be older than a monthly data refresh.
                 # Do not replace a newer published context with an older file.

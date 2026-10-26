@@ -4,6 +4,7 @@ import { useI18n } from '@/lib/i18n';
 import { displayDate, fieldLabel, fieldValue, REGISTER_COLORS } from '@/lib/registerUi';
 import { realEstateApi } from '@/api/realEstateApi';
 import CadastralSummary from '@/components/details/CadastralSummary';
+import OwnershipSources from '@/components/details/OwnershipSources';
 import DevelopmentTimeline from './DevelopmentTimeline';
 import DocumentTypeIcon from '@/components/DocumentTypeIcon';
 
@@ -165,6 +166,7 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
             {overview.length > 0 && <dl className="property-overview-fields">{overview.map((field) => <div className="property-overview-field" key={field.key}><dt>{t(`panel.overview.${field.key}`)}</dt><dd>{field.values.map((entry) => <div className="property-overview-value" key={entry.value}><p>{entry.value}</p><div className="overview-value-sources">{[...entry.sources.values()].map((source) => <button key={source.code} onClick={() => goToSource(source.code)} title={sourceLabel(source, lang)}>{sourceShortLabel(source, lang, t)}<ArrowDown size={10} /></button>)}</div></div>)}</dd></div>)}</dl>}
           </section>
           <CadastralSummary cadastre={currentData?.cadastre} status={currentData?.cadastre_status} />
+          <OwnershipSources cadastralId={key} onCopyId={copyId} />
           <DevelopmentTimeline sources={sources} lang={lang} onOpenSource={goToSource} />
           <section className={`certificate-status certificate-status-compact ${hasCertificate ? 'certificate-found' : 'certificate-unknown'}`}>
             <div className="certificate-status-top"><span className="certificate-icon"><DocumentTypeIcon type="exploitation_certificates" size={18} /></span><div><p>{t('certificate.heading')} · „{t('panel.act16')}“</p><h3>{hasCertificate ? t('certificate.found') : t('certificate.notLinked')}</h3></div>{hasCertificate && <span className="certificate-linked-count">{certificateDocuments.length}</span>}</div>
