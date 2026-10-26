@@ -388,24 +388,6 @@ button.map-context:hover { background: white; border-color: #a8c7b1; color: #2e7
 .map-toolbar { position: absolute; right: 18px; top: 18px; z-index: 1000; display: flex; flex-direction: column; gap: 7px; }
 .map-tool-button { width: 38px; height: 38px; display: grid; place-items: center; background: #ffffffed; border: 1px solid #dee6e1; border-radius: 8px; color: #425f63; box-shadow: 0 3px 9px #173b3920; transition: background .15s; }
 .map-tool-button:hover { background: #edf4ef; }
-.map-legend { position: absolute; bottom: 25px; left: 18px; z-index: 1000; max-width: 260px; min-width: 195px; padding: 12px 14px; background: #fffffff5; border: 1px solid #e1e8e2; border-radius: 9px; box-shadow: 0 4px 14px #173b391c; backdrop-filter: blur(8px); }
-.map-count { display: flex; align-items: center; gap: 7px; font-size: 10px; color: #758985; min-height: 20px; }
-.map-count-number { font-size: 17px; font-weight: 650; letter-spacing: -.35px; color: #294e51; }
-.legend-active-filter { margin-top: 4px; color: #55796a; font-size: 9px; }
-.map-legend-empty { margin-top: 10px; padding-top: 9px; border-top: 1px solid #e4eadd; color: #6f8867; font-size: 10px; line-height: 1.7; }
-.map-legend-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
-.map-legend-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex: 1; min-height: 44px; padding: 7px 9px; border: 1px solid #dbe6d4; border-radius: 6px; color: #537d48; background: #f7faf2; font-size: 10px; line-height: 1.4; }
-.map-legend-actions button:hover { color: #2f6d3a; background: #edf5e4; border-color: #b9d1aa; }
-.legend-colors { margin-top: 9px; padding-top: 8px; border-top: 1px solid #e9eee7; }
-.legend-colors summary { display: flex; align-items: center; justify-content: space-between; color: #7c8b83; font-size: 9px; cursor: pointer; }
-.legend-colors details[open] svg { transform: rotate(180deg); }
-.legend-colors > div { display: flex; flex-direction: column; gap: 8px; margin-top: 11px; }
-.legend-colors > div > span { display: flex; align-items: center; gap: 8px; font-size: 9px; color: #647a71; }
-.legend-colors i { width: 8px; height: 8px; border-radius: 50%; display: block; flex-shrink: 0; }
-.legend-colors .legend-cluster-sample { width: 16px; height: 16px; font-size: 8px; font-style: normal; display: grid; place-items: center; border: 1px solid #54746f; background: #ecf2ec; color: #365751; }
-.legend-warning, .legend-error { margin-top: 9px; font-size: 10px; line-height: 1.6; }
-.legend-warning { color: #a67820; }
-.legend-error { color: #b43a3a; }
 .plot-cluster-icon { background: transparent; border: none; border-radius: 50%; }
 .plot-cluster { --cluster-halo: 4px; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border-radius: 50%; color: #fff; border: 2px solid #ffffff; background: #2c5660f2; box-shadow: 0 0 0 var(--cluster-halo) #3a6a6a26, 0 3px 9px #254c4540; font-weight: 700; transform-origin: center; transition: transform .16s, box-shadow .16s; }
 .plot-cluster-medium { --cluster-halo: 5px; }
@@ -600,9 +582,6 @@ button.map-context:hover { background: white; border-color: #a8c7b1; color: #2e7
   .data-notice p { font-size: 9px; }
   .map-toolbar { top: 14px; right: 13px; gap: 6px; }
   .map-tool-button { width: 36px; height: 36px; }
-  .map-legend { left: 13px; bottom: 25px; min-width: 175px; max-width: 225px; padding: 10px 12px; }
-  .map-count-number { font-size: 15px; }
-  .map-count { font-size: 9px; }
   .search-panel { padding: 27px 23px 17px; }
   .search-panel h1 { font-size: 23px; }
   .search-input-wrap input { font-size: 13px; }
@@ -721,7 +700,6 @@ button.map-context:hover { background: white; border-color: #a8c7b1; color: #2e7
 .search-intent-alternative small { color: #61776b; font-size: 11px; }
 .search-active-terms { margin-top: 14px; }
 .search-results ul { max-height: 330px; }
-.map-point-note { margin-top: 8px; max-width: 245px; color: #5d7368; font-size: 11px; line-height: 1.5; }
 .map-toolbar { gap: 7px; }
 .map-tool-button { width: 42px; height: 42px; }
 .workspace-load-error { align-self: center; margin: 24px auto; padding: 22px; max-width: 420px; color: #304f47; background: #fff; border: 1px solid #d9e6de; border-radius: 12px; font-size: 14px; }
@@ -761,5 +739,4 @@ button.map-context:hover { background: white; border-color: #a8c7b1; color: #2e7
   .map-tool-button { width: 40px; height: 40px; }
   .map-toolbar { gap: 6px; }
   .analytics-consent__panel { padding: 14px 16px; }
-  .map-point-note { max-width: 190px; font-size: 10px; }
 }
