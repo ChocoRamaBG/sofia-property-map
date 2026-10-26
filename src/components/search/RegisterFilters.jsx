@@ -1,5 +1,5 @@
 import React, { useId, useState } from 'react';
-import { Check, ChevronDown, FileCheck2, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
+import { Check, ChevronDown, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { REGISTER_FILTERS, REGISTER_COLORS, displayCount, displayDate } from '@/lib/registerUi';
 import { activeFilterCount, invalidFilterArea } from '@/lib/propertyFilters';
@@ -95,7 +95,7 @@ export default function RegisterFilters({ value, onChange, counts, options }) {
     <label key={code} className={'filter-option ' + (filters.recordTypes.includes(code) ? 'is-active ' : '') + (code === 'no_records' ? 'filter-no-records' : '')}>
       <input type="checkbox" checked={filters.recordTypes.includes(code)} onChange={() => toggleType(code)} />
       <span className="filter-check" aria-hidden="true">{filters.recordTypes.includes(code) && <Check size={13} />}</span>
-      <span className="filter-symbol" style={{ color: REGISTER_COLORS[code] || '#173b42' }} aria-hidden="true">{code === 'exploitation_certificates' ? <FileCheck2 size={18} /> : <span className="filter-dot" style={{ backgroundColor: REGISTER_COLORS[code] || '#173b42' }} />}</span>
+      <span className="filter-symbol" aria-hidden="true"><span className="filter-dot" style={{ backgroundColor: REGISTER_COLORS[code] || '#173b42' }} /></span>
       <span className="filter-label">{t('filter.' + code)}{code === 'exploitation_certificates' && <small>{t('filter.certificateHint')}</small>}</span>
       {sourceCount(code) !== null && sourceCount(code) !== undefined && <span className="filter-count" title={t('filter.countHint')}>{displayCount(sourceCount(code), lang)}</span>}
     </label>
