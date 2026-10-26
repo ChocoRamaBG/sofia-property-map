@@ -22,7 +22,9 @@ jobs:
         with:
           node-version: '22.16.0'
       - name: Enable pnpm
-        run: corepack enable
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.11.0 --activate
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Set up Python
