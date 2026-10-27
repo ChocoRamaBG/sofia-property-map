@@ -9,6 +9,7 @@ import json
 import os
 import re
 import ssl
+import time
 from datetime import datetime, timezone
 from ftplib import FTP_TLS
 from pathlib import Path
@@ -29,7 +30,10 @@ def asset_name(value: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--wait-business-map', type=int, default=0, help='Bounded wait for a staged legacy company snapshot to gain its point index')
     args = parser.parse_args()
+    if not 0 <= args.wait_business_map <= 180:
+        parser.error('--wait-business-map must be between 0 and 180 seconds')
     credentials = {key: os.environ.get(key, '') for key in ('FTP_HOST', 'FTP_USER', 'FTP_PASSWORD')}
     if not all(credentials.values()) or any('\r' in value or '\n' in value for value in credentials.values()):
         raise ValueError('Valid hosting credentials are required')
@@ -76,14 +80,19 @@ def main() -> None:
         business_api = read('business-data.php', 128 * 1024)
         if 'registered_office_address_association' not in business_api or 'function business_search' not in business_api or 'function business_viewport' not in business_api:
             raise ValueError('Deployed read-only business API is missing')
-        pointer_raw = read_remote(ftp, f'{REMOTE_ROOT}/private/business-active.json', 1024)
-        pointer = json.loads(pointer_raw)
-        if set(pointer) != {'version', 'snapshot_id', 'manifest_sha256'} or pointer['version'] != 1 or not re.fullmatch(r'[a-f0-9]{32}', pointer['snapshot_id']) or not re.fullmatch(r'[a-f0-9]{64}', pointer['manifest_sha256']):
-            raise ValueError('Deployed company pointer is invalid')
-        manifest_raw = read_remote(ftp, f"{REMOTE_ROOT}/private/business-snapshots/{pointer['snapshot_id']}/manifest.json", 256 * 1024)
-        if hashlib.sha256(manifest_raw).hexdigest() != pointer['manifest_sha256']:
-            raise ValueError('Deployed company manifest hash is invalid')
-        business_manifest = json.loads(manifest_raw)
+        deadline = time.monotonic() + args.wait_business_map
+        while True:
+            pointer_raw = read_remote(ftp, f'{REMOTE_ROOT}/private/business-active.json', 1024)
+            pointer = json.loads(pointer_raw)
+            if set(pointer) != {'version', 'snapshot_id', 'manifest_sha256'} or pointer['version'] != 1 or not re.fullmatch(r'[a-f0-9]{32}', pointer['snapshot_id']) or not re.fullmatch(r'[a-f0-9]{64}', pointer['manifest_sha256']):
+                raise ValueError('Deployed company pointer is invalid')
+            manifest_raw = read_remote(ftp, f"{REMOTE_ROOT}/private/business-snapshots/{pointer['snapshot_id']}/manifest.json", 256 * 1024)
+            if hashlib.sha256(manifest_raw).hexdigest() != pointer['manifest_sha256']:
+                raise ValueError('Deployed company manifest hash is invalid')
+            business_manifest = json.loads(manifest_raw)
+            if 'points_index' in business_manifest or time.monotonic() >= deadline:
+                break
+            time.sleep(min(10, max(0, deadline - time.monotonic())))
         points = business_manifest.get('points_index')
         if not isinstance(points, dict) or points.get('file') != 'points-index.json' or type(points.get('bytes')) is not int or not 2 <= points['bytes'] <= 9_500_000 or not re.fullmatch(r'[a-f0-9]{64}', points.get('sha256', '')):
             raise ValueError('Deployed company map has no valid point index')
