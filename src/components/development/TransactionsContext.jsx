@@ -67,10 +67,27 @@ function SourceLink({ source, lang, pick }) {
 export default function TransactionsContext({ active = true }) {
   const { lang, pick } = useI18n();
   const id = useId();
+  const section = useRef(null);
+  const scrollRequested = useRef(new URLSearchParams(window.location.search).get('section') === 'transactions');
   const loaded = useRef(false);
   const [state, setState] = useState({ status: 'loading', data: null });
   const [attempt, setAttempt] = useState(0);
   const [windowSize, setWindowSize] = useState('20');
+  useEffect(() => {
+    if (!active || state.status === 'loading' || !scrollRequested.current) return undefined;
+    let frame;
+    const jump = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const fragment = window.location.hash.slice(1);
+        const workspace = ['map', 'offers', 'activity'].includes(fragment) ? fragment : new URLSearchParams(window.location.search).get('view');
+        if (!scrollRequested.current || workspace !== 'activity' || !section.current?.getClientRects().length) return;
+        section.current.scrollIntoView({ block: 'start', behavior: 'auto' }); section.current.focus({ preventScroll: true }); scrollRequested.current = false;
+      });
+    };
+    jump(); window.addEventListener('hashchange', jump);
+    return () => { window.cancelAnimationFrame(frame); window.removeEventListener('hashchange', jump); };
+  }, [active, state.status]);
   useEffect(() => {
     if (!active || loaded.current) return undefined;
     const controller = new AbortController();
@@ -100,7 +117,7 @@ export default function TransactionsContext({ active = true }) {
     return byPeriod.get(period) || { period, sales: null, source: null };
   }) : [];
   const chartRows = windowSize === 'all' ? calendar : calendar.slice(-Number(windowSize));
-  return <section className="transactions-context" aria-labelledby={id + '-title'}>
+  return <section id="sales-statistics" ref={section} tabIndex={-1} className="transactions-context" aria-labelledby={id + '-title'} style={{ scrollMarginTop: 16 }}>
     <div className="transactions-heading"><div><p className="development-eyebrow">{pick('АГЕНЦИЯ ПО ВПИСВАНИЯТА · СВ СОФИЯ', 'REGISTRY AGENCY · SOFIA OFFICE')}</p><h3 id={id + '-title'}>{pick('Колко продажби се вписват', 'How many sales are registered')}</h3><p>{pick('Тримесечна активност за района на Служба по вписванията — София. Обхваща продажби на различни видове недвижими имоти; броят не е само за апартаменти и не е брой уникални имоти.', 'Quarterly activity in the jurisdiction of Registry Office — Sofia. Sales cover different property types; the count is not limited to apartments and does not count unique properties.')}</p></div>{latest && <span className="transactions-quarter">{periodLabel(latest.period, lang)}</span>}</div>
     {state.status === 'loading' ? <div className="transactions-message" role="status"><Loader2 size={18} className="animate-spin" aria-hidden="true" /><p>{pick('Зареждане на официалната статистика за продажбите…', 'Loading official sales statistics…')}</p></div> : state.status === 'error' ? <div className="transactions-message" role="status"><Info size={18} aria-hidden="true" /><div><p>{pick('Статистиката за продажбите временно не е налична. Можете да отворите официалните справки.', 'Sales statistics are temporarily unavailable. The official reports remain available.')}</p><button type="button" className="development-button is-quiet" onClick={retry}><RefreshCw size={14} aria-hidden="true" />{pick('Опитай отново', 'Try again')}</button></div></div> : <>
       <div className="transactions-metrics">

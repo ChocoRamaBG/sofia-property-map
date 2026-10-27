@@ -69,6 +69,8 @@ def main() -> None:
         details = chunk('DetailsPanel')
         if 'transactions-context.json' not in dashboard or 'registered_sales' not in dashboard:
             raise ValueError('Deployed dashboard does not include the transaction statistics feature')
+        if 'section=transactions' not in dashboard or 'sales-statistics' not in dashboard:
+            raise ValueError('Deployed dashboard does not include the direct statistics shortcut')
         if 'Ownership and registered acts' not in details or 'portal.registryagency.bg/home-pr' not in details:
             raise ValueError('Deployed details do not include ownership-source guidance')
         styles = re.findall(r'<link\b[^>]*\bhref=[\"\x27]([^\"\x27]+\.css)[\"\x27]', entry_html, re.I)
@@ -79,7 +81,7 @@ def main() -> None:
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'ownership_source_guidance': True, 'tooltip_wrapping_fix': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'ownership_source_guidance': True, 'tooltip_wrapping_fix': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

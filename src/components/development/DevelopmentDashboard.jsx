@@ -22,11 +22,13 @@ const TYPE_TEXT = {
 };
 const TYPE_SHORT = { building_permits: ['Разрешения', 'Permits'], projecting_visas: ['Визи', 'Visas'], exploitation_certificates: ['Удостоверения', 'Certificates'], exploitation_certificates_legacy: ['Архив', 'Archive'] };
 function storedState() {
+  const query = new URLSearchParams(window.location.search);
+  const requestedTab = query.get('view') === 'activity' && ['documents', 'activity', 'market'].includes(query.get('tab')) ? query.get('tab') : null;
   try {
     const saved = JSON.parse(sessionStorage.getItem(STATE_KEY));
-    if (saved?.filters && typeof saved.filters === 'object') return { view: ['documents', 'activity', 'market'].includes(saved.view) ? saved.view : 'documents', filters: { ...DEFAULT, ...Object.fromEntries(Object.entries(saved.filters).filter(([key, value]) => key in DEFAULT && typeof value === 'string')) }, offset: Math.floor(Math.max(0, Math.min(1992, Number(saved.offset) || 0)) / 12) * 12 };
+    if (saved?.filters && typeof saved.filters === 'object') return { view: requestedTab || (['documents', 'activity', 'market'].includes(saved.view) ? saved.view : 'documents'), filters: { ...DEFAULT, ...Object.fromEntries(Object.entries(saved.filters).filter(([key, value]) => key in DEFAULT && typeof value === 'string')) }, offset: Math.floor(Math.max(0, Math.min(1992, Number(saved.offset) || 0)) / 12) * 12 };
   } catch { /* Session storage may be disabled. */ }
-  return { filters: { ...DEFAULT }, offset: 0, view: 'documents' };
+  return { filters: { ...DEFAULT }, offset: 0, view: requestedTab || 'documents' };
 }
 function storedShortlist() { try { const value = JSON.parse(localStorage.getItem(SAVED_KEY)); return Array.isArray(value) ? [...new Set(value.filter((id) => typeof id === 'string' && /^[a-f0-9]{64}$/.test(id)))].slice(-200) : []; } catch { return []; } }
 function number(value, lang, digits = 0) { return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? new Intl.NumberFormat(lang === 'bg' ? 'bg-BG' : 'en-GB', { maximumFractionDigits: digits }).format(Number(value)) : '—'; }
@@ -122,6 +124,16 @@ function ConstructionContext({ construction, lang, pick }) {
 }
 
 function MarketContext({ market, housing, activity, lang, pick, onOpenOffers }) {
+  function openSalesStatistics(event) {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const target = document.getElementById('sales-statistics');
+    if (!target) return;
+    event.preventDefault();
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'activity'); url.searchParams.set('tab', 'market'); url.searchParams.set('section', 'transactions');
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    target.scrollIntoView({ block: 'start', behavior: 'auto' }); target.focus({ preventScroll: true });
+  }
   const metric = headlineMarket(market.data);
   const captures = Array.isArray(market.data?.history?.series) ? market.data.history.series : [];
   const marketPeriods = useMemo(() => {
@@ -145,6 +157,7 @@ function MarketContext({ market, housing, activity, lang, pick, onOpenOffers }) 
   const latestHousing = housingSeries[housingSeries.length - 1];
   const historySpan = captures.length > 1 ? (Date.parse(captures[captures.length - 1].captured_at) - Date.parse(captures[0].captured_at)) / 86400000 : 0;
   return <section className="development-panel development-market-context" aria-labelledby="development-market-title">
+    <p className="development-inline-note"><a className="development-button is-quiet" href="/?view=activity&tab=market&section=transactions" onClick={openSalesStatistics}><BarChart3 size={16} aria-hidden="true" />{pick('Вписани продажби и ипотеки', 'Registered sales and mortgages')}<ArrowRight size={14} aria-hidden="true" /></a></p>
     <div className="development-section-heading"><div><p className="development-eyebrow">{pick('Предлагане + пазар', 'Supply + market')}</p><h2 id="development-market-title">{pick('Строителство и цени', 'Construction and prices')}</h2><p>{pick('Разрешенията описват потенциален бъдещ обем. Офертите описват заявени цени днес. Те измерват различни неща.', 'Permits describe potential future supply. Listings describe asking prices today. They measure different things.')}</p></div>{onOpenOffers && <button type="button" className="development-button" onClick={onOpenOffers}>{pick('Към пазарните данни', 'Open market data')}<ArrowRight size={15} /></button>}</div>
     <p className="development-footnote development-market-scope">{pick('Офертният контекст обхваща апартаментите в София и населените места от каталога на източника; не се ограничава от филтрите за строителни документи. Това са офертни цени, а не цени по сделки.', 'The asking-price context covers apartments in Sofia and settlements in the source catalogue; construction-document filters do not constrain it. These are asking prices, not transaction prices.')}</p><div className="development-market-grid"><article className="development-market-stat"><span>{pick('Текуща офертна медиана', 'Current asking-price median')}</span>{market.loading ? <Loader2 className="animate-spin" size={19} /> : market.error ? <p>{pick('Пазарният набор временно не е достъпен.', 'Market data is temporarily unavailable.')}</p> : <><strong>{number(metric.median_eur_per_sqm, lang)}<small> €/m²</small></strong><p>{number(metric.priced_count, lang)} {pick('обяви с цена', 'priced listings')} · {metric.vat_basis === 'unknown' ? pick('ДДС не е посочен', 'VAT not stated') : pick('ДДС включен / не се начислява', 'VAT included / not charged')}</p><small>{pick('Снимка:', 'Captured:')} {date(market.data?.captured_at, lang)}</small></>}</article><article className="development-market-stat"><span>{pick('История на офертните снимки', 'Asking-price snapshot history')}</span><strong>{number(captures.length, lang)}<small> {pick('наблюдения', 'observations')}</small></strong><p>{captures.length > 1 ? `${date(captures[0].captured_at, lang)} – ${date(captures[captures.length - 1].captured_at, lang)}` : pick('Начална отправна база', 'Initial baseline')}</p><small>{pick('Промяната на извадката също променя медианата.', 'Changes in the sample also change the median.')}</small></article></div>
     {hasPriceHistory ? <div className="development-comparison-chart"><div className="development-axis-labels"><span>{pick('Лява ос: брой избрани документи', 'Left axis: selected documents')}</span><span>{pick('Дясна ос: офертна медиана €/m²', 'Right axis: asking median €/m²')}</span></div><div className="development-chart"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={combined} margin={{ top: 15, right: 12, left: -12, bottom: 10 }}><CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e4eae5" /><XAxis dataKey="period" tickFormatter={(value) => periodLabel(value, lang, true)} tick={{ fill: '#6c8079', fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={30} /><YAxis yAxisId="documents" allowDecimals={false} tick={{ fill: '#287d68', fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis yAxisId="price" orientation="right" tick={{ fill: '#b48534', fontSize: 10 }} tickLine={false} axisLine={false} /><Tooltip content={<ChartTooltip lang={lang} pick={pick} price />} /><Bar yAxisId="documents" dataKey="document_count" name={pick('Документи', 'Documents')} fill="#bad3c7" maxBarSize={36} /><Line yAxisId="price" dataKey="asking" name={pick('Офертна медиана', 'Asking median')} stroke="#b48534" strokeWidth={2} connectNulls={false} dot={{ r: 4, fill: '#b48534' }} /></ComposedChart></ResponsiveContainer></div><p className="development-footnote">{pick('Във всеки месец е показана само последната налична завършена офертна снимка. Цени не се попълват за липсващи месеци. Съпоставянето не установява причинност.', 'Each month shows only its last available completed asking-price snapshot. Missing months are not filled. The comparison does not establish causality.')}</p></div> : <p className="development-inline-note"><Info size={16} />{activity.filters?.period === 'year' ? pick('Изберете групиране по месеци за съпоставка с кратката офертна история. Не обобщаваме няколко дни обяви като годишна цена.', 'Select monthly grouping to compare with the short asking-price history. A few days of listings are not aggregated into an annual price.') : pick('Все още няма поне два различни месеца с офертни наблюдения за времева съпоставка. Текущата медиана не се пренася назад в миналото.', 'At least two distinct months of asking-price observations are needed for a time comparison. Today’s median is not carried back into the past.')}</p>}
@@ -226,8 +239,12 @@ export default function DevelopmentDashboard({ onOpenPlot, onOpenMap, onOpenOffe
     return () => controller.abort();
   }, [revision, marketVisited]);
   function selectView(next) {
+    if (!['documents', 'activity', 'market'].includes(next)) return;
     setView(next);
     if (next === 'market') setMarketVisited(true);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', next); url.searchParams.delete('section');
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
     workspaceRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }
   function onViewKeys(event) {
