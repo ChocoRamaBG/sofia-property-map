@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError, URLError
 
 import refresh_business_addresses as business
 
@@ -164,6 +166,89 @@ class AddressEvidenceTests(unittest.TestCase):
             pointer_path.write_bytes(business.json_bytes(pointer))
             with self.assertRaisesRegex(ValueError, "pointer hash"):
                 business.validate_snapshot(root)
+
+
+class CompanyCaptureTests(unittest.TestCase):
+    def response(self, payload=b"ok", length=None):
+        response = MagicMock()
+        response.headers = {"Content-Length": str(len(payload) if length is None else length)}
+        response.read.return_value = payload
+        response.__enter__.return_value = response
+        return response
+
+    def test_transient_500_retries_same_url_then_succeeds(self):
+        url = "https://api.github.com/repos/" + business.REPO + "/git/trees/" + "a" * 40
+        opener = MagicMock()
+        opener.open.side_effect = [HTTPError(url, 500, "Transient", {}, None), self.response()]
+        with patch.object(business, "build_opener", return_value=opener), patch.object(business.time, "sleep") as sleep:
+            self.assertEqual(business.fetch_bytes(url, 100, "secret"), b"ok")
+        self.assertEqual(opener.open.call_count, 2)
+        self.assertTrue(all(call.args[0].full_url == url for call in opener.open.call_args_list))
+        sleep.assert_called_once_with(1)
+
+    def test_retry_attempts_are_bounded_and_retry_after_is_capped(self):
+        url = "https://api.github.com/repos/" + business.REPO
+        opener = MagicMock()
+        opener.open.side_effect = [HTTPError(url, 429, "Busy", {"Retry-After": "999"}, None), URLError("temporary"), TimeoutError("temporary")]
+        with patch.object(business, "build_opener", return_value=opener), patch.object(business.time, "sleep") as sleep:
+            with self.assertRaises(TimeoutError):
+                business.fetch_bytes(url, 100)
+        self.assertEqual(opener.open.call_count, business.MAX_HTTP_ATTEMPTS)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [10, 2])
+
+    def test_permanent_http_or_oversize_does_not_retry(self):
+        url = "https://api.github.com/repos/" + business.REPO
+        for value, error in [(HTTPError(url, 404, "Absent", {}, None), HTTPError), (self.response(length=101), ValueError)]:
+            opener = MagicMock()
+            if isinstance(value, Exception):
+                opener.open.side_effect = value
+            else:
+                opener.open.return_value = value
+            with patch.object(business, "build_opener", return_value=opener), patch.object(business.time, "sleep") as sleep:
+                with self.assertRaises(error):
+                    business.fetch_bytes(url, 100)
+            self.assertEqual(opener.open.call_count, 1)
+            sleep.assert_not_called()
+
+    def test_raw_request_never_receives_authorization_even_if_token_supplied(self):
+        opener = MagicMock()
+        opener.open.return_value = self.response()
+        with patch.object(business, "build_opener", return_value=opener):
+            business.fetch_bytes("https://raw.githubusercontent.com/example/file.csv", 100, "secret")
+        self.assertIsNone(opener.open.call_args.args[0].get_header("Authorization"))
+
+    def test_capture_walks_pinned_directories_and_numeric_parts_without_recursion(self):
+        import hashlib
+        commit, first, second = "a" * 40, "b" * 40, "c" * 40
+        api = "https://api.github.com/repos/" + business.REPO
+        payload = b"a,b\n"
+        blob = hashlib.sha1(b"blob " + str(len(payload)).encode() + b"\0" + payload).hexdigest()
+        files = [{"path": "registry_agency_data_mega" + (f"_part{i}" if i > 1 else "") + ".csv", "type": "blob", "mode": "100644", "sha": blob, "size": len(payload)} for i in range(12, 0, -1)]
+        trees = {
+            api + "/git/trees/" + commit: {"sha": "d" * 40, "truncated": False, "tree": [{"path": "registry_agency_scraper", "type": "tree", "mode": "040000", "sha": first}]},
+            api + "/git/trees/" + first: {"sha": first, "truncated": False, "tree": [{"path": "registry_agency_outputs", "type": "tree", "mode": "040000", "sha": second}]},
+            api + "/git/trees/" + second: {"sha": second, "truncated": False, "tree": files},
+        }
+        def fetch(url, limit, token=None):
+            self.assertNotIn("recursive", url)
+            if url in trees:
+                self.assertEqual(token, "api-secret")
+                return json.dumps(trees[url]).encode()
+            self.assertTrue(url.startswith("https://raw.githubusercontent.com/" + business.REPO + "/" + commit + "/" + business.SOURCE_PATH + "/"))
+            self.assertIsNone(token)
+            return payload
+        with tempfile.TemporaryDirectory() as temporary, patch.object(business, "fetch_bytes", side_effect=fetch) as mocked:
+            _, source = business.capture_source(Path(temporary), commit, "api-secret")
+        self.assertEqual([business.part_number(item["name"]) for item in source["files"]], list(range(1, 13)))
+        self.assertEqual(mocked.call_count, 15)
+        self.assertEqual(source["commit"], commit)
+
+    def test_truncated_tree_fails_closed(self):
+        malformed = json.dumps({"sha": "a" * 40, "truncated": True, "tree": []}).encode()
+        with patch.object(business, "fetch_bytes", return_value=malformed) as mocked:
+            with self.assertRaisesRegex(ValueError, "Incomplete"):
+                business.source_entries("https://api.github.com/repos/" + business.REPO, "a" * 40, None)
+        self.assertEqual(mocked.call_count, 1)
 
 
 if __name__ == "__main__":

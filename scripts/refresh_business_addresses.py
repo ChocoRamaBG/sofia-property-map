@@ -17,7 +17,9 @@ from pathlib import Path
 import re
 import ssl
 import struct
+import time
 import unicodedata
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from uuid import uuid4
@@ -43,6 +45,8 @@ MAX_CSV_BYTES = 128 * 1024 * 1024
 MAX_SOURCE_BYTES = 1024 * 1024 * 1024
 MAX_FILES = 64
 MAX_ROWS = 2_000_000
+MAX_HTTP_ATTEMPTS = 3
+RETRY_HTTP_CODES = {408, 429, 500, 502, 503, 504}
 FIELD_MAP = {"uic": "ЕИК/ПИК", "query": "UIC_Query", "name": "Фирма/Наименование",
              "legal_form": "Правна форма", "country": "Държава", "settlement": "Населено място",
              "address": "Адрес", "activity": "Предмет на дейност", "natural_person": "Физическо лице",
@@ -236,14 +240,55 @@ def fetch_bytes(url, limit, token=None):
     context = ssl.create_default_context()
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     opener = build_opener(NoRedirect(), HTTPSHandler(context=context))
-    with opener.open(Request(url, headers=headers), timeout=90) as response:
-        declared = response.headers.get("Content-Length")
-        if declared is not None and (not declared.isdigit() or not 1 <= int(declared) <= limit):
-            raise ValueError("Invalid company source content length")
-        payload = response.read(limit + 1)
-        if not payload or len(payload) > limit or declared is not None and len(payload) != int(declared):
-            raise ValueError("Company source download exceeded limit or was incomplete")
-        return payload
+    for attempt in range(MAX_HTTP_ATTEMPTS):
+        retry_after = None
+        try:
+            with opener.open(Request(url, headers=headers), timeout=90) as response:
+                declared = response.headers.get("Content-Length")
+                if declared is not None and (not declared.isdigit() or not 1 <= int(declared) <= limit):
+                    raise ValueError("Invalid company source content length")
+                payload = response.read(limit + 1)
+                if not payload or len(payload) > limit or declared is not None and len(payload) != int(declared):
+                    raise ValueError("Company source download exceeded limit or was incomplete")
+                return payload
+        except HTTPError as error:
+            if error.code not in RETRY_HTTP_CODES or attempt + 1 == MAX_HTTP_ATTEMPTS:
+                raise
+            value = (error.headers.get("Retry-After", "") if error.headers else "").strip()
+            if value.isdigit():
+                retry_after = min(10, int(value)) if len(value) < 4 else 10
+            error.close()
+        except (URLError, TimeoutError):
+            if attempt + 1 == MAX_HTTP_ATTEMPTS:
+                raise
+        time.sleep(retry_after if retry_after is not None else attempt + 1)
+
+
+def source_entries(api, commit, token):
+    """Walk only the immutable directory trees, never the entire recursive repo."""
+    def tree(identifier):
+        value = json.loads(fetch_bytes(api + "/git/trees/" + identifier, 4 * 1024 * 1024, token))
+        if not isinstance(value, dict) or value.get("truncated") is not False or not isinstance(value.get("tree"), list) or not isinstance(value.get("sha"), str) or not HEX40.fullmatch(value["sha"]):
+            raise ValueError("Incomplete company repository tree")
+        entries, names = value["tree"], set()
+        for item in entries:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not item["path"] or "/" in item["path"] or item["path"] in {".", ".."} or item["path"] in names:
+                raise ValueError("Unexpected direct company tree entry")
+            names.add(item["path"])
+        return entries
+    identifier = commit
+    for component in SOURCE_PATH.split("/"):
+        matches = [entry for entry in tree(identifier) if entry["path"] == component]
+        if len(matches) != 1 or matches[0].get("type") != "tree" or matches[0].get("mode") != "040000" or not isinstance(matches[0].get("sha"), str) or not HEX40.fullmatch(matches[0]["sha"]):
+            raise ValueError("Pinned company source directory is absent or malformed")
+        identifier = matches[0]["sha"]
+    entries = []
+    for item in tree(identifier):
+        if CSV_NAME.fullmatch(item["path"]):
+            if item.get("type") != "blob" or item.get("mode") != "100644" or type(item.get("size")) is not int or not 1 <= item["size"] <= MAX_CSV_BYTES or not isinstance(item.get("sha"), str) or not HEX40.fullmatch(item["sha"]):
+                raise ValueError("Unexpected company export blob")
+            entries.append(item)
+    return sorted(entries, key=lambda item: part_number(item["path"]))
 
 
 def capture_source(cache, commit=None, token=None):
@@ -255,17 +300,7 @@ def capture_source(cache, commit=None, token=None):
         commit = rows[0].get("sha")
     if not isinstance(commit, str) or not HEX40.fullmatch(commit):
         raise ValueError("Company source must use a full pinned commit")
-    tree = json.loads(fetch_bytes(api + "/git/trees/" + commit + "?recursive=1", 16 * 1024 * 1024, token))
-    if not isinstance(tree, dict) or tree.get("truncated") is not False or not isinstance(tree.get("tree"), list):
-        raise ValueError("Incomplete company repository tree")
-    entries = []
-    for item in tree["tree"]:
-        path = item.get("path", "")
-        if path.startswith(SOURCE_PATH + "/") and "/" not in path[len(SOURCE_PATH) + 1:] and CSV_NAME.fullmatch(path.rsplit("/", 1)[-1]):
-            if item.get("type") != "blob" or item.get("mode") != "100644" or type(item.get("size")) is not int or not 1 <= item["size"] <= MAX_CSV_BYTES or not HEX40.fullmatch(item.get("sha", "")):
-                raise ValueError("Unexpected company export blob")
-            entries.append(item)
-    entries.sort(key=lambda item: part_number(item["path"].rsplit("/", 1)[-1]))
+    entries = source_entries(api, commit, token)
     source = {"repo": REPO, "commit": commit, "path": SOURCE_PATH, "files": [{"name": item["path"].rsplit("/", 1)[-1], "bytes": item["size"], "git_blob_sha1": item["sha"], "sha256": "0" * 64} for item in entries]}
     validate_source(source)
     directory = cache / commit

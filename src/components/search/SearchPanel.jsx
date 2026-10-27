@@ -69,8 +69,8 @@ export default function SearchPanel({
           )}
         </div>
       )}
-      <SearchResults results={results} onSelect={onSelectResult} query={resultQuery} total={resultTotal} mappedTotal={resultMappedTotal} unmappedTotal={resultUnmappedTotal} truncated={resultsTruncated} loading={loading} error={searchError} />
       <BusinessAddressSearch state={businessSearchState} onStateChange={onBusinessSearchStateChange} onSelect={onSelectBusiness} />
+      <SearchResults results={results} onSelect={onSelectResult} query={resultQuery} total={resultTotal} mappedTotal={resultMappedTotal} unmappedTotal={resultUnmappedTotal} truncated={resultsTruncated} loading={loading} error={searchError} />
       <details className="search-help"><summary>{pick('Как работи търсенето?', 'How does search work?')}</summary><p>{t('search.hint')}</p><p>{t('search.mapHelp')}</p>{searchTerms.length >= 2 && <p>{t(`search.matchHelp.${searchMatch === 'any' ? 'any' : 'all'}`)}</p>}</details>
     </section>
   );
