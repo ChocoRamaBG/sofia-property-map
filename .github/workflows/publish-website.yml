@@ -35,6 +35,7 @@ jobs:
         run: |
           php -l public/development-data.php
           php -l public/boundary-data.php
+          php -l public/business-data.php
           php -l public/api.php
       - name: Build the production website
         run: pnpm run build
@@ -44,6 +45,19 @@ jobs:
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: python scripts/deploy_website_ftps.py --public public --input dist --backup seed/website-previous-${{ github.run_id }}
+      - name: Verify published features and active company snapshot
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/verify_published_site.py --output seed/website-verification-${{ github.run_id }}.json
+      - name: Keep the deployed feature verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-feature-verification-${{ github.run_id }}
+          path: seed/website-verification-${{ github.run_id }}.json
+          retention-days: 31
+          if-no-files-found: error
       - name: Keep previous API source for recovery
         if: always()
         uses: actions/upload-artifact@v4

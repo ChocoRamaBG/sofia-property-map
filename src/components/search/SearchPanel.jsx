@@ -2,12 +2,14 @@ import React, { useId } from 'react';
 import { ArrowRight, Loader2, MapPin, Search, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import SearchResults from '@/components/search/SearchResults';
+import BusinessAddressSearch from './BusinessAddressSearch';
 
 export default function SearchPanel({
   panelRef, query = '', onQueryChange, onSubmit, onClear, loading, results = [], resultQuery, onSelectResult,
   searchTerms = [], searchMatch = 'all', onRemoveTerm, onClearTerms, onSearchMatchChange,
   resultTotal, resultMappedTotal, resultUnmappedTotal, resultsTruncated, searchError,
   addressIntent = false, onFindAddress, onSubmitAsRecords, addressProviderLabel,
+  businessSearchState, onBusinessSearchStateChange, onSelectBusiness,
 }) {
   const { t, pick } = useI18n();
   const matchGroup = useId();
@@ -68,6 +70,7 @@ export default function SearchPanel({
         </div>
       )}
       <SearchResults results={results} onSelect={onSelectResult} query={resultQuery} total={resultTotal} mappedTotal={resultMappedTotal} unmappedTotal={resultUnmappedTotal} truncated={resultsTruncated} loading={loading} error={searchError} />
+      <BusinessAddressSearch state={businessSearchState} onStateChange={onBusinessSearchStateChange} onSelect={onSelectBusiness} />
       <details className="search-help"><summary>{pick('Как работи търсенето?', 'How does search work?')}</summary><p>{t('search.hint')}</p><p>{t('search.mapHelp')}</p>{searchTerms.length >= 2 && <p>{t(`search.matchHelp.${searchMatch === 'any' ? 'any' : 'all'}`)}</p>}</details>
     </section>
   );

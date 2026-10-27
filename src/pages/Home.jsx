@@ -72,6 +72,7 @@ export default function Home() {
   const [boundaryRevision, setBoundaryRevision] = useState(0);
   const [query, setQuery] = useState('');
   const [searchResponse, setSearchResponse] = useState(null);
+  const [businessSearchState, setBusinessSearchState] = useState({});
   const [searchError, setSearchError] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -202,11 +203,11 @@ export default function Home() {
   const addressLookupStarted = useCallback(() => { navigationGeneration.current += 1; pendingAddressNavigation.current = null; fitSearchResults.current = false; return navigationGeneration.current; }, []);
   const addressRequestHandled = useCallback((id) => setAddressRequest((current) => current?.id === id ? null : current), []);
   const addressRequestCurrent = useCallback((request) => request.generation === navigationGeneration.current, []);
-  const rememberSearchView = useCallback((plot) => {
+  const rememberSearchView = useCallback((plot, force = false) => {
     pendingSearchReturn.current = null;
     returningToSearch.current = false;
-    if (!filters.searchTerms.length) return;
-    const list = searchPanel.current?.querySelector('.search-results ul');
+    if (!force && !filters.searchTerms.length) return;
+    const list = searchPanel.current?.querySelector(force ? '.business-address-search-results ul' : '.search-results ul');
     if (searchReturn.current) {
       searchReturn.current.resultId = plot.cadastral_id;
       if (sidebarScroll.current) searchReturn.current.scrollTop = sidebarScroll.current.scrollTop;
@@ -223,6 +224,7 @@ export default function Home() {
       scrollTop: sidebarScroll.current?.scrollTop || 0,
       listScrollTop: list?.scrollTop || 0,
       resultId: plot.cadastral_id,
+      business: force,
     };
     setCanReturnToSearch(true);
   }, [filters.searchTerms, searchResponse]);
@@ -255,10 +257,10 @@ export default function Home() {
         else pendingMapNavigation.current = { kind: 'bounds', bounds: saved.bounds, generation: navigationGeneration.current };
       }
       sidebarScroll.current?.scrollTo({ top: saved.scrollTop, behavior: 'instant' });
-      const list = searchPanel.current?.querySelector('.search-results ul');
+      const list = searchPanel.current?.querySelector(saved.business ? '.business-address-search-results ul' : '.search-results ul');
       list?.scrollTo({ top: saved.listScrollTop, behavior: 'instant' });
-      const resultButton = Array.from(list?.querySelectorAll('[data-search-result-id]') || [])
-        .find((button) => button.dataset.searchResultId === saved.resultId);
+      const resultButton = Array.from(list?.querySelectorAll(saved.business ? '[data-business-result-id]' : '[data-search-result-id]') || [])
+        .find((button) => (saved.business ? button.dataset.businessResultId : button.dataset.searchResultId) === saved.resultId);
       (resultButton || searchPanel.current?.querySelector('input'))?.focus({ preventScroll: true });
       if (!isMobile) returningToSearch.current = false;
     });
@@ -379,6 +381,23 @@ export default function Home() {
     if (map && result.lat != null && result.lng != null) map.flyTo([Number(result.lat), Number(result.lng)], 18);
     else if (result.lat != null && result.lng != null) pendingMapNavigation.current = { kind: 'point', ...result, zoom: 18, generation: navigationGeneration.current };
   }, [map, rememberSearchView]);
+  const handleSelectBusiness = useCallback(async (cadastralId) => {
+    const generation = ++navigationGeneration.current;
+    pendingAddressNavigation.current = null;
+    try {
+      const response = await realEstateApi.plot(cadastralId);
+      if (generation !== navigationGeneration.current) return;
+      const plot = response.plot;
+      if (!plot || plot.cadastral_id !== cadastralId) throw new Error('Missing plot');
+      rememberSearchView(plot, true);
+      if (searchReturn.current) searchReturn.current.business = true;
+      setSelected(plot); setSearchOpen(false);
+      if (map && plot.lat != null && plot.lng != null) map.flyTo([Number(plot.lat), Number(plot.lng)], 18);
+      else if (plot.lat != null && plot.lng != null) pendingMapNavigation.current = { kind: 'point', ...plot, zoom: 18, generation };
+    } catch {
+      if (generation === navigationGeneration.current) toast({ title: lang === 'bg' ? 'Имотът не може да бъде отворен. Опитайте отново.' : 'The plot could not be opened. Please try again.', variant: 'destructive' });
+    }
+  }, [map, rememberSearchView, lang, toast]);
   const handleLocate = useCallback(() => {
     if (!map || !navigator.geolocation) { toast({ title: t('map.locateError'), variant: 'destructive' }); return; }
     navigator.geolocation.getCurrentPosition((position) => { const point = { lat: position.coords.latitude, lng: position.coords.longitude }; setUserLocation(point); map.flyTo([point.lat, point.lng], 17); }, () => toast({ title: t('map.locateError'), variant: 'destructive' }));
@@ -400,6 +419,7 @@ export default function Home() {
     </div>
     <div id="records-search-panel" role="tabpanel" aria-labelledby="records-search-tab" hidden={searchTab !== 'records'}>
     <SearchPanel panelRef={searchPanel} query={query} onQueryChange={handleQueryChange} onSubmit={handleSearch} onClear={handleClear} loading={searching}
+      businessSearchState={businessSearchState} onBusinessSearchStateChange={setBusinessSearchState} onSelectBusiness={handleSelectBusiness}
       addressIntent={isAddressQuery(query)} onFindAddress={handleFindAddress} onSubmitAsRecords={handleRecordSearch} addressProviderLabel={addressProvider?.label}
       searchTerms={filters.searchTerms} searchMatch={filters.searchMatch} onRemoveTerm={handleRemoveTerm} onClearTerms={handleClearTerms} onSearchMatchChange={handleSearchMatchChange}
       results={(searchResponse?.items || []).map((item) => ({ ...item, secondary: t('panel.linkedRecords', { n: item.document_count }) }))}

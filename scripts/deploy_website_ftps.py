@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Publish the reviewed read-only development API, then the compiled website.
 
-Only three explicit PHP source files are allowed. Existing API versions are
+Only the explicit PHP source files below are allowed. Existing API versions are
 retained as a private local backup before atomic verified replacements. No
 configuration, datasets or host protection files are uploaded.
 """
@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from deploy_site_ftps import MAX_FILE_BYTES, REMOTE_ROOT, read_local, read_remote, verify_remote
 
-API_NAMES = ('development-data.php', 'boundary-data.php', 'api.php')
+API_NAMES = ('development-data.php', 'boundary-data.php', 'business-data.php', 'api.php')
 
 
 def main() -> None:
@@ -50,7 +50,7 @@ def main() -> None:
             try:
                 previous = read_remote(ftp, f'{REMOTE_ROOT}/{name}', MAX_FILE_BYTES)
             except error_perm as error:
-                if name not in ('development-data.php', 'boundary-data.php') or not str(error).startswith('550'):
+                if name not in ('development-data.php', 'boundary-data.php', 'business-data.php') or not str(error).startswith('550'):
                     raise
             else:
                 (args.backup / name).write_bytes(previous)

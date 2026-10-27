@@ -1,0 +1,63 @@
+name: Refresh Sofia registered company addresses
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sofia-business-addresses
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Check out the company address importer
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check address matching and data minimization
+        run: python -m unittest discover -s scripts -p 'test_business_addresses.py'
+      - name: Check the read-only company API
+        run: |
+          php -l public/business-data.php
+          python -m unittest discover -s scripts -p 'test_business_api.py'
+      - name: Fetch the previous protected company pointer
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/deploy_business_ftps.py fetch --output seed/business/previous.json
+      - name: Capture the 24 official cadastral address exports
+        run: python scripts/refresh_cadastre.py --archives seed/business/archives --output seed/business/cadastre
+      - name: Import every export part from one pinned source revision
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/refresh_business_addresses.py --cadastre-manifest seed/business/cadastre/cadastre-active.json --cadastre-archives seed/business/archives --output seed/business/publish
+      - name: Validate the prepared snapshot and coverage continuity
+        run: |
+          python scripts/deploy_business_ftps.py validate --input seed/business/publish --previous seed/business/previous.json
+          python scripts/test_business_api.py --snapshot seed/business/publish
+      - name: Publish verified private company address snapshot
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/deploy_business_ftps.py publish --input seed/business/publish --previous seed/business/previous.json
+      - name: Keep the source and matching manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: sofia-business-address-manifest-${{ github.run_id }}
+          path: |
+            seed/business/publish/business-active.json
+            seed/business/publish/business-snapshots/*/manifest.json
+          retention-days: 31
+          if-no-files-found: error

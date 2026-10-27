@@ -1,0 +1,32 @@
+.registered-businesses { min-width: 0; margin-top: 16px; padding: 15px; border: 1px solid #dce7e2; border-radius: 11px; background: #fff; color: #294c4d; overflow-wrap: anywhere; }
+.registered-businesses * { min-width: 0; }
+.registered-businesses-heading { display: flex; align-items: flex-start; gap: 8px; }
+.registered-businesses-heading > svg { flex: 0 0 auto; margin-top: 2px; color: #16826b; }
+.registered-businesses-heading h3 { flex: 1; font-size: 14px; line-height: 1.5; font-weight: 650; }
+.registered-businesses-heading > span { flex: 0 0 auto; padding: 2px 7px; border-radius: 6px; background: #eaf4ee; color: #126c59; font-size: 12px; font-variant-numeric: tabular-nums; }
+.registered-businesses-explanation, .registered-businesses-status, .registered-businesses-method p { margin-top: 10px; color: #5d756d; font-size: 12px; line-height: 1.7; }
+.registered-businesses-status { display: flex; align-items: flex-start; gap: 7px; }
+.registered-businesses-status svg { flex: 0 0 auto; margin-top: 3px; }
+.registered-businesses-list { list-style: none; margin: 13px 0 0; padding: 0; }
+.registered-businesses-list > li { padding: 13px 0; border-top: 1px solid #e5ece8; }
+.registered-businesses-list h4 { font-size: 13px; font-weight: 650; line-height: 1.6; }
+.registered-businesses-identity { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px; font-size: 11px; color: #5e766e; }
+.registered-businesses-address { margin-top: 7px; font-size: 12px; line-height: 1.7; }
+.registered-businesses-list dl { margin-top: 8px; font-size: 11px; line-height: 1.6; }
+.registered-businesses-list dl > div { margin-top: 5px; }
+.registered-businesses-list dt { color: #73867f; }
+.registered-businesses-list dd { margin: 1px 0 0; color: #405d55; }
+.registered-businesses a { display: inline-flex; align-items: center; gap: 4px; color: #14745f; font-size: 11px; line-height: 1.6; text-decoration: underline; text-underline-offset: 3px; }
+.registered-businesses a svg { flex: 0 0 auto; }
+.registered-businesses-source { margin-top: 9px; }
+.registered-businesses-activity { margin-top: 9px; }
+.registered-businesses-activity summary, .registered-businesses-method summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; font-size: 12px; line-height: 1.6; font-weight: 600; }
+.registered-businesses-activity summary::-webkit-details-marker, .registered-businesses-method summary::-webkit-details-marker { display: none; }
+.registered-businesses-activity[open] summary svg, .registered-businesses-method[open] summary svg { transform: rotate(180deg); }
+.registered-businesses-activity p { margin-top: 8px; color: #5d756d; font-size: 12px; line-height: 1.75; white-space: pre-wrap; }
+.registered-businesses-more { width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px; border: 1px solid #cfdfd7; border-radius: 7px; background: #f2f8f5; color: #1d6f5e; font-size: 12px; cursor: pointer; }
+.registered-businesses-more span { margin-left: auto; font-variant-numeric: tabular-nums; }
+.registered-businesses-more:disabled { opacity: .65; cursor: wait; }
+.registered-businesses-method { border-top: 1px solid #e5ece8; padding-top: 11px; margin-top: 10px; }
+.registered-businesses-method a { margin-top: 7px; margin-right: 10px; }
+.registered-businesses :is(a, button, summary):focus-visible { outline: 2px solid #158268; outline-offset: 3px; border-radius: 3px; }

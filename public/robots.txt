@@ -1,6 +1,7 @@
 User-agent: *
 Allow: /
 Disallow: /api.php
+Disallow: /business-data.php
 Disallow: /private/
 Disallow: /schema.sql
 

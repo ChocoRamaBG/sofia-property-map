@@ -67,14 +67,26 @@ def main() -> None:
 
         dashboard = chunk('DevelopmentDashboard')
         details = chunk('DetailsPanel')
+        if 'business-data.php' not in module or 'business-data.php' not in details or 'Companies registered at this address' not in details:
+            raise ValueError('Deployed website does not include the company address finder and plot section')
+        if 'Ownership and registered acts' in details or 'Companies in documents' in details:
+            raise ValueError('The removed ownership/document-company interface is still deployed')
+        business_api = read('business-data.php', 128 * 1024)
+        if 'registered_office_address_association' not in business_api or 'function business_search' not in business_api:
+            raise ValueError('Deployed read-only business API is missing')
+        pointer_raw = read_remote(ftp, f'{REMOTE_ROOT}/private/business-active.json', 1024)
+        pointer = json.loads(pointer_raw)
+        if set(pointer) != {'version', 'snapshot_id', 'manifest_sha256'} or pointer['version'] != 1 or not re.fullmatch(r'[a-f0-9]{32}', pointer['snapshot_id']) or not re.fullmatch(r'[a-f0-9]{64}', pointer['manifest_sha256']):
+            raise ValueError('Deployed company pointer is invalid')
+        manifest_raw = read_remote(ftp, f"{REMOTE_ROOT}/private/business-snapshots/{pointer['snapshot_id']}/manifest.json", 256 * 1024)
+        if hashlib.sha256(manifest_raw).hexdigest() != pointer['manifest_sha256']:
+            raise ValueError('Deployed company manifest hash is invalid')
+        business_manifest = json.loads(manifest_raw)
+        report['business_addresses'] = {'snapshot_id': pointer['snapshot_id'], 'generated_at': business_manifest['generated_at'], 'source_commit': business_manifest['source']['commit'], 'counts': business_manifest['counts']}
         if 'transactions-context.json' not in dashboard or 'registered_sales' not in dashboard:
             raise ValueError('Deployed dashboard does not include the transaction statistics feature')
         if 'section=transactions' not in dashboard or 'sales-statistics' not in dashboard:
             raise ValueError('Deployed dashboard does not include the direct statistics shortcut')
-        if 'Ownership and registered acts' not in details or 'portal.registryagency.bg/home-pr' not in details:
-            raise ValueError('Deployed details do not include ownership-source guidance')
-        if not all(marker in details for marker in ('Companies named in construction documents', 'ActiveConditionTabResult', 'KAIS 1435', 'promise.sofia.bg/spr/publ_spr1')):
-            raise ValueError('Deployed details do not include documented company roles and specific ownership lookup sources')
         styles = re.findall(r'<link\b[^>]*\bhref=[\"\x27]([^\"\x27]+\.css)[\"\x27]', entry_html, re.I)
         styles = [read(asset_name(name), MAX_ASSET_BYTES) for name in styles if name.startswith(('/assets/', 'assets/'))]
         if not any('.leaflet-tooltip.parcel-fallback-tooltip' in css and 'overflow-wrap:anywhere' in css for css in styles):
@@ -85,7 +97,7 @@ def main() -> None:
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'ownership_source_guidance': True, 'documented_company_roles': True, 'specific_ownership_lookup_sources': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

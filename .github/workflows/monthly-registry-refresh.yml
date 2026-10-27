@@ -20,6 +20,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  business-addresses:
+    uses: ./.github/workflows/refresh-business-addresses.yml
+    secrets: inherit
+
   official-transactions:
     runs-on: ubuntu-latest
     timeout-minutes: 20
