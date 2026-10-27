@@ -72,6 +72,12 @@ def main() -> None:
             return read(name, MAX_ASSET_BYTES)
 
         dashboard = chunk('DevelopmentDashboard')
+        market = chunk('MarketDashboard')
+        if not all(marker in market for marker in ('purchase-costs', 'listing-feature-tags', 'estimate-evidence-list', 'construction_type', 'furnishing')):
+            raise ValueError('Deployed market dashboard lacks the buyer budget or listing evidence')
+        market_api = read('market.php', 128 * 1024)
+        if not all(marker in market_api for marker in ('function market_agency', 'function market_property_features', 'duplicate_peer_count')):
+            raise ValueError('Deployed market reader lacks backward-compatible enriched listings')
         details = chunk('DetailsPanel')
         registered = chunk(('RegisteredBusinesses', 'DetailPanels'))
         address_details = chunk('BusinessAddressDetails')
@@ -131,7 +137,7 @@ def main() -> None:
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True, 'municipal_address_enrichment': True, 'separate_location_evidence_levels': True, 'collapsible_map_sidebar': True, 'compact_map_tools': True, 'progressive_detail_disclosures': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True, 'municipal_address_enrichment': True, 'separate_location_evidence_levels': True, 'collapsible_map_sidebar': True, 'compact_map_tools': True, 'progressive_detail_disclosures': True, 'buyer_purchase_budget': True, 'professional_agency_contacts': True, 'richer_listing_features': True, 'comparison_method3_reader': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

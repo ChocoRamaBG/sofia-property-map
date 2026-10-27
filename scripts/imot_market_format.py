@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Bounded immutable asking-price market format shared by producer/publisher.
 
-Only small, factual listing fields are public. The source advert remains the
-place to read descriptions, agency contacts, photos and actual availability.
+Only allowlisted factual listing fields and public professional agency contact
+details are public. Descriptions, private-seller contacts and photos stay out.
 """
 from __future__ import annotations
 
@@ -37,12 +37,23 @@ PUBLIC_FIELDS = frozenset({
     "first_seen_at", "comparison", "change", "historical", "quality_flags",
     "floor_bg", "construction_label_bg", "address_bg",
     "price_total_derived", "quoted_eur_per_sqm",
-    "seller_type", "seller_evidence", "seller_checked_at", "location", "analysis", "asking_estimate",
+    "seller_type", "seller_evidence", "seller_checked_at", "location", "analysis", "asking_estimate", "agency", "property_features",
 })
+EVIDENCE_FIELDS = frozenset({"neighborhood", "type", "vat_basis", "construction_age", "construction_type", "completion_stage", "area_basis", "floor", "furnishing", "condition", "elevator", "area_tolerance", "street"})
+
+
+def safe_public_url(value, *, profile=False):
+    if not isinstance(value, str) or not 1 <= len(value.encode('utf-8')) <= 500 or any(ord(char) <= 32 or ord(char) == 127 for char in value):
+        return False
+    parsed = urlsplit(value)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host or parsed.username or parsed.password or parsed.port is not None:
+        return False
+    return bool(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.imot\.bg", host) and host != "www.imot.bg") if profile else bool(re.fullmatch(r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}", host))
 
 
 def validate_public_enrichment(offer):
-    """Nested public fields are closed schemas; descriptions/contacts stay out."""
+    """Closed schemas exclude descriptions and private-seller contact details."""
     if "seller_type" in offer:
         if (offer.get("seller_type"), offer.get("seller_evidence")) not in {
             ("agency", "agency_profile"), ("private", "explicit_private_claim"),
@@ -51,6 +62,31 @@ def validate_public_enrichment(offer):
             raise ValueError("Invalid public seller evidence")
         if offer.get("seller_checked_at") is not None and timestamp(offer["seller_checked_at"]) is None:
             raise ValueError("Invalid seller evidence date")
+    agency = offer.get("agency")
+    if agency is not None:
+        if not isinstance(agency, dict) or set(agency) != {"name", "profile_url", "phone", "website", "checked_at", "evidence"} or offer.get("seller_type") != "agency" or agency["evidence"] != "professional_profile":
+            raise ValueError("Invalid professional agency schema")
+        if not isinstance(agency["name"], str) or not 1 <= len(agency["name"]) <= 120 or not safe_public_url(agency["profile_url"], profile=True) or (agency["website"] is not None and not safe_public_url(agency["website"])):
+            raise ValueError("Invalid professional agency identity")
+        if agency["phone"] is not None and (not isinstance(agency["phone"], str) or not re.fullmatch(r"\+?\d{7,15}", agency["phone"])):
+            raise ValueError("Invalid professional agency phone")
+        if timestamp(agency["checked_at"]) is None:
+            raise ValueError("Invalid professional agency evidence date")
+    features = offer.get("property_features")
+    if features is not None:
+        if not isinstance(features, dict) or set(features) != {"construction_type", "furnishing", "building_year", "year_basis", "floor_number", "total_floors", "elevator", "checked_at", "source"}:
+            raise ValueError("Invalid advertised property features")
+        allowed = {"construction_type": {"brick", "panel", "epk", "monolithic", "other", "unknown"}, "furnishing": {"furnished", "partial", "unfurnished", "unknown"}, "year_basis": {"built", "commissioned", "planned", "unknown"}, "elevator": {"yes", "no", "unknown"}, "source": {"card", "description"}}
+        if any(features[key] not in values for key, values in allowed.items()):
+            raise ValueError("Invalid advertised feature values")
+        for field, minimum, maximum in (("building_year", 1800, 2100), ("floor_number", -5, 100), ("total_floors", 1, 100)):
+            value = features[field]
+            if value is not None and (type(value) is not int or not minimum <= value <= maximum):
+                raise ValueError("Invalid advertised feature number")
+        if (features["building_year"] is None and features["year_basis"] != "unknown") or (features["floor_number"] is not None and features["total_floors"] is not None and features["floor_number"] > features["total_floors"]):
+            raise ValueError("Conflicting advertised feature numbers")
+        if features["checked_at"] is not None and timestamp(features["checked_at"]) is None:
+            raise ValueError("Invalid advertised features date")
     location = offer.get("location")
     if location is not None:
         fields = {"key", "lat", "lng", "precision", "label_bg", "radius_m", "method", "source_url", "reference_date", "evidence"}
@@ -74,7 +110,10 @@ def validate_public_enrichment(offer):
     estimate = offer.get("asking_estimate")
     if estimate is not None:
         numeric_fields = {"median_eur_per_sqm", "p25_eur_per_sqm", "p75_eur_per_sqm", "indicated_price_eur", "range_low_eur", "range_high_eur"}
-        if not isinstance(estimate, dict) or set(estimate) != numeric_fields | {"status", "method_version", "peer_count", "location_basis"} or estimate["method_version"] != 2 or estimate["status"] not in {"available", "insufficient_comparables", "needs_review", "invalid_inputs"} or estimate["location_basis"] not in {"street", "neighborhood"} or type(estimate["peer_count"]) is not int or not 0 <= estimate["peer_count"] <= MAX_LISTINGS:
+        expected = numeric_fields | {"status", "method_version", "peer_count", "location_basis"}
+        if isinstance(estimate, dict) and estimate.get("method_version") == 3:
+            expected |= {"evidence"}
+        if not isinstance(estimate, dict) or set(estimate) != expected or estimate["method_version"] not in {2, 3} or estimate["status"] not in {"available", "insufficient_comparables", "needs_review", "invalid_inputs"} or estimate["location_basis"] not in {"street", "neighborhood"} or type(estimate["peer_count"]) is not int or not 0 <= estimate["peer_count"] <= MAX_LISTINGS:
             raise ValueError("Invalid asking estimate schema")
         if any(estimate[k] is not None and number(estimate[k]) is None for k in numeric_fields):
             raise ValueError("Invalid asking estimate numbers")
@@ -82,6 +121,25 @@ def validate_public_enrichment(offer):
             raise ValueError("Unsupported available estimate")
         if estimate["range_low_eur"] is not None and not estimate["range_low_eur"] <= estimate["indicated_price_eur"] <= estimate["range_high_eur"]:
             raise ValueError("Inconsistent asking estimate range")
+        if estimate["method_version"] == 3:
+            evidence = estimate["evidence"]
+            if not isinstance(evidence, dict) or set(evidence) != {"quality", "matched_fields", "missing_fields", "spread_pct", "price_position", "duplicate_peer_count", "unknown_physical_duplicates"} or evidence["quality"] not in {"detailed", "limited", "insufficient"} or evidence["price_position"] not in {"below_range", "within_range", "above_range", "unavailable"} or evidence["unknown_physical_duplicates"] is not True:
+                raise ValueError("Invalid asking estimate evidence")
+            sets = []
+            for field in ("matched_fields", "missing_fields"):
+                values = evidence[field]
+                if not isinstance(values, list) or any(not isinstance(value, str) or value not in EVIDENCE_FIELDS for value in values) or len(values) != len(set(values)):
+                    raise ValueError("Invalid estimate evidence fields")
+                sets.append(set(values))
+            if sets[0] & sets[1] or sets[0] | sets[1] != EVIDENCE_FIELDS:
+                raise ValueError("Incomplete estimate evidence fields")
+            spread = evidence["spread_pct"]
+            if spread is not None and (type(spread) not in {int, float} or not math.isfinite(spread) or spread < 0):
+                raise ValueError("Invalid estimate spread")
+            if type(evidence["duplicate_peer_count"]) is not int or not 0 <= evidence["duplicate_peer_count"] <= MAX_LISTINGS:
+                raise ValueError("Invalid estimate duplicate count")
+            if estimate["status"] != "available" and evidence["price_position"] != "unavailable":
+                raise ValueError("Unsupported estimate price position")
 
 
 def json_bytes(value):

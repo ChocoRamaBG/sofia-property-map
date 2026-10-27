@@ -37,6 +37,8 @@ jobs:
           cache-dependency-path: scripts/requirements-imot.txt
       - name: Install market parser dependencies
         run: python -m pip install -r scripts/requirements-imot.txt
+      - name: Check enrichment and comparison invariants
+        run: python -m unittest discover -s scripts -p 'test_imot*.py'
       - name: Fetch verified previous private market state
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
@@ -53,7 +55,7 @@ jobs:
           RECOVERY_RUN_ID: ${{ inputs.reuse_capture_run_id }}
         run: python scripts/recover_imot_capture.py --run "$RECOVERY_RUN_ID" --output seed/daily/capture.json
       - name: Analyze seller and property text with a bounded incremental detail pass
-        run: python scripts/imot_enrichment.py --input seed/daily/capture.json --previous-state seed/daily/previous-state.json --output seed/daily/capture-enriched.json --limit 400
+        run: python scripts/imot_enrichment.py --input seed/daily/capture.json --previous-state seed/daily/previous-state.json --output seed/daily/capture-enriched.json --limit 1200 --maximum-seconds 2700
       - name: Preserve private source evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v6
@@ -99,7 +101,8 @@ jobs:
               output.write(f"Listings: {summary['counts']['listing_count']:,}\n\n")
               output.write(f"New daily candidates: {summary['daily_candidates_total']:,}\n\n")
               output.write(f"Approximate street/quarter locations: {summary['counts'].get('located_count', 0):,}\n\n")
-              output.write(f"Full descriptions analyzed (current valid cache): {summary['counts'].get('description_analyzed_count', 0):,}; incremental budget 400 per run.\n\n")
+              output.write(f"Full descriptions analyzed (current valid cache): {summary['counts'].get('description_analyzed_count', 0):,}; incremental budget up to 1,200 per run within 45 minutes.\n\n")
+              output.write(f"Professional agency identities: {summary['counts'].get('agency_identity_count', 0):,}; published agency phones: {summary['counts'].get('agency_phone_count', 0):,}.\n\n")
               output.write(f"Seller labels: {summary['counts'].get('seller_types', {})}\n\n")
               if os.environ.get('RECOVERY_RUN_ID'):
                   output.write(f"Source capture recovered from completed daily run {os.environ['RECOVERY_RUN_ID']}; the original source timestamps are preserved.\n\n")

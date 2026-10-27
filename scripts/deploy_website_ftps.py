@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from deploy_site_ftps import MAX_FILE_BYTES, REMOTE_ROOT, read_local, read_remote, verify_remote
 
-API_NAMES = ('development-data.php', 'boundary-data.php', 'business-data.php', 'api.php')
+API_NAMES = ('development-data.php', 'boundary-data.php', 'business-data.php', 'market.php', 'api.php')
 
 
 def main() -> None:

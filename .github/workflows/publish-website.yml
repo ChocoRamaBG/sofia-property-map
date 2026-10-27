@@ -45,10 +45,14 @@ jobs:
           php -l public/development-data.php
           php -l public/boundary-data.php
           php -l public/business-data.php
+          php -l public/market.php
           php -l public/api.php
       - name: Build the production website
         if: ${{ inputs.api_only != true }}
-        run: pnpm run build
+        run: |
+          node scripts/test_purchase_costs.mjs
+          SOFIA_PHP_BINARY=php python scripts/test_market_features_api.py
+          pnpm run build
       - name: Stage compatible read-only PHP APIs
         if: ${{ inputs.api_only == true }}
         env:

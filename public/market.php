@@ -11,10 +11,14 @@ set_error_handler(static function (int $severity, string $message, string $file,
 
 const MARKET_MAX_LISTINGS = 50000;
 const MARKET_MAX_SHARDS = 512;
-const MARKET_PUBLIC_FIELDS = ['id', 'url', 'neighborhood_key', 'neighborhood_bg', 'type_key', 'type_bg', 'area_sqm', 'price_eur', 'eur_per_sqm', 'price_currency', 'vat_basis', 'construction_year', 'construction_cohort', 'last_modified_at', 'observed_at', 'first_seen_at', 'comparison', 'change', 'historical', 'quality_flags', 'floor_bg', 'construction_label_bg', 'address_bg', 'price_total_derived', 'quoted_eur_per_sqm', 'seller_type', 'seller_evidence', 'seller_checked_at', 'location', 'analysis', 'asking_estimate'];
+const MARKET_PUBLIC_FIELDS = ['id', 'url', 'neighborhood_key', 'neighborhood_bg', 'type_key', 'type_bg', 'area_sqm', 'price_eur', 'eur_per_sqm', 'price_currency', 'vat_basis', 'construction_year', 'construction_cohort', 'last_modified_at', 'observed_at', 'first_seen_at', 'comparison', 'change', 'historical', 'quality_flags', 'floor_bg', 'construction_label_bg', 'address_bg', 'price_total_derived', 'quoted_eur_per_sqm', 'seller_type', 'seller_evidence', 'seller_checked_at', 'location', 'analysis', 'asking_estimate', 'agency', 'property_features'];
 
 function market_optional_text($value, int $limit): bool {
     return $value === null || (is_string($value) && strlen($value) <= $limit && preg_match('//u', $value) === 1);
+}
+
+function market_evidence_date($value, bool $nullable = true): bool {
+    return ($nullable && $value === null) || (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z)?$/', $value) === 1 && strtotime($value) !== false);
 }
 
 function market_finite_number($value, float $minimum, float $maximum): bool {
@@ -55,9 +59,10 @@ function market_analysis($value): void {
 function market_estimate($value): void {
     if ($value === null) return;
     $fields = ['status', 'method_version', 'peer_count', 'median_eur_per_sqm', 'p25_eur_per_sqm', 'p75_eur_per_sqm', 'indicated_price_eur', 'range_low_eur', 'range_high_eur', 'location_basis'];
-    if (!is_array($value) || array_diff(array_keys($value), $fields) !== []
+    if (($value['method_version'] ?? null) === 3) $fields[] = 'evidence';
+    if (!is_array($value) || count($value) !== count($fields) || array_diff(array_keys($value), $fields) !== []
         || !in_array($value['status'] ?? null, ['available', 'insufficient_comparables', 'needs_review', 'invalid_inputs'], true)
-        || ($value['method_version'] ?? null) !== 2 || !is_int($value['peer_count'] ?? null) || $value['peer_count'] < 0 || $value['peer_count'] > MARKET_MAX_LISTINGS
+        || !in_array($value['method_version'] ?? null, [2, 3], true) || !is_int($value['peer_count'] ?? null) || $value['peer_count'] < 0 || $value['peer_count'] > MARKET_MAX_LISTINGS
         || !in_array($value['location_basis'] ?? null, ['street', 'neighborhood', null], true)) throw new RuntimeException('Market asking-price estimate is invalid.');
     foreach (['median_eur_per_sqm', 'p25_eur_per_sqm', 'p75_eur_per_sqm', 'indicated_price_eur', 'range_low_eur', 'range_high_eur'] as $field) {
         if (($value[$field] ?? null) !== null && !market_finite_number($value[$field], 0.000001, 1e12)) throw new RuntimeException('Market asking-price range is invalid.');
@@ -66,7 +71,60 @@ function market_estimate($value): void {
         || !market_finite_number($value['indicated_price_eur'] ?? null, 0.000001, 1e12)
         || !market_finite_number($value['range_low_eur'] ?? null, 0.000001, 1e12)
         || !market_finite_number($value['range_high_eur'] ?? null, 0.000001, 1e12)
-        || $value['range_low_eur'] > $value['range_high_eur'])) throw new RuntimeException('Market available estimate is inconsistent.');
+        || $value['range_low_eur'] > $value['indicated_price_eur'] || $value['indicated_price_eur'] > $value['range_high_eur'])) throw new RuntimeException('Market available estimate is inconsistent.');
+    if ($value['method_version'] === 3) {
+        $evidence = $value['evidence'] ?? null;
+        $keys = ['quality', 'matched_fields', 'missing_fields', 'spread_pct', 'price_position', 'duplicate_peer_count', 'unknown_physical_duplicates'];
+        $factors = ['neighborhood', 'type', 'vat_basis', 'construction_age', 'construction_type', 'completion_stage', 'area_basis', 'floor', 'furnishing', 'condition', 'elevator', 'area_tolerance', 'street'];
+        if (!is_array($evidence) || count($evidence) !== count($keys) || array_diff(array_keys($evidence), $keys) !== []
+            || !in_array($evidence['quality'] ?? null, ['detailed', 'limited', 'insufficient'], true)
+            || !in_array($evidence['price_position'] ?? null, ['below_range', 'within_range', 'above_range', 'unavailable'], true)
+            || ($evidence['unknown_physical_duplicates'] ?? null) !== true
+            || !is_int($evidence['duplicate_peer_count'] ?? null) || $evidence['duplicate_peer_count'] < 0 || $evidence['duplicate_peer_count'] > MARKET_MAX_LISTINGS
+            || (($evidence['spread_pct'] ?? null) !== null && !market_finite_number($evidence['spread_pct'], 0, 1e9))) throw new RuntimeException('Market comparison evidence is invalid.');
+        foreach (['matched_fields', 'missing_fields'] as $field) {
+            $items = $evidence[$field] ?? null;
+            if (!is_array($items) || !array_is_list($items) || count($items) > count($factors) || count(array_unique($items, SORT_REGULAR)) !== count($items) || array_diff($items, $factors) !== []) throw new RuntimeException('Market comparison factors are invalid.');
+        }
+        if (array_intersect($evidence['matched_fields'], $evidence['missing_fields']) !== [] || count($evidence['matched_fields']) + count($evidence['missing_fields']) !== count($factors)
+            || ($value['status'] !== 'available' && $evidence['price_position'] !== 'unavailable')) throw new RuntimeException('Market comparison factors conflict.');
+    }
+}
+
+function market_professional_url($value, bool $profile = false): bool {
+    if (!is_string($value) || strlen($value) > 500 || preg_match('/[\x00-\x20\x7f]/', $value)) return false;
+    $parts = parse_url($value);
+    if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https' || !is_string($parts['host'] ?? null) || isset($parts['user']) || isset($parts['pass']) || isset($parts['port'])) return false;
+    $host = strtolower($parts['host']);
+    return $profile ? preg_match('/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.imot\.bg$/', $host) === 1 && $host !== 'www.imot.bg' : preg_match('/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/', $host) === 1;
+}
+
+function market_property_features($value): void {
+    if ($value === null) return;
+    $fields = ['construction_type', 'furnishing', 'building_year', 'year_basis', 'floor_number', 'total_floors', 'elevator', 'checked_at', 'source'];
+    if (!is_array($value) || count($value) !== count($fields) || array_diff(array_keys($value), $fields) !== []
+        || !in_array($value['construction_type'] ?? null, ['brick', 'panel', 'epk', 'monolithic', 'other', 'unknown'], true)
+        || !in_array($value['furnishing'] ?? null, ['furnished', 'partial', 'unfurnished', 'unknown'], true)
+        || !in_array($value['year_basis'] ?? null, ['built', 'commissioned', 'planned', 'unknown'], true)
+        || !in_array($value['elevator'] ?? null, ['yes', 'no', 'unknown'], true)
+        || !in_array($value['source'] ?? null, ['card', 'description'], true)
+        || !market_evidence_date($value['checked_at'] ?? null)) throw new RuntimeException('Market property features are invalid.');
+    foreach (['building_year' => [1800, 2100], 'floor_number' => [-5, 100], 'total_floors' => [1, 100]] as $field => [$minimum, $maximum]) {
+        if ($value[$field] !== null && (!is_int($value[$field]) || $value[$field] < $minimum || $value[$field] > $maximum)) throw new RuntimeException('Market property feature bounds are invalid.');
+    }
+    if (($value['building_year'] === null && $value['year_basis'] !== 'unknown') || ($value['floor_number'] !== null && $value['total_floors'] !== null && $value['floor_number'] > $value['total_floors'])) throw new RuntimeException('Market property features conflict.');
+}
+
+function market_agency($value, string $seller): void {
+    if ($value === null) return;
+    $fields = ['name', 'profile_url', 'phone', 'website', 'checked_at', 'evidence'];
+    if ($seller !== 'agency' || !is_array($value) || count($value) !== count($fields) || array_diff(array_keys($value), $fields) !== []
+        || !is_string($value['name'] ?? null) || trim($value['name']) === '' || !market_optional_text($value['name'], 480) || preg_match_all('/./us', $value['name']) > 120
+        || !market_professional_url($value['profile_url'] ?? null, true)
+        || ($value['phone'] !== null && (!is_string($value['phone']) || !preg_match('/^\+?[0-9]{7,15}$/', $value['phone'])))
+        || ($value['website'] !== null && !market_professional_url($value['website']))
+        || ($value['evidence'] ?? null) !== 'professional_profile'
+        || !market_evidence_date($value['checked_at'] ?? null, false)) throw new RuntimeException('Market professional agency is invalid.');
 }
 
 function market_respond(array $body, int $status = 200): void {
@@ -154,6 +212,8 @@ function market_offer($row): array {
     market_location($row['location'] ?? null);
     market_analysis($row['analysis'] ?? null);
     market_estimate($row['asking_estimate'] ?? null);
+    market_property_features($row['property_features'] ?? null);
+    market_agency($row['agency'] ?? null, $row['seller_type'] ?? 'unknown');
     foreach (['area_sqm', 'price_eur', 'eur_per_sqm', 'quoted_eur_per_sqm'] as $key) {
         $value = $row[$key] ?? null;
         if ($value !== null && ((!is_float($value) && !is_int($value)) || !is_finite((float)$value) || $value <= 0 || $value > 1e12)) throw new RuntimeException('Market numeric field is invalid.');
@@ -192,6 +252,10 @@ function market_listing_filters(array $summary): array {
     }
     $filters['seller'] = market_filter_string('seller', 20);
     if (!in_array($filters['seller'], ['', 'agency', 'private', 'unknown'], true)) throw new InvalidArgumentException('Invalid seller filter.');
+    foreach (['construction_type' => ['brick', 'panel', 'epk', 'monolithic', 'other', 'unknown'], 'furnishing' => ['furnished', 'partial', 'unfurnished', 'unknown'], 'elevator' => ['yes', 'no', 'unknown']] as $field => $values) {
+        $filters[$field] = market_filter_string($field, 30);
+        if ($filters[$field] !== '' && !in_array($filters[$field], $values, true)) throw new InvalidArgumentException('Invalid property feature filter.');
+    }
     $filters['precision'] = market_filter_string('precision', 20);
     if (!in_array($filters['precision'], ['', 'address', 'street', 'neighborhood', 'unknown'], true)) throw new InvalidArgumentException('Invalid location filter.');
     $filters['location_key'] = market_filter_string('location_key', 160);
@@ -218,6 +282,7 @@ function market_listing_filters(array $summary): array {
 function market_matches(array $row, array $filters): bool {
     foreach (['neighborhood' => 'neighborhood_key', 'type' => 'type_key', 'vat' => 'vat_basis'] as $parameter => $field) if ($filters[$parameter] !== '' && $row[$field] !== $filters[$parameter]) return false;
     if ($filters['seller'] !== '' && ($row['seller_type'] ?? 'unknown') !== $filters['seller']) return false;
+    foreach (['construction_type', 'furnishing', 'elevator'] as $field) if ($filters[$field] !== '' && ($row['property_features'][$field] ?? 'unknown') !== $filters[$field]) return false;
     if ($filters['precision'] !== '' && ($row['location']['precision'] ?? 'unknown') !== $filters['precision']) return false;
     if ($filters['location_key'] !== '' && ($row['location']['key'] ?? '') !== $filters['location_key']) return false;
     foreach (['area' => 'area_sqm', 'price' => 'price_eur'] as $range => $field) {

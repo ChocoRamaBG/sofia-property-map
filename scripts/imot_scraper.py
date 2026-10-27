@@ -3,7 +3,8 @@
 
 This replaces dozens of desktop Selenium loops, absolute XPaths and Excel writes.
 One worker reads forty public list cards per page; no photographs, full advert
-descriptions, telephone numbers or private accounts are retained. Native public
+descriptions, private seller contacts or private accounts are retained. Public
+professional agency contacts are allowlisted from the seller block. Native public
 price filters divide capped searches into exhaustive overlapping price bands.
 Every leaf must have an exact, stable visible total and matching unique IDs.
 Any access challenge, incomplete leaf or changed catalogue stops publication.
@@ -27,14 +28,14 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
 
-from imot_enrichment import agency_profile, analyze_text, card_fingerprint, seller_claim
+from imot_enrichment import agency_details, agency_profile, analyze_text, card_fingerprint, property_features, seller_claim
 
 ROOT = "https://www.imot.bg"
 COUNT = re.compile(r"^(\d+)\s*-\s*(\d+)\s+от общо\s+(\d+)(\+?)\s+обяв[аи]\s*-\s*Продава$")
 ID = re.compile(r"^1[a-z][0-9]{12,20}$")
 NEIGHBOR_PATH = re.compile(r"^/obiavi/prodazhbi/grad-sofiya/([a-z0-9-]+)$")
 PRICE = re.compile(r"^([0-9][0-9\s.,]*)\s*(€|EUR|euro|лв\.?|BGN|\$)(?:\s+(на кв\.м|/m2|/m²))?$", re.I)
-CARD_SCHEMA_VERSION = 3
+CARD_SCHEMA_VERSION = 4
 
 
 def timestamp():
@@ -67,6 +68,9 @@ def structural_row(row):
     result = {key: value for key, value in row.items() if key not in {"observed_at", "seller_checked_at"}}
     if isinstance(result.get("analysis"), dict):
         result["analysis"] = {key: value for key, value in result["analysis"].items() if key != "checked_at"}
+    for field in ("agency", "property_features"):
+        if isinstance(result.get(field), dict):
+            result[field] = {key: value for key, value in result[field].items() if key != "checked_at"}
     return result
 
 
@@ -262,6 +266,8 @@ def cards(soup, neighbor, kind, minimum, maximum):
             **seller_claim(professional_profile, info, checked_at),
             **analyze_text(info, source="card", checked_at=checked_at, completion_label=construction_label, area_sqm=area),
         }
+        row["agency"] = agency_details(card, checked_at=checked_at) if row["seller_type"] == "agency" else None
+        row["property_features"] = property_features(info, source="card", checked_at=checked_at, completion_label=construction_label, floor_label=row["floor_bg"])
         row["enrichment_card_sha256"] = card_fingerprint(row, info, professional_profile)
         output.append(row)
     return output
