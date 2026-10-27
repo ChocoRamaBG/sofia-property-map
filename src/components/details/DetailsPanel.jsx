@@ -5,6 +5,7 @@ import { displayDate, fieldLabel, fieldValue, REGISTER_COLORS } from '@/lib/regi
 import { realEstateApi } from '@/api/realEstateApi';
 import CadastralSummary from '@/components/details/CadastralSummary';
 import OwnershipSources from '@/components/details/OwnershipSources';
+import CompaniesInDocuments from '@/components/details/CompaniesInDocuments';
 import DevelopmentTimeline from './DevelopmentTimeline';
 import DocumentTypeIcon from '@/components/DocumentTypeIcon';
 
@@ -166,6 +167,7 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
             {overview.length > 0 && <dl className="property-overview-fields">{overview.map((field) => <div className="property-overview-field" key={field.key}><dt>{t(`panel.overview.${field.key}`)}</dt><dd>{field.values.map((entry) => <div className="property-overview-value" key={entry.value}><p>{entry.value}</p><div className="overview-value-sources">{[...entry.sources.values()].map((source) => <button key={source.code} onClick={() => goToSource(source.code)} title={sourceLabel(source, lang)}>{sourceShortLabel(source, lang, t)}<ArrowDown size={10} /></button>)}</div></div>)}</dd></div>)}</dl>}
           </section>
           <CadastralSummary cadastre={currentData?.cadastre} status={currentData?.cadastre_status} />
+          <CompaniesInDocuments sources={sources} lang={lang} onOpenSource={goToSource} />
           <OwnershipSources cadastralId={key} onCopyId={copyId} />
           <DevelopmentTimeline sources={sources} lang={lang} onOpenSource={goToSource} />
           <section className={`certificate-status certificate-status-compact ${hasCertificate ? 'certificate-found' : 'certificate-unknown'}`}>

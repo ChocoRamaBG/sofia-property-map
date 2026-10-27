@@ -73,6 +73,8 @@ def main() -> None:
             raise ValueError('Deployed dashboard does not include the direct statistics shortcut')
         if 'Ownership and registered acts' not in details or 'portal.registryagency.bg/home-pr' not in details:
             raise ValueError('Deployed details do not include ownership-source guidance')
+        if not all(marker in details for marker in ('Companies named in construction documents', 'ActiveConditionTabResult', 'KAIS 1435', 'promise.sofia.bg/spr/publ_spr1')):
+            raise ValueError('Deployed details do not include documented company roles and specific ownership lookup sources')
         styles = re.findall(r'<link\b[^>]*\bhref=[\"\x27]([^\"\x27]+\.css)[\"\x27]', entry_html, re.I)
         styles = [read(asset_name(name), MAX_ASSET_BYTES) for name in styles if name.startswith(('/assets/', 'assets/'))]
         if not any('.leaflet-tooltip.parcel-fallback-tooltip' in css and 'overflow-wrap:anywhere' in css for css in styles):
@@ -83,7 +85,7 @@ def main() -> None:
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'ownership_source_guidance': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'ownership_source_guidance': True, 'documented_company_roles': True, 'specific_ownership_lookup_sources': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
