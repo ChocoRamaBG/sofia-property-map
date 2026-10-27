@@ -77,11 +77,13 @@ def main() -> None:
         styles = [read(asset_name(name), MAX_ASSET_BYTES) for name in styles if name.startswith(('/assets/', 'assets/'))]
         if not any('.leaflet-tooltip.parcel-fallback-tooltip' in css and 'overflow-wrap:anywhere' in css for css in styles):
             raise ValueError('Deployed stylesheet does not include the tooltip wrapping fix')
+        if not any(all(re.search(r'(?<![A-Za-z0-9_-])width:min\(' + str(width) + r'px,', css) for width in (280, 310)) for css in styles):
+            raise ValueError('Deployed tooltips do not have explicit responsive widths')
         payload = read_remote(ftp, f'{REMOTE_ROOT}/data/transactions-context.json', MAX_TRANSACTIONS_BYTES)
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'ownership_source_guidance': True, 'tooltip_wrapping_fix': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'ownership_source_guidance': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
