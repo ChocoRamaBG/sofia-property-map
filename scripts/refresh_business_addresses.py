@@ -13,6 +13,7 @@ import csv
 from datetime import date, datetime
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import ssl
@@ -38,6 +39,7 @@ CAD_ID = re.compile(r"68134\.[0-9]{1,6}\.[0-9]{1,6}")
 SHARD_NAME = re.compile(r"companies-[0-9]{3}\.json")
 MAX_FILE_BYTES = 10_000_000
 MAX_INDEX_BYTES = 9_500_000
+MAX_POINTS_BYTES = MAX_INDEX_BYTES
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_SHARD_BYTES = 1024 * 1024
 MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024
@@ -480,6 +482,85 @@ def match_companies(selected, reference, counts):
     return dict(parcels)
 
 
+def valid_map_point(value):
+    return isinstance(value, dict) and set(value) == {"lat", "lng"} and all(type(v) in (int, float) and math.isfinite(v) for v in value.values()) and 42.4 <= value["lat"] <= 43.1 and 22.8 <= value["lng"] <= 24
+
+
+def parcel_representative_point(native_geojson, transformer):
+    """One point inside the actual polygon, including its holes; no repair/snap."""
+    from shapely.geometry import Point, shape
+    from build_boundary_snapshot import geometry_vertices, transform_geometry
+    if not isinstance(native_geojson, dict) or native_geojson.get("type") not in {"Polygon", "MultiPolygon"}:
+        raise ValueError("unsupported_point_geometry")
+    native = shape(native_geojson)
+    if native.is_empty or not native.is_valid:
+        raise ValueError("invalid_native_point_geometry")
+    transformed = transform_geometry(native_geojson, transformer)
+    geometry_vertices(transformed)
+    display = shape(transformed)
+    if display.is_empty or not display.is_valid:
+        raise ValueError("invalid_transformed_point_geometry")
+    interior = native.representative_point()
+    if not native.contains(interior):
+        raise ValueError("native_representative_not_inside")
+    lng, lat = transformer.transform(interior.x, interior.y, errcheck=True)
+    point = {"lat": lat, "lng": lng}
+    # Keep full precision: decimal rounding can move a narrow parcel's point
+    # outside it. Also require it to remain inside the published display rings.
+    if not valid_map_point(point) or not display.contains(Point(lng, lat)):
+        raise ValueError("transformed_representative_not_inside")
+    return point, hashlib.sha256(native.normalize().wkb).hexdigest()
+
+
+def cadastral_points(parcels, archives, cadastre, counts):
+    """Read matched official shapes from the same verified 24-archive capture."""
+    import shapefile
+    from pyproj.exceptions import ProjError
+    from shapely.errors import GEOSException
+    from build_boundary_snapshot import MAX_FEATURE_VERTICES, projection
+    requested, points, identities, unusable, seen = set(parcels), {}, {}, set(), set()
+    for source in cadastre["sources"]:
+        path = archives / (source["code"] + ".zip")
+        if path.is_symlink() or not path.is_file() or file_digest(path) != source["zip_sha256"]:
+            raise ValueError("Point archive differs from verified cadastral capture")
+        with ZipFile(path) as archive:
+            entries = archive.infolist()
+            candidates = [entry for entry in entries if entry.filename.lower().endswith(".shp")]
+            if len(candidates) != 1:
+                raise ValueError("One official parcel SHP is required for points")
+            shp = candidates[0]
+            stem = shp.filename[:-4]
+            lookup = {entry.filename: entry for entry in entries}
+            if any(stem + suffix not in lookup for suffix in (".shx", ".prj", ".dbf", ".cpg")) or shp.file_size > 256 * 1024 * 1024 or lookup[stem + ".shx"].file_size > 8 * 1024 * 1024 or lookup[stem + ".prj"].file_size > 8192:
+                raise ValueError("Official point geometry companions exceed bounds or are missing")
+            transformer = projection(archive.read(stem + ".prj").decode("utf-8"))
+            with archive.open(shp) as shp_handle, archive.open(stem + ".shx") as shx_handle:
+                reader = shapefile.Reader(shp=shp_handle, shx=shx_handle)
+                shapes = reader.iterShapes()
+                # structured_rows is safe here because cadastral_reference has
+                # already verified every DBF and this pass rechecks its ZIP hash.
+                for row, native_shape in zip(structured_rows(path), shapes, strict=True):
+                    identifier = row["cadnum"]
+                    if identifier not in requested:
+                        continue
+                    seen.add(identifier)
+                    try:
+                        if native_shape.shapeType != shapefile.POLYGON or not 4 <= len(native_shape.points) <= MAX_FEATURE_VERTICES:
+                            raise ValueError("unsupported_point_shape")
+                        point, identity = parcel_representative_point(native_shape.__geo_interface__, transformer)
+                        if identifier in identities and identities[identifier] != identity:
+                            raise ValueError("conflicting_point_geometry")
+                        if identifier not in unusable:
+                            identities[identifier], points[identifier] = identity, point
+                    except (ValueError, TypeError, IndexError, OverflowError, GEOSException, ProjError):
+                        unusable.add(identifier)
+                        points.pop(identifier, None)
+                reader.close()
+    counts["unusable_point_geometry_parcels"] = len(unusable)
+    counts["missing_point_geometry_parcels"] = len(requested - seen)
+    return dict(sorted(points.items()))
+
+
 def descriptor(payload, filename=None):
     result = {"bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
     if filename:
@@ -487,7 +568,7 @@ def descriptor(payload, filename=None):
     return result
 
 
-def write_snapshot(output, parcels, source, cadastre, counts):
+def write_snapshot(output, parcels, source, cadastre, counts, points=None):
     snapshot_id = uuid4().hex
     directory = output / "business-snapshots" / snapshot_id
     if directory.exists():
@@ -529,6 +610,14 @@ def write_snapshot(output, parcels, source, cadastre, counts):
     write_new(directory / "parcel-index.json", index_payload)
     write_new(directory / "search-index.json", search_payload)
     manifest = {"version": 1, "snapshot_id": snapshot_id, "generated_at": utc_now(), "source": source, "cadastre": cadastre, "counts": dict(counts), "shards": shards, "parcel_index": descriptor(index_payload, "parcel-index.json"), "search_index": descriptor(search_payload, "search-index.json")}
+    if points is not None:
+        point_payload = json_bytes(points)
+        if len(point_payload) > MAX_POINTS_BYTES:
+            raise ValueError("Business points index exceeds hosting limit")
+        write_new(directory / "points-index.json", point_payload)
+        manifest["points_index"] = descriptor(point_payload, "points-index.json")
+        mapped_companies = sum(len(parcels.get(identifier, [])) for identifier in points)
+        manifest["counts"].update({"mapped_business_parcels": len(points), "unmapped_business_parcels": len(parcels) - len(points), "mapped_companies": mapped_companies, "unmapped_companies": counts["matched_companies"] - mapped_companies})
     payload = json_bytes(manifest)
     if len(payload) > MAX_MANIFEST_BYTES:
         raise ValueError("Business manifest exceeds limit")
@@ -575,7 +664,8 @@ def validate_snapshot(output_root, snapshot_id=None):
     manifest = read_json(manifest_path, MAX_MANIFEST_BYTES)
     if pointer is not None and file_digest(manifest_path) != pointer["manifest_sha256"]:
         raise ValueError("Business manifest pointer hash mismatch")
-    if not isinstance(manifest, dict) or set(manifest) != {"version", "snapshot_id", "generated_at", "source", "cadastre", "counts", "shards", "parcel_index", "search_index"} or manifest.get("version") != 1 or manifest.get("snapshot_id") != snapshot_id or not timestamp_valid(manifest.get("generated_at")):
+    required_manifest = {"version", "snapshot_id", "generated_at", "source", "cadastre", "counts", "shards", "parcel_index", "search_index"}
+    if not isinstance(manifest, dict) or set(manifest) not in (required_manifest, required_manifest | {"points_index"}) or manifest.get("version") != 1 or manifest.get("snapshot_id") != snapshot_id or not timestamp_valid(manifest.get("generated_at")):
         raise ValueError("Invalid business manifest")
     validate_source(manifest["source"])
     cadastre = manifest["cadastre"]
@@ -607,7 +697,13 @@ def validate_snapshot(output_root, snapshot_id=None):
     search = load_descriptor(manifest["search_index"], "search-index.json")
     if not isinstance(parcel_index, dict) or len(parcel_index) > 500_000 or any(not CAD_ID.fullmatch(k) or v not in shards for k, v in parcel_index.items()) or not isinstance(search, list) or len(search) > 1_000_000:
         raise ValueError("Invalid business indexes")
+    points = None
+    if "points_index" in manifest:
+        points = load_descriptor(manifest["points_index"], "points-index.json", MAX_POINTS_BYTES)
+        if not isinstance(points, dict) or any(identifier not in parcel_index or not valid_map_point(value) for identifier, value in points.items()):
+            raise ValueError("Invalid business point membership or coordinates")
     seen_ids, seen_uics, expected_search = set(), set(), []
+    mapped_companies = 0
     for current_name, metadata in shards.items():
         shard = load_descriptor(metadata, limit=MAX_SHARD_BYTES)
         if not isinstance(shard, dict) or not shard:
@@ -616,6 +712,8 @@ def validate_snapshot(output_root, snapshot_id=None):
             if not CAD_ID.fullmatch(identifier) or identifier in seen_ids or parcel_index.get(identifier) != current_name or not isinstance(companies, list) or not companies:
                 raise ValueError("Invalid business parcel link")
             seen_ids.add(identifier)
+            if points is not None and identifier in points:
+                mapped_companies += len(companies)
             for company in companies:
                 validate_company(company)
                 if company["uic"] in seen_uics:
@@ -625,6 +723,11 @@ def validate_snapshot(output_root, snapshot_id=None):
     if set(parcel_index) != seen_ids or search != expected_search or counts["matched_companies"] != len(seen_uics) or counts["matched_parcels"] != len(seen_ids) or counts["sofia_candidates"] < len(seen_uics):
         raise ValueError("Business indexes/counts do not reconcile")
     allowed = {"manifest.json", "parcel-index.json", "search-index.json", *shards}
+    if points is not None:
+        expected_counts = {"mapped_business_parcels": len(points), "unmapped_business_parcels": len(parcel_index) - len(points), "mapped_companies": mapped_companies, "unmapped_companies": len(seen_uics) - mapped_companies}
+        if any(counts.get(key) != value for key, value in expected_counts.items()):
+            raise ValueError("Business point coverage counts do not reconcile")
+        allowed.add("points-index.json")
     if {p.name for p in directory.iterdir()} != allowed:
         raise ValueError("Unexpected business snapshot files")
     return manifest
@@ -641,7 +744,8 @@ def build(args):
     selected, company_counts = select_companies(directory, source)
     counts.update(company_counts)
     parcels = match_companies(selected, reference, counts)
-    manifest = write_snapshot(args.output, parcels, source, cadastre, counts)
+    points = cadastral_points(parcels, args.cadastre_archives, cadastre, counts)
+    manifest = write_snapshot(args.output, parcels, source, cadastre, counts, points)
     print(json.dumps({"snapshot_id": manifest["snapshot_id"], "source_commit": source["commit"], "counts": manifest["counts"]}, ensure_ascii=True))
     return manifest
 

@@ -1,5 +1,6 @@
 """Tests for evidence selection and conservative business-address association."""
 import csv
+import importlib.util
 from collections import Counter
 import json
 from pathlib import Path
@@ -138,13 +139,52 @@ class AddressEvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 business.verify_blob(path, item | {"git_blob_sha1": "a" * 40})
 
-    def snapshot(self, root):
+    def snapshot(self, root, points=None):
         company = business.candidate(row(), Counter())[3]
         source = {"repo": business.REPO, "path": business.SOURCE_PATH, "commit": "a" * 40,
                   "files": [{"name": "registry_agency_data_mega.csv", "bytes": 10, "git_blob_sha1": "b" * 40, "sha256": "c" * 64}]}
         cadastre = {"manifest_sha256": "d" * 64, "snapshot_id": "e" * 32, "captured_from": "2026-10-01T00:00:00Z", "captured_to": "2026-10-01T00:00:00Z",
                     "sources": [{"code": f"sofia-district-{i:02d}", "source_url": f"https://kais.cadastre.bg/bg/OpenData/Download?path=district-{i}", "zip_sha256": "f" * 64, "captured_at": "2026-10-01T00:00:00Z"} for i in range(24)]}
-        return business.write_snapshot(root, {"68134.1.1": [company]}, source, cadastre, {"matched_companies": 1, "matched_parcels": 1, "sofia_candidates": 1})
+        return business.write_snapshot(root, {"68134.1.1": [company]}, source, cadastre, {"matched_companies": 1, "matched_parcels": 1, "sofia_candidates": 1}, points)
+
+    def test_legacy_snapshot_remains_valid_without_points(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = self.snapshot(Path(temporary))
+            self.assertNotIn("points_index", manifest)
+
+    def test_points_index_membership_and_map_coverage_reconcile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.snapshot(root, {"68134.1.1": {"lat": 42.7, "lng": 23.3}})
+            self.assertEqual(manifest["counts"]["mapped_business_parcels"], 1)
+            self.assertEqual(manifest["counts"]["mapped_companies"], 1)
+            self.assertEqual(manifest["counts"]["unmapped_business_parcels"], 0)
+            self.assertEqual(business.validate_snapshot(root)["points_index"]["file"], "points-index.json")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.snapshot(root, {})
+            self.assertEqual(manifest["counts"]["mapped_companies"], 0)
+            self.assertEqual(manifest["counts"]["unmapped_companies"], 1)
+            self.assertEqual(manifest["counts"]["unmapped_business_parcels"], 1)
+            self.assertEqual(manifest["counts"]["matched_companies"], 1)
+
+    def test_points_reject_unknown_parcels_nonfinite_and_outside_sofia(self):
+        for points in ({"68134.9.9": {"lat": 42.7, "lng": 23.3}}, {"68134.1.1": {"lat": 44., "lng": 23.3}}, {"68134.1.1": {"lat": True, "lng": 23.3}}, {"68134.1.1": {"lat": float("nan"), "lng": 23.3}}):
+            with tempfile.TemporaryDirectory() as temporary, self.assertRaises(ValueError):
+                self.snapshot(Path(temporary), points)
+
+    def test_points_hash_and_coverage_count_tampering_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.snapshot(root, {"68134.1.1": {"lat": 42.7, "lng": 23.3}})
+            directory = root / "business-snapshots" / manifest["snapshot_id"]
+            manifest["counts"]["mapped_companies"] = 0
+            (directory / "manifest.json").write_bytes(business.json_bytes(manifest))
+            with self.assertRaisesRegex(ValueError, "coverage counts"):
+                business.validate_snapshot(root, manifest["snapshot_id"])
+            (directory / "points-index.json").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "hash or length"):
+                business.validate_snapshot(root, manifest["snapshot_id"])
 
     def test_snapshot_validator_reconciles_hashes_indexes_and_counts(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -256,6 +296,33 @@ class CompanyCaptureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Incomplete"):
                 business.source_entries("https://api.github.com/repos/" + business.REPO, "a" * 40, None)
         self.assertEqual(mocked.call_count, 1)
+
+
+@unittest.skipUnless(importlib.util.find_spec("shapely"), "Optional boundary geometry dependencies are absent")
+class RepresentativePointTests(unittest.TestCase):
+    class IdentityTransform:
+        def transform(self, x, y, errcheck=True):
+            return x, y
+
+    def test_point_is_inside_actual_polygon_and_outside_its_hole(self):
+        from shapely.geometry import Point, shape
+        polygon = {"type": "Polygon", "coordinates": [[[23.3, 42.7], [23.32, 42.7], [23.32, 42.72], [23.3, 42.72], [23.3, 42.7]], [[23.305, 42.705], [23.305, 42.715], [23.315, 42.715], [23.315, 42.705], [23.305, 42.705]]]}
+        point, identity = business.parcel_representative_point(polygon, self.IdentityTransform())
+        self.assertTrue(shape(polygon).contains(Point(point["lng"], point["lat"])))
+        self.assertRegex(identity, r"^[a-f0-9]{64}$")
+        # A centroid lies in this hole; the chosen interior point must differ.
+        self.assertFalse(shape(polygon).contains(shape(polygon).centroid))
+
+    def test_disconnected_multipolygon_point_belongs_to_one_component(self):
+        from shapely.geometry import Point, shape
+        polygon = {"type": "MultiPolygon", "coordinates": [[[[23.3, 42.7], [23.31, 42.7], [23.31, 42.71], [23.3, 42.71], [23.3, 42.7]]], [[[23.4, 42.7], [23.42, 42.7], [23.42, 42.72], [23.4, 42.72], [23.4, 42.7]]]]}
+        point, _ = business.parcel_representative_point(polygon, self.IdentityTransform())
+        self.assertTrue(shape(polygon).contains(Point(point["lng"], point["lat"])))
+
+    def test_invalid_self_intersecting_geometry_is_not_repaired(self):
+        polygon = {"type": "Polygon", "coordinates": [[[23.3, 42.7], [23.32, 42.72], [23.32, 42.7], [23.3, 42.72], [23.3, 42.7]]]}
+        with self.assertRaisesRegex(ValueError, "invalid_native"):
+            business.parcel_representative_point(polygon, self.IdentityTransform())
 
 
 if __name__ == "__main__":

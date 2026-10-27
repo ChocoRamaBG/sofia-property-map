@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 45
     env:
       PYTHONUNBUFFERED: '1'
+      PROJ_NETWORK: 'OFF'
     steps:
       - name: Check out the company address importer
         uses: actions/checkout@v6
@@ -24,6 +25,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/requirements-boundaries.txt
+      - name: Install verified parcel geometry readers
+        run: python -m pip install -r scripts/requirements-boundaries.txt
       - name: Check address matching and data minimization
         run: python -m unittest discover -s scripts -p 'test_business_addresses.py'
       - name: Check the read-only company API

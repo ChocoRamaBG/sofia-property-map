@@ -61,9 +61,10 @@ function BoundsWatcher({ onChange }) {
 export default function MapView({
   parcels = [], selectedParcel, selectedKey, hoveredKey, baseLayer = 'standard', userLocation, addressLocation,
   onSelect, onHover, onBoundsChange, onMapReady, onClusterClick,
-  parcelMode = 'points', bounds, filters = {}, active = true, boundaryRevision = 0, onBoundaryStatusChange,
+  parcelMode = 'points', bounds, filters = {}, active = true, boundaryRevision = 0, onBoundaryStatusChange, dataMode = 'properties',
 }) {
   const { t, lang, pick } = useI18n();
+  const businesses = dataMode === 'companies';
   const pointRenderer = useMemo(() => svg({ padding: 0.15, pane: 'parcel-points' }), []);
   const geometry = useParcelGeometry({ bounds, filters, active, parcelMode, revision: boundaryRevision });
   const geometryReady = parcelMode === 'boundaries' && Boolean(geometry.data);
@@ -85,8 +86,8 @@ export default function MapView({
         const selected = item.cadastral_id === selectedKey;
         const hovered = item.cadastral_id === hoveredKey;
         const type = pointType(item);
-        const radius = selected ? 9 : hovered ? 8 : type === 'no_records' ? 4 : 6;
-        const color = selected ? '#163f47' : REGISTER_COLORS[type];
+        const radius = selected ? 9 : hovered ? 8 : businesses ? 6 : type === 'no_records' ? 4 : 6;
+        const color = selected ? '#163f47' : businesses ? '#176982' : REGISTER_COLORS[type];
         const position = [Number(item.lat), Number(item.lng)];
         if (!Number.isFinite(position[0]) || !Number.isFinite(position[1])) return null;
         if (cluster) {
@@ -95,12 +96,12 @@ export default function MapView({
           const certificateCount = Number(item.certificate_count) || 0;
           const scale = count >= 1000 ? 'xlarge' : count >= 100 ? 'large' : count >= 10 ? 'medium' : 'small';
           const size = { small: 44, medium: 56, large: 68, xlarge: 80 }[scale];
-          const clusterLabel = t(count === 1 ? 'map.clusterSingle' : 'map.cluster', { n: displayCount(count, lang) });
+          const clusterLabel = businesses ? pick(`${displayCount(count, lang)} имота · ${displayCount(item.company_count, lang)} фирми`, `${displayCount(count, lang)} plots · ${displayCount(item.company_count, lang)} companies`) : t(count === 1 ? 'map.clusterSingle' : 'map.cluster', { n: displayCount(count, lang) });
           const certificateLabel = certificateCount > 0 ? t('map.clusterCertificates', { n: displayCount(certificateCount, lang) }) : '';
           const clusterZoom = Number.isFinite(Number(item.zoom)) ? Number(item.zoom) : 13;
           const icon = divIcon({
             className: 'plot-cluster-icon', iconSize: [size, size], iconAnchor: [size / 2, size / 2],
-            html: `<span class="plot-cluster plot-cluster-${scale} ${certificateCount ? 'has-certificate' : ''}" style="width:${size}px;height:${size}px"><span class="cluster-count">${displayCount(count, lang)}</span>${count >= 10 ? `<span class="cluster-count-label">${t('map.clusterPlots')}</span>` : ''}${certificateCount ? '<span class="cluster-certificate-dot" aria-hidden="true"></span>' : ''}</span>`,
+            html: `<span class="plot-cluster plot-cluster-${scale} ${businesses ? 'plot-cluster-business' : ''} ${certificateCount ? 'has-certificate' : ''}" style="width:${size}px;height:${size}px"><span class="cluster-count">${displayCount(count, lang)}</span>${count >= 10 ? `<span class="cluster-count-label">${t('map.clusterPlots')}</span>` : ''}${certificateCount ? '<span class="cluster-certificate-dot" aria-hidden="true"></span>' : ''}</span>`,
           });
           return <Marker key={`cluster-${item.cell_key || index}`} position={position} icon={icon} title={[clusterLabel, certificateLabel].filter(Boolean).join(' ')} keyboard zIndexOffset={size} eventHandlers={{ click: () => onClusterClick(position, Math.min(19, clusterZoom + 2), item.bounds, count) }}>
             <Tooltip direction="top" offset={[0, -(size / 2) + 5]}><span>{clusterLabel}</span>{certificateCount > 0 && <span className="cluster-tooltip-certificate">{certificateLabel}</span>}</Tooltip>
@@ -108,13 +109,13 @@ export default function MapView({
         }
         return (
           <CircleMarker key={`${parcelMode}:${item.cadastral_id}`} center={position} radius={radius} renderer={parcelMode === 'boundaries' ? pointRenderer : undefined} pane={parcelMode === 'boundaries' ? 'parcel-points' : 'overlayPane'}
-            pathOptions={{ color: selected ? '#fff' : color, weight: selected ? 3 : 1, fillColor: color, fillOpacity: type === 'no_records' && !selected ? 0.58 : 0.94, ...(parcelMode === 'boundaries' ? { dashArray: '2 2' } : {}) }}
+            pathOptions={{ color: selected ? '#fff' : color, weight: selected ? 3 : 1, fillColor: color, fillOpacity: !businesses && type === 'no_records' && !selected ? 0.58 : 0.94, ...(parcelMode === 'boundaries' ? { dashArray: '2 2' } : {}) }}
             eventHandlers={{
               click: () => onSelect(item),
               mouseover: () => onHover(item.cadastral_id),
               mouseout: () => onHover(null),
             }}>
-            <Tooltip direction="top" offset={[0, -4]} className={parcelMode === 'boundaries' ? 'parcel-fallback-tooltip' : undefined}><strong>{item.cadastral_id}</strong><span className="point-tooltip-status">{t(`legend.${type}`)}</span>{parcelMode === 'boundaries' && <span>{fallbackHelp}</span>}</Tooltip>
+            <Tooltip direction="top" offset={[0, -4]} className={businesses ? 'parcel-fallback-tooltip company-point-tooltip' : parcelMode === 'boundaries' ? 'parcel-fallback-tooltip' : undefined}><strong>{item.cadastral_id}</strong><span className="point-tooltip-status">{businesses ? pick(`${displayCount(item.company_count, lang)} фирми с регистриран адрес`, `${displayCount(item.company_count, lang)} companies with a registered address`) : t(`legend.${type}`)}</span>{businesses ? <span>{pick('Точка в кадастралния имот · отворете за фирмените данни.', 'Point inside the cadastral plot · open for company details.')}</span> : parcelMode === 'boundaries' && <span>{fallbackHelp}</span>}</Tooltip>
           </CircleMarker>
         );
       })}

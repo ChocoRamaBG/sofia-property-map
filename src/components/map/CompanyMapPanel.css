@@ -1,0 +1,29 @@
+.map-dataset-switch { display:flex; gap:5px; padding:12px 16px; border-bottom:1px solid #e2e9e5; background:#fff; }
+.map-dataset-switch button { flex:1; min-width:0; min-height:44px; display:flex; gap:7px; align-items:center; justify-content:center; border:1px solid #dae5df; border-radius:8px; color:#536c64; font-size:12px; font-weight:600; }
+.map-dataset-switch button[aria-pressed="true"] { color:#165d73; background:#eaf4f8; border-color:#7faebb; }
+.map-dataset-switch button:focus-visible,.company-map-panel :is(button,a,summary):focus-visible { outline:2px solid #19728c; outline-offset:2px; }
+.company-map-panel { padding:22px 20px; color:#274d50; min-width:0; overflow-wrap:anywhere; }
+.company-map-panel h1 { display:flex; align-items:center; gap:9px; font-size:20px; font-weight:650; line-height:1.35; }
+.company-map-panel > p,.company-map-method p { margin-top:12px; font-size:12px; line-height:1.7; color:#637a76; }
+.company-map-panel form { margin-top:20px; }
+.company-map-panel label { display:block; font-size:12px; font-weight:600; margin-bottom:7px; }
+.company-map-input { display:flex; align-items:center; gap:8px; border:1px solid #cbdcd9; border-radius:8px; padding:0 9px; }
+.company-map-input input { flex:1; min-width:0; height:44px; outline:none; background:transparent; font-size:12px; }
+.company-map-input:focus-within { outline:2px solid #19728c; outline-offset:2px; }
+.company-map-input button { display:grid; place-items:center; width:30px; height:38px; }
+.company-map-submit { margin-top:10px; width:100%; border-radius:8px; padding:12px 8px; background:#176982; color:white; font-size:12px; font-weight:600; }
+.company-map-submit:disabled { opacity:.5; }
+.company-map-show-all { margin-top:9px; width:100%; min-height:42px; color:#206b7e; border:1px solid #cbdfdf; border-radius:8px; font-size:12px; }
+.company-map-query { margin-top:12px; padding:7px 10px; display:flex; gap:7px; justify-content:space-between; background:#eef5f8; border-radius:7px; font-size:12px; }
+.company-map-query span { min-width:0; }
+.company-map-query button { flex:none; }
+.company-map-summary { margin-top:20px; padding:15px; border:1px solid #d5e4e5; background:#f2f8f9; border-radius:10px; }
+.company-map-summary strong { font-size:14px; }
+.company-map-summary p { font-size:12px; color:#617b77; margin-top:4px; line-height:1.65; }
+.company-map-summary button { margin-top:8px; text-decoration:underline; font-size:12px; }
+.company-map-method { margin-top:20px; border-top:1px solid #e0e8e4; padding-top:15px; }
+.company-map-method summary { display:flex; align-items:center; gap:7px; cursor:pointer; font-size:12px; font-weight:600; }
+.company-map-method a { display:inline-block; margin-top:8px; font-size:12px; text-decoration:underline; }
+.company-map-panel .company-map-filter-note { border-top:1px solid #e0e8e4; padding-top:13px; margin-top:20px; font-size:11px; }
+.plot-cluster-business { background:#176982 !important; border-color:#fff !important; }
+.company-point-tooltip > span { display:block; margin-top:4px; }

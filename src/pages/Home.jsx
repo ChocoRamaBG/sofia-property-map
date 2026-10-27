@@ -1,5 +1,5 @@
 import React, { lazy, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, ChevronDown, Loader2, MapPin, Search, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Building2, ChevronDown, Loader2, MapPin, Search, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -16,6 +16,8 @@ import MapLegend from '@/components/map/MapLegend';
 import SearchPanel from '@/components/search/SearchPanel';
 import RegisterFilters from '@/components/search/RegisterFilters';
 import useViewportParcels from '@/hooks/useViewportParcels';
+import useBusinessViewport from '@/hooks/useBusinessViewport';
+import CompanyMapPanel, { BusinessMapStatus } from '@/components/map/CompanyMapPanel';
 
 const INITIAL_VIEW = { center: [42.684, 23.333], zoom: 13 };
 const DevelopmentDashboard = lazy(() => import('@/components/development/DevelopmentDashboard'));
@@ -68,6 +70,10 @@ export default function Home() {
   const [hoveredKey, setHoveredKey] = useState(null);
   const [baseLayer, setBaseLayer] = useState('standard');
   const [parcelMode, setParcelMode] = useState(initialParcelMode);
+  const [mapDataset, setMapDataset] = useState(() => new URL(window.location.href).searchParams.get('layer') === 'companies' ? 'companies' : 'properties');
+  const [businessMapDraft, setBusinessMapDraft] = useState('');
+  const [businessMapQuery, setBusinessMapQuery] = useState('');
+  const [businessFitRequest, setBusinessFitRequest] = useState(() => new URL(window.location.href).searchParams.get('layer') === 'companies' ? { query: '', generation: 0 } : null);
   const [boundaryStatus, setBoundaryStatus] = useState(null);
   const [boundaryRevision, setBoundaryRevision] = useState(0);
   const [query, setQuery] = useState('');
@@ -101,13 +107,41 @@ export default function Home() {
   const mapRef = useRef(null);
   mapRef.current = map;
   const filterPanel = useRef(null);
+  const companyPanel = useRef(null);
   const searchPanel = useRef(null);
   const sidebarScroll = useRef(null);
   const searchReturn = useRef(null);
   const pendingSearchReturn = useRef(null);
   const returningToSearch = useRef(false);
   const activeCount = activeFilterCount(filters);
-  const { parcels, isLoading, truncated, total, apiError, filterError, refetch: refetchViewport } = useViewportParcels(bounds, filters, workspace === 'map');
+  const { parcels, isLoading, truncated, total, apiError, filterError, refetch: refetchViewport } = useViewportParcels(bounds, filters, workspace === 'map' && mapDataset === 'properties');
+  const businessViewport = useBusinessViewport(bounds, businessMapQuery, workspace === 'map' && mapDataset === 'companies');
+  const changeMapDataset = useCallback((next) => {
+    if (!['companies', 'properties'].includes(next)) return;
+    const generation = ++navigationGeneration.current;
+    pendingAddressNavigation.current = null;
+    setSelected(null); setMapDataset(next);
+    searchReturn.current = null; pendingSearchReturn.current = null; setCanReturnToSearch(false);
+    setBusinessFitRequest(next === 'companies' ? { query: businessMapQuery, generation } : null);
+    const url = new URL(window.location.href);
+    if (next === 'companies') url.searchParams.set('layer', 'companies');
+    else url.searchParams.delete('layer');
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+  }, [businessMapQuery]);
+  const applyBusinessMapQuery = useCallback((value) => {
+    const next = value.trim().replace(/\s+/gu, ' ');
+    const generation = ++navigationGeneration.current;
+    pendingAddressNavigation.current = null;
+    setBusinessMapDraft(next); setBusinessMapQuery(next); setSelected(null);
+    setBusinessFitRequest({ query: next, generation });
+  }, []);
+  useEffect(() => {
+    const data = businessViewport.data;
+    if (!businessFitRequest || workspace !== 'map' || mapDataset !== 'companies' || !map || !data || data.query !== businessFitRequest.query || businessFitRequest.generation !== navigationGeneration.current) return;
+    const extent = data.bounds;
+    if (extent && ['south', 'north', 'west', 'east'].every((key) => Number.isFinite(Number(extent[key])))) map.fitBounds([[extent.south, extent.west], [extent.north, extent.east]], { padding: [42, 42], maxZoom: 17 });
+    setBusinessFitRequest(null);
+  }, [businessViewport.data, businessFitRequest, workspace, mapDataset, map]);
   const changeParcelMode = useCallback((next) => {
     if (!['points', 'boundaries'].includes(next)) return;
     setParcelMode(next); setBoundaryStatus(null);
@@ -173,10 +207,11 @@ export default function Home() {
   }, [workspace, map]);
   const openDevelopmentPlot = useCallback((plot) => {
     if (!plot?.cadastral_id) return;
+    changeMapDataset('properties');
     searchReturn.current = null; pendingSearchReturn.current = null; setCanReturnToSearch(false);
     setSelected(plot); setReturnToDevelopment(true); changeWorkspace('map');
     pendingMapNavigation.current = { kind: 'point', ...plot, zoom: 17, generation: navigationGeneration.current };
-  }, [changeWorkspace]);
+  }, [changeWorkspace, changeMapDataset]);
   const backToDevelopment = useCallback(() => {
     setSelected(null); setReturnToDevelopment(false); changeWorkspace('activity');
   }, [changeWorkspace]);
@@ -266,7 +301,7 @@ export default function Home() {
     });
     return () => { window.cancelAnimationFrame(frame); };
   }, [selected, isMobile, searchOpen, map]);
-  const handleSelect = useCallback((plot) => { navigationGeneration.current += 1; pendingAddressNavigation.current = null; trackEvent('property_open', { entry_point: 'map' }); rememberSearchView(plot); setSelected(plot); setSearchOpen(false); }, [rememberSearchView]);
+  const handleSelect = useCallback((plot) => { navigationGeneration.current += 1; pendingAddressNavigation.current = null; trackEvent('property_open', { entry_point: 'map' }); if (mapDataset === 'properties') rememberSearchView(plot); setSelected(plot); setSearchOpen(false); }, [rememberSearchView, mapDataset]);
   const handleClear = useCallback(() => { setQuery(''); }, []);
   const handleQueryChange = useCallback((value) => { setQuery(value); }, []);
   const handleFilterChange = useCallback((value) => {
@@ -278,6 +313,7 @@ export default function Home() {
   }, []);
   const clearFilters = useCallback(() => handleFilterChange({}), [handleFilterChange]);
   const openDevelopmentMap = useCallback((value) => {
+    changeMapDataset('properties');
     const mapTypes = ['building_permits', 'projecting_visas', 'exploitation_certificates'];
     const selectedTypes = value.type === 'all' ? mapTypes : String(value.type || '').split(',').filter((type) => mapTypes.includes(type));
     const year = /^\d{4}$/.test(String(value.year || '')) ? String(value.year) : '';
@@ -286,11 +322,15 @@ export default function Home() {
     fitSearchResults.current = phrases.length > 0;
     setReturnToDevelopment(true); changeWorkspace('map');
     mapRef.current?.setView(INITIAL_VIEW.center, 11, { animate: false });
-  }, [changeWorkspace, handleFilterChange]);
+  }, [changeWorkspace, handleFilterChange, changeMapDataset]);
   const editFilters = useCallback(() => {
     if (isMobile) setSearchOpen(true);
-    else filterPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [isMobile]);
+    else {
+      const container = sidebarScroll.current;
+      const target = mapDataset === 'companies' ? companyPanel.current : filterPanel.current;
+      if (container && target) container.scrollTo({ top: container.scrollTop + target.getBoundingClientRect().top - container.getBoundingClientRect().top, behavior: 'smooth' });
+    }
+  }, [isMobile, mapDataset]);
   const handleSearchTabKeys = (event) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
@@ -413,6 +453,12 @@ export default function Home() {
   }, [map]);
 
   const sidebar = <>
+    <div className="map-dataset-switch" role="group" aria-label={lang === 'bg' ? 'Слой на картата' : 'Map layer'}>
+      <button type="button" aria-pressed={mapDataset === 'properties'} onClick={() => changeMapDataset('properties')}><MapPin size={16} aria-hidden="true" />{lang === 'bg' ? 'Имоти' : 'Properties'}</button>
+      <button type="button" aria-pressed={mapDataset === 'companies'} onClick={() => changeMapDataset('companies')}><Building2 size={16} aria-hidden="true" />{lang === 'bg' ? 'Фирми' : 'Companies'}</button>
+    </div>
+    <div hidden={mapDataset !== 'companies'}><CompanyMapPanel panelRef={companyPanel} draft={businessMapDraft} onDraftChange={setBusinessMapDraft} query={businessMapQuery} onApply={applyBusinessMapQuery} onShowAll={() => applyBusinessMapQuery('')} data={businessViewport.data} loading={businessViewport.isLoading} error={businessViewport.apiError} onRetry={businessViewport.refetch} /></div>
+    <div hidden={mapDataset !== 'properties'}>
     <div className="search-mode-tabs" role="tablist" onKeyDown={handleSearchTabKeys} aria-label={lang === 'bg' ? 'Начин на търсене' : 'Search method'}>
       <button type="button" id="records-search-tab" role="tab" tabIndex={searchTab === 'records' ? 0 : -1} aria-selected={searchTab === 'records'} aria-controls="records-search-panel" onClick={() => { navigationGeneration.current += 1; pendingAddressNavigation.current = null; setAddressRequest(null); setSearchTab('records'); }}>{lang === 'bg' ? 'Търсене' : 'Search'}</button>
       <button type="button" id="address-search-tab" role="tab" tabIndex={searchTab === 'address' ? 0 : -1} aria-selected={searchTab === 'address'} aria-controls="address-search-panel" onClick={() => setSearchTab('address')}><MapPin size={14} aria-hidden="true" />{lang === 'bg' ? 'Адрес' : 'Address'}</button>
@@ -433,6 +479,7 @@ export default function Home() {
     </div>
     <div ref={filterPanel}><RegisterFilters value={filters} onChange={handleFilterChange} counts={meta?.counts} options={meta?.filter_options} /></div>
     <DatasetSummary meta={meta} />
+    </div>
   </>;
 
   return (
@@ -444,10 +491,10 @@ export default function Home() {
       {mapVisited && <main hidden={workspace !== 'map'} className={`map-workspace ${selected ? 'has-selected' : ''}`}>
         {!isMobile && <aside ref={sidebarScroll} className="workspace-sidebar" aria-label={t('search.title')}>{sidebar}</aside>}
         <div className="map-stage">
-          <AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на картата…' : 'Loading map…'}</div>}><MapView parcels={parcels} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} parcelMode={parcelMode} bounds={bounds} filters={filters} active={workspace === 'map'} boundaryRevision={boundaryRevision} onBoundaryStatusChange={setBoundaryStatus} userLocation={userLocation} addressLocation={addressLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} /></AsyncPanel>
-          {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{t('search.mobile')}<SlidersHorizontal size={16} />{activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : <button className="map-context" onClick={editFilters} aria-label={t('filter.edit')}><span className="context-dot" />{t('map.city')}<span className="map-context-divider" /><SlidersHorizontal size={13} />{activeCount ? t('filter.activeCount', { n: activeCount }) : t('filter.all')}</button>}
-          <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} parcelMode={parcelMode} onParcelModeChange={changeParcelMode} />
-          <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={!map || isLoading} truncated={truncated} apiError={apiError} filterError={filterError} parcelMode={parcelMode} boundaryStatus={boundaryStatus} onZoomIn={() => map?.zoomIn()} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} onRetry={retryMapData} />
+          <AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на картата…' : 'Loading map…'}</div>}><MapView parcels={mapDataset === 'companies' ? businessViewport.parcels : parcels} dataMode={mapDataset} selectedParcel={selected} selectedKey={selected?.cadastral_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} parcelMode={mapDataset === 'companies' ? 'points' : parcelMode} bounds={bounds} filters={filters} active={workspace === 'map' && mapDataset === 'properties'} boundaryRevision={boundaryRevision} onBoundaryStatusChange={setBoundaryStatus} userLocation={userLocation} addressLocation={addressLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} /></AsyncPanel>
+          {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{mapDataset === 'companies' ? (lang === 'bg' ? 'Фирми' : 'Companies') : t('search.mobile')}<SlidersHorizontal size={16} />{mapDataset === 'properties' && activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : <button className="map-context" onClick={editFilters} aria-label={mapDataset === 'companies' ? (lang === 'bg' ? 'Фирми на картата' : 'Companies on the map') : t('filter.edit')}><span className="context-dot" />{t('map.city')}<span className="map-context-divider" />{mapDataset === 'companies' ? <><Building2 size={13} /><span>{businessMapQuery || (lang === 'bg' ? 'Всички фирми' : 'All companies')}</span></> : <><SlidersHorizontal size={13} />{activeCount ? t('filter.activeCount', { n: activeCount }) : t('filter.all')}</>}</button>}
+          <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => mapDataset === 'companies' ? applyBusinessMapQuery(businessMapQuery) : map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} parcelMode={parcelMode} onParcelModeChange={mapDataset === 'properties' ? changeParcelMode : undefined} />
+          {mapDataset === 'companies' ? <BusinessMapStatus total={businessViewport.total} loading={!map || businessViewport.isLoading} error={businessViewport.apiError} onEdit={editFilters} onRetry={businessViewport.refetch} /> : <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={!map || isLoading} truncated={truncated} apiError={apiError} filterError={filterError} parcelMode={parcelMode} boundaryStatus={boundaryStatus} onZoomIn={() => map?.zoomIn()} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} onRetry={retryMapData} />}
         </div>
         {!isMobile && selected && <aside className="workspace-details" aria-label={t('panel.title')}><AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={20} className="animate-spin" />{t('panel.loading')}</div>}><DetailsPanel closeOnEscape parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} onBackToActivity={returnToDevelopment ? backToDevelopment : undefined} /></AsyncPanel></aside>}
       </main>}

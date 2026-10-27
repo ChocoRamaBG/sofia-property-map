@@ -9,6 +9,8 @@ const BUSINESS_MAX_SHARD_BYTES = 1048576;
 const BUSINESS_MAX_MANIFEST_BYTES = 262144;
 const BUSINESS_MAX_DATASET_BYTES = 134217728;
 const BUSINESS_MAX_ROWS = 2000000;
+const BUSINESS_MAX_VIEW_ITEMS = 1200;
+const BUSINESS_LOCATION_METHOD = 'official_parcel_representative_point';
 const BUSINESS_SCOPE = 'registered_office_address_association';
 const BUSINESS_SCOPE_LABEL = 'Съвпадение на вписан фирмен адрес с кадастрален адрес. Не доказва собственост, наем или дейност на място.';
 
@@ -124,7 +126,9 @@ function business_snapshot(): array {
     $raw = business_bytes($directory . '/manifest.json', BUSINESS_MAX_MANIFEST_BYTES);
     if (!hash_equals($pointer['manifest_sha256'], hash('sha256', $raw))) throw new RuntimeException('Snapshot manifest integrity failed.');
     $data = business_json($raw);
-    if (!business_keys($data, ['version', 'snapshot_id', 'generated_at', 'source', 'cadastre', 'counts', 'shards', 'parcel_index', 'search_index'])
+    $manifestKeys = ['version', 'snapshot_id', 'generated_at', 'source', 'cadastre', 'counts', 'shards', 'parcel_index', 'search_index'];
+    if (array_key_exists('points_index', $data)) $manifestKeys[] = 'points_index';
+    if (!business_keys($data, $manifestKeys)
         || $data['version'] !== 1 || $data['snapshot_id'] !== $pointer['snapshot_id'] || !business_timestamp($data['generated_at'])) throw new RuntimeException('Snapshot manifest invalid.');
     business_source($data['source']);
     $cadastre = $data['cadastre'];
@@ -150,6 +154,15 @@ function business_snapshot(): array {
     if (!is_array($data['shards']) || count($data['shards']) < 1 || count($data['shards']) > 512) throw new RuntimeException('Company shards invalid.');
     $bytes = $data['parcel_index']['bytes'] + $data['search_index']['bytes'];
     $descriptors = [$data['parcel_index'], $data['search_index']];
+    if (isset($data['points_index'])) {
+        business_descriptor($data['points_index'], 'points-index.json', BUSINESS_MAX_INDEX_BYTES);
+        $bytes += $data['points_index']['bytes']; $descriptors[] = $data['points_index'];
+        foreach (['mapped_business_parcels', 'unmapped_business_parcels', 'mapped_companies', 'unmapped_companies'] as $key) {
+            if (!isset($data['counts'][$key]) || $data['counts'][$key] > BUSINESS_MAX_ROWS) throw new RuntimeException('Business point coverage count invalid.');
+        }
+        if ($data['counts']['mapped_business_parcels'] + $data['counts']['unmapped_business_parcels'] !== $data['counts']['matched_parcels']
+            || $data['counts']['mapped_companies'] + $data['counts']['unmapped_companies'] !== $data['counts']['matched_companies']) throw new RuntimeException('Business point coverage inconsistent.');
+    }
     foreach ($data['shards'] as $name => $descriptor) {
         if (!is_string($name) || preg_match('/^companies-[0-9]{3}\.json$/D', $name) !== 1 || !business_keys($descriptor, ['bytes', 'sha256'])) throw new RuntimeException('Company shard name invalid.');
         $descriptor = business_descriptor(['file' => $name] + $descriptor, $name, BUSINESS_MAX_SHARD_BYTES);
@@ -166,7 +179,8 @@ function business_snapshot(): array {
 
 function business_coverage(array $snapshot): array {
     return ['status' => 'available', 'counts' => $snapshot['counts'], 'scope' => BUSINESS_SCOPE, 'scope_label' => BUSINESS_SCOPE_LABEL,
-        'generated_at' => $snapshot['generated_at'], 'source' => $snapshot['source'], 'cadastre' => $snapshot['cadastre']];
+        'generated_at' => $snapshot['generated_at'], 'source' => $snapshot['source'], 'cadastre' => $snapshot['cadastre'],
+        'map_available' => isset($snapshot['points_index']), 'location_method' => isset($snapshot['points_index']) ? BUSINESS_LOCATION_METHOD : null];
 }
 
 function business_parcel_index(array $snapshot): array {
@@ -258,24 +272,120 @@ function business_search_rows(array $snapshot): Generator {
     } finally { fclose($handle); }
 }
 
-function business_search(array $snapshot): array {
-    $raw = $_GET['q'] ?? null;
-    if (!business_text($raw, 120)) throw new InvalidArgumentException('Enter a company name or EIK (2–120 characters).');
+function business_query(bool $optional = false): string {
+    $raw = $_GET['q'] ?? ($optional ? '' : null);
+    if (!business_text($raw, 120, $optional)) throw new InvalidArgumentException('Enter a company name or EIK (2–120 characters).');
     $query = trim(preg_replace('/\s+/u', ' ', $raw));
+    if ($optional && $query === '') return '';
     $length = function_exists('mb_strlen') ? mb_strlen($query, 'UTF-8') : preg_match_all('/./us', $query);
     if ($length < 2) throw new InvalidArgumentException('Enter at least two characters.');
-    $query = business_fold($query); $limit = business_integer('limit', 40, 40);
+    return $query;
+}
+
+function business_search_record(array $row, array $index): void {
+    if (!business_keys($row, ['uic', 'name', 'registered_address', 'cadastral_id']) || !business_uic($row['uic'])
+        || !business_text($row['name'], 300) || !business_text($row['registered_address'], 240)
+        || business_private_text($row['name']) || business_private_text($row['registered_address'])
+        || !business_id($row['cadastral_id']) || !isset($index[$row['cadastral_id']])) throw new RuntimeException('Search record invalid.');
+}
+
+function business_search(array $snapshot): array {
+    $query = business_fold(business_query()); $limit = business_integer('limit', 40, 40);
     if ($limit < 1) throw new InvalidArgumentException('Invalid result limit.');
     $index = business_parcel_index($snapshot); $results = []; $total = 0;
     foreach (business_search_rows($snapshot) as $row) {
-        if (!business_keys($row, ['uic', 'name', 'registered_address', 'cadastral_id']) || !business_uic($row['uic'])
-            || !business_text($row['name'], 300) || !business_text($row['registered_address'], 240)
-            || business_private_text($row['name']) || business_private_text($row['registered_address'])
-            || !business_id($row['cadastral_id']) || !isset($index[$row['cadastral_id']])) throw new RuntimeException('Search record invalid.');
+        business_search_record($row, $index);
         if (strpos(business_fold($row['name']), $query) === false && strpos($row['uic'], $query) === false) continue;
         $total++; if (count($results) < $limit) $results[] = $row;
     }
     return ['results' => $results, 'total' => $total, 'truncated' => $total > count($results), 'limit' => $limit];
+}
+
+function business_view_number(string $name, float $minimum, float $maximum): float {
+    $value = $_GET[$name] ?? null;
+    if (!is_string($value) || strlen($value) > 32 || !preg_match('/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]{1,20})?$/D', $value)
+        || !is_finite((float)$value) || (float)$value < $minimum || (float)$value > $maximum) throw new InvalidArgumentException('Invalid business map bounds or zoom.');
+    return (float)$value;
+}
+
+function business_extend_bounds(?array $bounds, float $lat, float $lng): array {
+    if ($bounds === null) return ['south' => $lat, 'north' => $lat, 'west' => $lng, 'east' => $lng];
+    return ['south' => min($bounds['south'], $lat), 'north' => max($bounds['north'], $lat),
+        'west' => min($bounds['west'], $lng), 'east' => max($bounds['east'], $lng)];
+}
+
+function business_outward_bounds(?array $bounds): ?array {
+    if ($bounds === null) return null;
+    return ['south' => $bounds['south'] - 0.0000001, 'north' => $bounds['north'] + 0.0000001,
+        'west' => $bounds['west'] - 0.0000001, 'east' => $bounds['east'] + 0.0000001];
+}
+
+function business_viewport(array $snapshot): array {
+    $north = business_view_number('north', -90, 90); $south = business_view_number('south', -90, 90);
+    $east = business_view_number('east', -180, 180); $west = business_view_number('west', -180, 180);
+    $zoom = (int)floor(business_view_number('zoom', 0, 22)); $query = business_query(true);
+    if ($north <= $south || $east <= $west) throw new InvalidArgumentException('Invalid business map bounds.');
+    if (!isset($snapshot['points_index'])) throw new RuntimeException('Business map points have not been published.');
+    $index = business_parcel_index($snapshot); $descriptor = $snapshot['points_index'];
+    $points = business_json(business_bytes($snapshot['directory'] . '/points-index.json', BUSINESS_MAX_INDEX_BYTES, $descriptor));
+    if (count($points) !== $snapshot['counts']['mapped_business_parcels'] || count($points) === 0) throw new RuntimeException('Business map point coverage unavailable.');
+    foreach ($points as $id => $point) {
+        if (!business_id($id) || !isset($index[$id]) || !business_keys($point, ['lat', 'lng'])
+            || (!is_float($point['lat']) && !is_int($point['lat'])) || (!is_float($point['lng']) && !is_int($point['lng']))
+            || !is_finite((float)$point['lat']) || !is_finite((float)$point['lng'])
+            || $point['lat'] < 42.4 || $point['lat'] > 43.1 || $point['lng'] < 22.8 || $point['lng'] > 24) throw new RuntimeException('Business map point invalid.');
+    }
+    // Validate every search row and finish its digest before returning a single
+    // result. A preview's forty-item limit never constrains the map selection.
+    $allCounts = []; $matchingCounts = []; $folded = business_fold($query);
+    foreach (business_search_rows($snapshot) as $row) {
+        business_search_record($row, $index); $id = $row['cadastral_id'];
+        $allCounts[$id] = ($allCounts[$id] ?? 0) + 1;
+        if ($query === '' || strpos(business_fold($row['name']), $folded) !== false || strpos($row['uic'], $folded) !== false) $matchingCounts[$id] = ($matchingCounts[$id] ?? 0) + 1;
+    }
+    if (count($allCounts) !== count($index)) throw new RuntimeException('Business map company/parcel index inconsistent.');
+    $mappedCompanies = 0;
+    foreach ($points as $id => $_) $mappedCompanies += $allCounts[$id];
+    if ($mappedCompanies !== $snapshot['counts']['mapped_companies']) throw new RuntimeException('Business map company coverage inconsistent.');
+    $bounds = null; $selected = []; $companyTotal = 0; $matchingCompanyTotal = 0; $matchingTotal = 0;
+    foreach ($matchingCounts as $id => $count) {
+        if (!isset($points[$id])) continue;
+        $point = $points[$id]; $lat = (float)$point['lat']; $lng = (float)$point['lng'];
+        $bounds = business_extend_bounds($bounds, $lat, $lng); $matchingTotal++; $matchingCompanyTotal += $count;
+        if ($lat < $south || $lat > $north || $lng < $west || $lng > $east) continue;
+        $selected[$id] = ['lat' => $lat, 'lng' => $lng, 'company_count' => $count]; $companyTotal += $count;
+    }
+    $total = count($selected); $items = []; $clusterZoom = $zoom;
+    if ($zoom >= 16 && $total <= BUSINESS_MAX_VIEW_ITEMS) {
+        foreach ($selected as $id => $point) $items[] = ['kind' => 'point', 'cadastral_id' => $id] + $point + ['location_method' => BUSINESS_LOCATION_METHOD];
+    } elseif ($total > 0) {
+        do {
+            // Globally anchored 128-pixel Web Mercator cells split into four
+            // children on zoom-in. Dense views regroup all points at a coarser
+            // level; no arbitrary LIMIT or dropped subset is ever returned.
+            $cells = 1 << ($clusterZoom + 1); $groups = [];
+            foreach ($selected as $point) {
+                $radians = deg2rad($point['lat']);
+                $gx = (int)floor(($point['lng'] + 180) / 360 * $cells);
+                $gy = (int)floor((1 - log(tan($radians) + 1 / cos($radians)) / M_PI) / 2 * $cells);
+                $key = $clusterZoom . ':' . $gx . ':' . $gy;
+                if (!isset($groups[$key])) $groups[$key] = ['lat' => 0.0, 'lng' => 0.0, 'count' => 0, 'company_count' => 0, 'bounds' => null];
+                $groups[$key]['lat'] += $point['lat']; $groups[$key]['lng'] += $point['lng']; $groups[$key]['count']++;
+                $groups[$key]['company_count'] += $point['company_count'];
+                $groups[$key]['bounds'] = business_extend_bounds($groups[$key]['bounds'], $point['lat'], $point['lng']);
+            }
+            if (count($groups) <= BUSINESS_MAX_VIEW_ITEMS) break;
+            $clusterZoom--;
+        } while ($clusterZoom >= 0);
+        foreach ($groups as $key => $group) $items[] = ['kind' => 'cluster', 'cell_key' => $key,
+            'lat' => $group['lat'] / $group['count'], 'lng' => $group['lng'] / $group['count'],
+            'count' => $group['count'], 'company_count' => $group['company_count'], 'bounds' => business_outward_bounds($group['bounds']),
+            'zoom' => $zoom, 'cluster_zoom' => $clusterZoom];
+    }
+    return ['items' => $items, 'total' => $total, 'company_total' => $companyTotal, 'complete' => true, 'truncated' => false,
+        'matching_total' => $matchingTotal, 'matching_company_total' => $matchingCompanyTotal,
+        'bounds' => business_outward_bounds($bounds), 'query' => $query, 'requested_zoom' => $zoom, 'cluster_zoom' => $clusterZoom,
+        'location_method' => BUSINESS_LOCATION_METHOD];
 }
 
 header('Content-Type: application/json; charset=utf-8');
@@ -285,20 +395,21 @@ try {
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     if (!in_array($method, ['GET', 'HEAD'], true)) { header('Allow: GET, HEAD'); http_response_code(405); throw new InvalidArgumentException('Read-only endpoint.'); }
     $action = $_GET['action'] ?? 'meta';
-    if (!is_string($action) || !in_array($action, ['meta', 'plot', 'search'], true)) throw new InvalidArgumentException('Unknown business action.');
+    if (!is_string($action) || !in_array($action, ['meta', 'plot', 'search', 'viewport'], true)) throw new InvalidArgumentException('Unknown business action.');
     $snapshot = business_snapshot();
     $reply = ['available' => true, 'status' => 'available', 'snapshot_id' => $snapshot['snapshot_id'], 'generated_at' => $snapshot['generated_at'],
         'scope' => BUSINESS_SCOPE, 'scope_label' => BUSINESS_SCOPE_LABEL, 'coverage' => business_coverage($snapshot)];
     if ($action === 'meta') $reply += ['source' => $snapshot['source'], 'cadastre' => $snapshot['cadastre'], 'counts' => $snapshot['counts']];
     elseif ($action === 'plot') $reply += business_plot($snapshot);
-    else $reply += business_search($snapshot);
+    elseif ($action === 'search') $reply += business_search($snapshot);
+    else $reply += business_viewport($snapshot);
 } catch (InvalidArgumentException $error) {
     if (http_response_code() !== 405) http_response_code(400);
     $reply = ['available' => false, 'status' => 'invalid_request', 'error' => $error->getMessage()];
 } catch (Throwable $error) {
     error_log('Sofia business snapshot unavailable: ' . $error->getMessage());
     http_response_code(503); header('Retry-After: 300');
-    $reply = ['available' => false, 'status' => 'unavailable', 'error' => 'Business address data is temporarily unavailable.', 'total' => null, 'companies' => [], 'results' => [],
+    $reply = ['available' => false, 'status' => 'unavailable', 'error' => 'Business address data is temporarily unavailable.', 'total' => null, 'companies' => [], 'results' => [], 'items' => [],
         'scope' => BUSINESS_SCOPE, 'scope_label' => BUSINESS_SCOPE_LABEL];
 }
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'HEAD') echo json_encode($reply, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);

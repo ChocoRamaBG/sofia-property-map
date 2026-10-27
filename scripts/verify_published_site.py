@@ -69,10 +69,12 @@ def main() -> None:
         details = chunk('DetailsPanel')
         if 'business-data.php' not in module or 'business-data.php' not in details or 'Companies registered at this address' not in details:
             raise ValueError('Deployed website does not include the company address finder and plot section')
+        if 'company-map-panel' not in module or 'map-dataset-switch' not in module:
+            raise ValueError('Deployed website does not include the complete company map layer')
         if 'Ownership and registered acts' in details or 'Companies in documents' in details:
             raise ValueError('The removed ownership/document-company interface is still deployed')
         business_api = read('business-data.php', 128 * 1024)
-        if 'registered_office_address_association' not in business_api or 'function business_search' not in business_api:
+        if 'registered_office_address_association' not in business_api or 'function business_search' not in business_api or 'function business_viewport' not in business_api:
             raise ValueError('Deployed read-only business API is missing')
         pointer_raw = read_remote(ftp, f'{REMOTE_ROOT}/private/business-active.json', 1024)
         pointer = json.loads(pointer_raw)
@@ -82,6 +84,12 @@ def main() -> None:
         if hashlib.sha256(manifest_raw).hexdigest() != pointer['manifest_sha256']:
             raise ValueError('Deployed company manifest hash is invalid')
         business_manifest = json.loads(manifest_raw)
+        points = business_manifest.get('points_index')
+        if not isinstance(points, dict) or points.get('file') != 'points-index.json' or type(points.get('bytes')) is not int or not 2 <= points['bytes'] <= 9_500_000 or not re.fullmatch(r'[a-f0-9]{64}', points.get('sha256', '')):
+            raise ValueError('Deployed company map has no valid point index')
+        point_raw = read_remote(ftp, f"{REMOTE_ROOT}/private/business-snapshots/{pointer['snapshot_id']}/points-index.json", 9_500_000)
+        if len(point_raw) != points['bytes'] or hashlib.sha256(point_raw).hexdigest() != points['sha256'] or len(json.loads(point_raw)) != business_manifest['counts']['mapped_business_parcels']:
+            raise ValueError('Deployed company map point index failed verification')
         report['business_addresses'] = {'snapshot_id': pointer['snapshot_id'], 'generated_at': business_manifest['generated_at'], 'source_commit': business_manifest['source']['commit'], 'counts': business_manifest['counts']}
         if 'transactions-context.json' not in dashboard or 'registered_sales' not in dashboard:
             raise ValueError('Deployed dashboard does not include the transaction statistics feature')
@@ -89,6 +97,8 @@ def main() -> None:
             raise ValueError('Deployed dashboard does not include the direct statistics shortcut')
         styles = re.findall(r'<link\b[^>]*\bhref=[\"\x27]([^\"\x27]+\.css)[\"\x27]', entry_html, re.I)
         styles = [read(asset_name(name), MAX_ASSET_BYTES) for name in styles if name.startswith(('/assets/', 'assets/'))]
+        if not any('overflow:clip' in css and re.search(r'\.app-header\{[^}]*position:sticky', css) for css in styles):
+            raise ValueError('Deployed website does not include persistent workspace navigation')
         if not any('.leaflet-tooltip.parcel-fallback-tooltip' in css and 'overflow-wrap:anywhere' in css for css in styles):
             raise ValueError('Deployed stylesheet does not include the tooltip wrapping fix')
         if not any(all(re.search(r'(?<![A-Za-z0-9_-])width:min\(' + str(width) + r'px,', css) for width in (280, 310)) for css in styles):
@@ -97,7 +107,7 @@ def main() -> None:
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

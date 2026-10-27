@@ -84,6 +84,8 @@ def descriptor(value: object, name: str, maximum: int, with_file: bool = True) -
 
 def check_manifest(value: object, pointer_value: dict) -> dict:
     keys = {"version", "snapshot_id", "generated_at", "source", "cadastre", "counts", "shards", "parcel_index", "search_index"}
+    if isinstance(value, dict) and 'points_index' in value:
+        keys.add('points_index')
     if not isinstance(value, dict) or set(value) != keys or type(value["version"]) is not int or value["version"] != 1 or value["snapshot_id"] != pointer_value["snapshot_id"]:
         raise ValueError("Business manifest format is invalid")
     source = value["source"]
@@ -119,6 +121,8 @@ def check_manifest(value: object, pointer_value: dict) -> dict:
 
 def descriptors(manifest: dict) -> list[dict]:
     result = [descriptor(manifest["parcel_index"], "parcel-index.json", MAX_INDEX_BYTES), descriptor(manifest["search_index"], "search-index.json", MAX_INDEX_BYTES)]
+    if 'points_index' in manifest:
+        result.append(descriptor(manifest['points_index'], 'points-index.json', MAX_INDEX_BYTES))
     shards = manifest["shards"]
     if not isinstance(shards, dict) or not 1 <= len(shards) <= 512:
         raise ValueError("Business shard collection is invalid")
@@ -316,7 +320,7 @@ def main() -> None:
         ftp.mkd(directory)
         files = descriptors(manifest)
         for position, evidence in enumerate(files, 1):
-            maximum = MAX_INDEX_BYTES if evidence["file"] in ("parcel-index.json", "search-index.json") else MAX_SHARD_BYTES
+            maximum = MAX_INDEX_BYTES if evidence["file"] in ("parcel-index.json", "search-index.json", "points-index.json") else MAX_SHARD_BYTES
             payload = read_local(local / evidence["file"], maximum)
             if len(payload) != evidence["bytes"] or digest(payload) != evidence["sha256"]:
                 raise ValueError("Local business snapshot changed before upload")

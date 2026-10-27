@@ -51,7 +51,12 @@ def verify_prepared_snapshot(snapshot_root: Path) -> None:
     if snapshot_root.is_symlink() or source.is_symlink() or any(path.is_symlink() for path in source.iterdir()):
         raise ValueError("Prepared verification snapshot may not contain symlinks")
     parcel_index = json.loads((source / "parcel-index.json").read_bytes())
-    cadastral_id, shard_name = next(iter(parcel_index.items()))
+    if "points_index" in manifest:
+        points = json.loads((source / "points-index.json").read_bytes())
+        cadastral_id = next(iter(points)) if points else next(iter(parcel_index))
+        shard_name = parcel_index[cadastral_id]
+    else:
+        cadastral_id, shard_name = next(iter(parcel_index.items()))
     companies = json.loads((source / shard_name).read_bytes())[cadastral_id]
     uic = companies[0]["uic"]
     with tempfile.TemporaryDirectory(prefix="sofia-business-real-api-") as temporary:
@@ -99,7 +104,14 @@ def verify_prepared_snapshot(snapshot_root: Path) -> None:
             search = request({"action": "search", "q": uic})
             if not any(row.get("uic") == uic and row.get("cadastral_id") == cadastral_id for row in search.get("results", [])):
                 raise ValueError("Prepared PHP company search did not find the matched parcel")
-            print(f"Verified real PHP API metadata, plot and EIK search for {manifest['counts']['matched_companies']:,} prepared company associations; no source rows printed")
+            if "points_index" in manifest:
+                viewport = request({"action": "viewport", "north": 43.1, "south": 42.4, "east": 24, "west": 22.8, "zoom": 10})
+                if viewport.get("total") != manifest["counts"]["mapped_business_parcels"] or viewport.get("company_total") != manifest["counts"]["mapped_companies"]:
+                    raise ValueError("Prepared PHP map coverage differs from the validated point index")
+                represented = sum(item.get("count", 1) for item in viewport.get("items", []))
+                if represented != viewport["total"] or sum(item["company_count"] for item in viewport["items"]) != viewport["company_total"] or viewport.get("truncated"):
+                    raise ValueError("Prepared PHP map aggregation omits matched records")
+            print(f"Verified real PHP API metadata, plot, EIK search and optional map coverage for {manifest['counts']['matched_companies']:,} prepared company associations; no source rows printed")
         finally:
             process.terminate()
             try:
@@ -150,7 +162,7 @@ class BusinessApiTests(unittest.TestCase):
     def setUp(self):
         self.fixture()
 
-    def fixture(self, count=45, snapshot_id="1" * 32, mutate_company=None, extra_part=False):
+    def fixture(self, count=45, snapshot_id="1" * 32, mutate_company=None, extra_part=False, parcel_ids=None, points=None):
         private = self.root / "private"
         directory = private / "business-snapshots" / snapshot_id
         directory.mkdir(exist_ok=True)
@@ -164,9 +176,16 @@ class BusinessApiTests(unittest.TestCase):
             if mutate_company:
                 mutate_company(company, number)
             companies.append(company)
-        parcel = {CID: "companies-000.json"}
-        search = [{key: company[key] for key in ("uic", "name", "registered_address")} | {"cadastral_id": CID} for company in companies]
-        payloads = {"companies-000.json": encoded({CID: companies}), "parcel-index.json": encoded(parcel), "search-index.json": encoded(search)}
+        parcel_ids = parcel_ids or [CID] * count
+        self.assertEqual(len(parcel_ids), count)
+        parcel = {cid: "companies-000.json" for cid in parcel_ids}
+        grouped = {cid: [] for cid in parcel}
+        for company, cid in zip(companies, parcel_ids):
+            grouped[cid].append(company)
+        search = [{key: company[key] for key in ("uic", "name", "registered_address")} | {"cadastral_id": cid} for company, cid in zip(companies, parcel_ids)]
+        payloads = {"companies-000.json": encoded(grouped), "parcel-index.json": encoded(parcel), "search-index.json": encoded(search)}
+        if points is not None:
+            payloads["points-index.json"] = encoded(points)
         for name, payload in payloads.items():
             (directory / name).write_bytes(payload)
         def evidence(name):
@@ -179,10 +198,15 @@ class BusinessApiTests(unittest.TestCase):
                                     "path": "registry_agency_scraper/registry_agency_outputs", "files": files},
                          "cadastre": {"manifest_sha256": "c" * 64, "snapshot_id": "c" * 32, "captured_from": STAMP, "captured_to": STAMP,
                                       "sources": [{"code": f"sofia-district-{i:02d}", "source_url": f"https://kais.cadastre.bg/bg/OpenData/Download?path=fixture-{i}", "zip_sha256": "d" * 64, "captured_at": STAMP} for i in range(24)]},
-                         "counts": {"matched_companies": count, "matched_parcels": 1, "sofia_candidates": count},
+                         "counts": {"matched_companies": count, "matched_parcels": len(parcel), "sofia_candidates": count},
                          "shards": {"companies-000.json": evidence("companies-000.json")},
                          "parcel_index": {"file": "parcel-index.json", **evidence("parcel-index.json")},
                          "search_index": {"file": "search-index.json", **evidence("search-index.json")}}
+        if points is not None:
+            mapped_companies = sum(1 for cid in parcel_ids if cid in points)
+            self.manifest["points_index"] = {"file": "points-index.json", **evidence("points-index.json")}
+            self.manifest["counts"].update({"mapped_business_parcels": len(points), "unmapped_business_parcels": len(parcel) - len(points),
+                                            "mapped_companies": mapped_companies, "unmapped_companies": count - mapped_companies})
         self.directory = directory
         self.publish_manifest()
         return companies
@@ -205,6 +229,15 @@ class BusinessApiTests(unittest.TestCase):
             self.assertIn("application/json", response.headers.get("Content-Type", ""))
             self.assertIn("no-store", response.headers.get("Cache-Control", ""))
             return response.code, json.loads(body) if body else None, response.headers
+
+    def viewport(self, **overrides):
+        return self.request({"action": "viewport", "north": 43.1, "south": 42.4, "east": 24, "west": 22.8, "zoom": 10, **overrides})
+
+    def spread_fixture(self, count):
+        ids = [f"68134.100.{i + 1}" for i in range(count)]
+        points = {cid: {"lat": 42.5 + (i // 50) * 0.01, "lng": 23 + (i % 50) * 0.01} for i, cid in enumerate(ids)}
+        self.fixture(count=count, parcel_ids=ids, points=points)
+        return points
 
     def test_metadata_has_explicit_scope_and_separate_provenance(self):
         status, body, _ = self.request({"action": "meta"})
@@ -333,6 +366,122 @@ class BusinessApiTests(unittest.TestCase):
         status, new, _ = self.request({"action": "plot", "id": CID})
         self.assertEqual(status, 200)
         self.assertEqual((new["snapshot_id"], new["total"]), ("2" * 32, 46))
+
+    def test_viewport_counts_two_companies_on_one_parcel_once(self):
+        second = "68134.200.200"
+        points = {CID: {"lat": 42.7, "lng": 23.3}, second: {"lat": 42.8, "lng": 23.4}}
+        self.fixture(count=3, parcel_ids=[CID, CID, second], points=points)
+        status, body, _ = self.viewport(zoom=18)
+        self.assertEqual(status, 200)
+        self.assertEqual((body["total"], body["company_total"]), (2, 3))
+        self.assertTrue(body["complete"])
+        self.assertFalse(body["truncated"])
+        self.assertEqual({row["cadastral_id"]: row["company_count"] for row in body["items"]}, {CID: 2, second: 1})
+        self.assertTrue(all(row["kind"] == "point" and row["location_method"] == "official_parcel_representative_point" for row in body["items"]))
+        self.assertEqual(body["query"], "")
+
+    def test_viewport_full_matching_bounds_do_not_shrink_to_current_view(self):
+        second = "68134.200.200"
+        self.fixture(count=2, parcel_ids=[CID, second], points={CID: {"lat": 42.7, "lng": 23.3}, second: {"lat": 42.8, "lng": 23.4}})
+        status, body, _ = self.viewport(north=42.71, south=42.69, east=23.31, west=23.29, zoom=18)
+        self.assertEqual(status, 200)
+        self.assertEqual((body["total"], body["matching_total"]), (1, 2))
+        self.assertLessEqual(body["bounds"]["south"], 42.7)
+        self.assertGreaterEqual(body["bounds"]["north"], 42.8)
+        self.assertGreaterEqual(body["bounds"]["east"], 23.4)
+
+    def test_viewport_search_includes_matches_beyond_forty_result_preview(self):
+        self.spread_fixture(60)
+        _, preview, _ = self.request({"action": "search", "q": "ТЕСТ"})
+        status, body, _ = self.viewport(q="  ТЕСТ  ", zoom=18)
+        self.assertEqual(status, 200)
+        self.assertEqual((len(preview["results"]), preview["total"]), (40, 60))
+        self.assertEqual((body["total"], body["company_total"], len(body["items"])), (60, 60, 60))
+        self.assertEqual(body["query"], "ТЕСТ")
+        status, one, _ = self.viewport(q=fake_uic(59), zoom=18)
+        self.assertEqual(status, 200)
+        self.assertEqual((one["total"], one["company_total"]), (1, 1))
+        status, none, _ = self.viewport(q="absent fixture company", zoom=18)
+        self.assertEqual(status, 200)
+        self.assertEqual(none["items"], [])
+        self.assertEqual(none["total"], 0)
+        self.assertIsNone(none["bounds"])
+
+    def test_viewport_clusters_are_complete_and_split_progressively(self):
+        self.spread_fixture(200)
+        status, broad, _ = self.viewport(zoom=4)
+        status2, close, _ = self.viewport(zoom=13)
+        self.assertEqual((status, status2), (200, 200))
+        self.assertEqual(sum(item["count"] for item in broad["items"]), 200)
+        self.assertEqual(sum(item["count"] for item in close["items"]), 200)
+        self.assertEqual(sum(item["company_count"] for item in close["items"]), 200)
+        self.assertGreater(len(close["items"]), len(broad["items"]))
+        for item in close["items"]:
+            self.assertEqual(item["kind"], "cluster")
+            self.assertLessEqual(item["bounds"]["south"], item["lat"])
+            self.assertGreaterEqual(item["bounds"]["north"], item["lat"])
+
+    def test_viewport_dense_high_zoom_coarsens_without_dropping_points(self):
+        self.spread_fixture(1250)
+        status, body, _ = self.viewport(zoom=22)
+        self.assertEqual(status, 200)
+        self.assertLessEqual(len(body["items"]), 1200)
+        self.assertEqual(sum(item["count"] for item in body["items"]), 1250)
+        self.assertEqual(sum(item["company_count"] for item in body["items"]), 1250)
+        self.assertEqual(body["total"], 1250)
+        self.assertLess(body["cluster_zoom"], 22)
+        self.assertFalse(body["truncated"])
+
+    def test_viewport_rejects_bad_bounds_zoom_and_query(self):
+        self.spread_fixture(2)
+        for overrides in [{"north": "NaN"}, {"south": 43.1}, {"east": 20}, {"north": 91}, {"west": -181}, {"zoom": 23}, {"zoom": "Infinity"}, {"q": "а"}, {"q[]": "alpha"}]:
+            with self.subTest(overrides=overrides):
+                status, _, _ = self.viewport(**overrides)
+                self.assertEqual(status, 400)
+        status, body, _ = self.viewport(q="   ", north="43.100000000000001", south="42.400000000000001")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["query"], "")
+
+    def test_viewport_point_hash_and_schema_are_verified(self):
+        self.spread_fixture(2)
+        path = self.directory / "points-index.json"
+        raw = path.read_bytes()
+        path.write_bytes(b" " + raw[1:])
+        status, body, _ = self.viewport()
+        self.assertEqual(status, 503)
+        self.assertIsNone(body["total"])
+        for bad in [{"lat": 0, "lng": 23.3}, {"lat": "42.7", "lng": 23.3}, {"lat": 42.7, "lng": 23.3, "owner": "prohibited"}]:
+            with self.subTest(bad=bad):
+                self.fixture(count=1, points={CID: bad})
+                status, _, _ = self.viewport()
+                self.assertEqual(status, 503)
+
+    def test_viewport_point_coverage_must_match_company_index(self):
+        self.spread_fixture(2)
+        self.manifest["counts"]["mapped_companies"] = 1
+        self.manifest["counts"]["unmapped_companies"] = 1
+        self.publish_manifest()
+        status, _, _ = self.viewport()
+        self.assertEqual(status, 503)
+
+    def test_unusable_geometry_is_explicit_unmapped_coverage(self):
+        second = "68134.200.200"
+        self.fixture(count=3, parcel_ids=[CID, CID, second], points={CID: {"lat": 42.7, "lng": 23.3}})
+        status, body, _ = self.viewport(zoom=18)
+        self.assertEqual(status, 200)
+        self.assertEqual((body["total"], body["company_total"]), (1, 2))
+        self.assertEqual(body["coverage"]["counts"]["unmapped_business_parcels"], 1)
+        self.assertEqual(body["coverage"]["counts"]["unmapped_companies"], 1)
+
+    def test_legacy_snapshot_remains_usable_except_for_map(self):
+        status, body, _ = self.viewport()
+        self.assertEqual(status, 503)
+        self.assertIsNone(body["total"])
+        for params in [{"action": "meta"}, {"action": "plot", "id": CID}, {"action": "search", "q": "Тест"}]:
+            with self.subTest(params=params):
+                status, body, _ = self.request(params)
+                self.assertEqual(status, 200)
+                self.assertFalse(body["coverage"]["map_available"])
 
 
 if __name__ == "__main__":
