@@ -1,5 +1,5 @@
 import React, { lazy, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, Building2, ChevronDown, Loader2, MapPin, Search, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Building2, ChevronDown, Loader2, MapPin, PanelLeft, PanelLeftClose, Search, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -18,6 +18,7 @@ import RegisterFilters from '@/components/search/RegisterFilters';
 import useViewportParcels from '@/hooks/useViewportParcels';
 import useBusinessViewport from '@/hooks/useBusinessViewport';
 import CompanyMapPanel, { BusinessMapStatus } from '@/components/map/CompanyMapPanel';
+import '@/components/AppShell.css';
 
 const INITIAL_VIEW = { center: [42.684, 23.333], zoom: 13 };
 const DevelopmentDashboard = lazy(() => import('@/components/development/DevelopmentDashboard'));
@@ -42,20 +43,17 @@ const readWorkspace = () => {
 function DatasetSummary({ meta }) {
   const { t, lang } = useI18n();
   const imports = (meta?.imports || []).filter((item, index, rows) => item.source_code !== 'coordinates' && rows.findIndex((row) => row.source_code === item.source_code) === index);
-  const latest = meta?.imports?.[0]?.imported_at;
   return (
     <section className="dataset-summary">
-      <div className="dataset-stats"><div><strong>{meta ? displayCount(meta.counts.plots, lang) : '—'}</strong><span>{t('dataset.points')}</span></div><div><strong>{meta ? displayCount(meta.counts.documents, lang) : '—'}</strong><span>{t('dataset.records')}</span></div></div>
-      <details>
+      <details className="dataset-summary-disclosure">
         <summary><ShieldCheck size={16} /><span>{t('dataset.sources')}</span><ChevronDown size={14} /></summary>
+        <div className="dataset-stats"><div><strong>{meta ? displayCount(meta.counts.plots, lang) : '—'}</strong><span>{t('dataset.points')}</span></div><div><strong>{meta ? displayCount(meta.counts.documents, lang) : '—'}</strong><span>{t('dataset.records')}</span></div></div>
         <div className="dataset-source-list">
           {imports.map((source) => <div key={source.source_code}><a href={source.source_url} target="_blank" rel="noreferrer">{lang === 'bg' ? source.label_bg : source.label_en}<ArrowUpRight size={13} /></a><small>{source.snapshot_date ? t('dataset.snapshot', { date: displayDate(source.snapshot_date, lang) }) : t('dataset.dateUnknown')}</small></div>)}
           {meta?.cadastre && <div><a href={meta.cadastre.source_url} target="_blank" rel="noreferrer">{lang === 'bg' ? meta.cadastre.label_bg : meta.cadastre.label_en}<ArrowUpRight size={13} /></a><small>{t('dataset.cadastreCount', { n: displayCount(meta.cadastre.parcel_count, lang) })}</small>{meta.cadastre.captured_at && <small>{t('dataset.loaded', { date: displayDate(meta.cadastre.captured_at, lang) })}</small>}</div>}
           <p>{t('dataset.snapshotHelp')}</p>
         </div>
       </details>
-      {latest && <p className="dataset-loaded">{t('dataset.loaded', { date: displayDate(latest, lang) })}</p>}
-      <nav className="dataset-page-links" aria-label={lang === 'bg' ? 'Информация за сайта' : 'Site information'}><a href="/about.html">{lang === 'bg' ? 'За данните и проверката' : 'About the data'}</a><a href="/privacy.html">{lang === 'bg' ? 'Поверителност' : 'Privacy'}</a></nav>
     </section>
   );
 }
@@ -86,6 +84,7 @@ export default function Home() {
   const [searchError, setSearchError] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [filters, setFilters] = useState(readPropertyFilters);
   const [meta, setMeta] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
@@ -114,6 +113,8 @@ export default function Home() {
   const companyPanel = useRef(null);
   const searchPanel = useRef(null);
   const sidebarScroll = useRef(null);
+  const sidebarOpener = useRef(null);
+  const focusSidebar = useRef(false);
   const searchReturn = useRef(null);
   const pendingSearchReturn = useRef(null);
   const returningToSearch = useRef(false);
@@ -281,6 +282,7 @@ export default function Home() {
     returningToSearch.current = true;
     setCanReturnToSearch(false); setSelected(null); setHoveredKey(null);
     if (isMobile) setSearchOpen(true);
+    else setSidebarCollapsed(false);
   }, [isMobile]);
   const handleCloseDetails = useCallback(() => {
     if (searchReturn.current) handleReturnToSearch();
@@ -336,11 +338,30 @@ export default function Home() {
   const editFilters = useCallback(() => {
     if (isMobile) setSearchOpen(true);
     else {
-      const container = sidebarScroll.current;
-      const target = mapDataset === 'companies' ? companyPanel.current : filterPanel.current;
-      if (container && target) container.scrollTo({ top: container.scrollTop + target.getBoundingClientRect().top - container.getBoundingClientRect().top, behavior: 'smooth' });
+      setSidebarCollapsed(false);
+      window.requestAnimationFrame(() => {
+        const container = sidebarScroll.current;
+        const target = mapDataset === 'companies' ? companyPanel.current : filterPanel.current;
+        const inset = container?.querySelector('.map-sidebar-toolbar')?.offsetHeight || 0;
+        if (container && target) container.scrollTo({ top: Math.max(0, container.scrollTop + target.getBoundingClientRect().top - container.getBoundingClientRect().top - inset), behavior: 'smooth' });
+      });
     }
   }, [isMobile, mapDataset]);
+  const openMapPanel = useCallback(() => {
+    focusSidebar.current = true;
+    setSidebarCollapsed(false);
+  }, []);
+  useEffect(() => {
+    if (isMobile) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      if (sidebarCollapsed) sidebarOpener.current?.focus({ preventScroll: true });
+      else if (focusSidebar.current) {
+        focusSidebar.current = false;
+        sidebarScroll.current?.querySelector('.map-sidebar-collapse')?.focus({ preventScroll: true });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [sidebarCollapsed, isMobile]);
   const handleSearchTabKeys = (event) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
@@ -471,9 +492,12 @@ export default function Home() {
   }, [map]);
 
   const sidebar = <>
+    <div className="map-sidebar-toolbar">
     <div className="map-dataset-switch" role="group" aria-label={lang === 'bg' ? 'Слой на картата' : 'Map layer'}>
       <button type="button" aria-pressed={mapDataset === 'properties'} onClick={() => changeMapDataset('properties')}><MapPin size={16} aria-hidden="true" />{lang === 'bg' ? 'Имоти' : 'Properties'}</button>
       <button type="button" aria-pressed={mapDataset === 'companies'} onClick={() => changeMapDataset('companies')}><Building2 size={16} aria-hidden="true" />{lang === 'bg' ? 'Фирми' : 'Companies'}</button>
+    </div>
+    {!isMobile && <button type="button" className="map-sidebar-collapse" onClick={() => setSidebarCollapsed(true)} title={lang === 'bg' ? 'Скрий панела за по-голяма карта' : 'Hide the panel for a larger map'} aria-label={lang === 'bg' ? 'Скрий страничния панел' : 'Hide the side panel'} aria-controls="map-sidebar"><PanelLeftClose size={19} aria-hidden="true" /></button>}
     </div>
     <div hidden={mapDataset !== 'companies'}><CompanyMapPanel panelRef={companyPanel} draft={businessMapDraft} onDraftChange={setBusinessMapDraft} query={businessMapQuery} level={businessMapLevel} onLevelChange={changeBusinessMapLevel} onApply={applyBusinessMapQuery} onShowAll={() => applyBusinessMapQuery('', 'all')} data={businessViewport.data} loading={businessViewport.isLoading} error={businessViewport.apiError} onRetry={businessViewport.refetch} /></div>
     <div hidden={mapDataset !== 'properties'}>
@@ -498,6 +522,7 @@ export default function Home() {
     <div ref={filterPanel}><RegisterFilters value={filters} onChange={handleFilterChange} counts={meta?.counts} options={meta?.filter_options} /></div>
     <DatasetSummary meta={meta} />
     </div>
+    <nav className="sidebar-footer" aria-label={lang === 'bg' ? 'Информация за сайта' : 'Site information'}><a href="/about.html">{lang === 'bg' ? 'За данните' : 'About the data'}</a><a href="/privacy.html">{lang === 'bg' ? 'Поверителност' : 'Privacy'}</a></nav>
   </>;
 
   return (
@@ -507,11 +532,11 @@ export default function Home() {
       {developmentVisited && <div className="development-workspace-host" hidden={workspace !== 'activity'}><AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на строителната активност…' : 'Loading construction activity…'}</div>}><DevelopmentDashboard onOpenPlot={openDevelopmentPlot} onOpenMap={openDevelopmentMap} onOpenOffers={() => changeWorkspace('offers')} /></AsyncPanel></div>}
       {workspace === 'map' && returnToDevelopment && <div className="development-return-bar"><button type="button" onClick={backToDevelopment}><ArrowLeft size={16} />{lang === 'bg' ? 'Обратно към строителната активност' : 'Back to construction activity'}</button><span>{lang === 'bg' ? 'Избраният период и списъкът са запазени.' : 'Your selected period and list are preserved.'}</span></div>}
       {mapVisited && <main hidden={workspace !== 'map'} className={`map-workspace ${selected ? 'has-selected' : ''}`}>
-        {!isMobile && <aside ref={sidebarScroll} className="workspace-sidebar" aria-label={t('search.title')}>{sidebar}</aside>}
+        {!isMobile && <aside id="map-sidebar" ref={sidebarScroll} className="workspace-sidebar" hidden={sidebarCollapsed} aria-label={t('search.title')}>{sidebar}</aside>}
         <div className="map-stage">
           <AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={24} className="animate-spin" />{lang === 'bg' ? 'Зареждане на картата…' : 'Loading map…'}</div>}><MapView parcels={mapDataset === 'companies' ? businessViewport.parcels : parcels} dataMode={mapDataset} selectedParcel={selected} selectedKey={selected?.cadastral_id || selected?.address_id || null} hoveredKey={hoveredKey} baseLayer={baseLayer} parcelMode={mapDataset === 'companies' ? 'points' : parcelMode} bounds={bounds} filters={filters} active={workspace === 'map' && mapDataset === 'properties'} boundaryRevision={boundaryRevision} onBoundaryStatusChange={setBoundaryStatus} userLocation={userLocation} addressLocation={addressLocation} onSelect={handleSelect} onHover={setHoveredKey} onBoundsChange={setBounds} onMapReady={setMap} onClusterClick={handleClusterClick} /></AsyncPanel>
-          {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{mapDataset === 'companies' ? (lang === 'bg' ? 'Фирми' : 'Companies') : t('search.mobile')}<SlidersHorizontal size={16} />{mapDataset === 'properties' && activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : <button className="map-context" onClick={editFilters} aria-label={mapDataset === 'companies' ? (lang === 'bg' ? 'Фирми на картата' : 'Companies on the map') : t('filter.edit')}><span className="context-dot" />{t('map.city')}<span className="map-context-divider" />{mapDataset === 'companies' ? <><Building2 size={13} /><span>{businessMapQuery || (lang === 'bg' ? 'Всички фирми' : 'All companies')}</span></> : <><SlidersHorizontal size={13} />{activeCount ? t('filter.activeCount', { n: activeCount }) : t('filter.all')}</>}</button>}
-          <MapToolbar onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => mapDataset === 'companies' ? applyBusinessMapQuery(businessMapQuery) : map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} parcelMode={parcelMode} onParcelModeChange={mapDataset === 'properties' ? changeParcelMode : undefined} />
+          {isMobile ? <button className="mobile-search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} />{mapDataset === 'companies' ? (lang === 'bg' ? 'Фирми' : 'Companies') : t('search.mobile')}<SlidersHorizontal size={16} />{mapDataset === 'properties' && activeCount > 0 && <span className="active-filter-dot" aria-label={t('filter.activeCount', { n: activeCount })}>{activeCount}</span>}</button> : sidebarCollapsed && <button ref={sidebarOpener} type="button" className="map-context map-panel-opener" onClick={openMapPanel} aria-expanded={false} aria-controls="map-sidebar"><PanelLeft size={17} aria-hidden="true" /><span>{mapDataset === 'companies' ? (lang === 'bg' ? 'Търсене на фирми' : 'Find companies') : (lang === 'bg' ? 'Търсене и филтри' : 'Search and filters')}</span>{(mapDataset === 'companies' ? Number(Boolean(businessMapQuery)) + Number(businessMapLevel !== 'all') : activeCount) > 0 && <span className="map-panel-filter-count">{mapDataset === 'companies' ? Number(Boolean(businessMapQuery)) + Number(businessMapLevel !== 'all') : activeCount}</span>}</button>}
+          <MapToolbar active={workspace === 'map'} onZoomIn={() => map?.zoomIn()} onZoomOut={() => map?.zoomOut()} onLocate={handleLocate} onReset={() => mapDataset === 'companies' ? applyBusinessMapQuery(businessMapQuery) : map?.flyTo(INITIAL_VIEW.center, INITIAL_VIEW.zoom)} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} parcelMode={parcelMode} onParcelModeChange={mapDataset === 'properties' ? changeParcelMode : undefined} />
           {mapDataset === 'companies' ? <BusinessMapStatus total={businessViewport.total} loading={!map || businessViewport.isLoading} error={businessViewport.apiError} onEdit={editFilters} onRetry={businessViewport.refetch} /> : <MapLegend count={displayCount(total, lang)} empty={total === 0} loading={!map || isLoading} truncated={truncated} apiError={apiError} filterError={filterError} parcelMode={parcelMode} boundaryStatus={boundaryStatus} onZoomIn={() => map?.zoomIn()} activeCount={activeCount} onClear={clearFilters} onEdit={editFilters} onRetry={retryMapData} />}
         </div>
         {!isMobile && selected && <aside className="workspace-details" aria-label={t('panel.title')}><AsyncPanel fallback={<div className="workspace-loading" role="status"><Loader2 size={20} className="animate-spin" />{t('panel.loading')}</div>}>{selected?.address_id ? <BusinessAddressDetails address={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} /> : <DetailsPanel closeOnEscape parcel={selected} onClose={handleCloseDetails} onBackToSearch={canReturnToSearch ? handleReturnToSearch : undefined} onBackToActivity={returnToDevelopment ? backToDevelopment : undefined} />}</AsyncPanel></aside>}

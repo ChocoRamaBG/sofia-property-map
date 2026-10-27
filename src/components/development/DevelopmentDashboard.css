@@ -358,6 +358,17 @@
   .development-workspace .development-footnote { font-size: 11px; }
 }
 
+.development-secondary-context { margin-top: 17px; border: 1px solid #d9e4db; border-radius: 10px; background: #fbfdf9; }
+.development-secondary-context > summary { display: flex; align-items: center; gap: 9px; min-height: 54px; padding: 11px 14px; list-style: none; cursor: pointer; color: #416b54; font-size: 13px; line-height: 1.6; }
+.development-secondary-context > summary::-webkit-details-marker { display: none; }
+.development-secondary-context > summary > svg { flex: 0 0 auto; }
+.development-secondary-context > summary > span { flex: 1; min-width: 0; }
+.development-secondary-context > summary small { display: block; color: #738475; font-size: 11px; font-weight: 400; }
+.development-secondary-context > summary > strong { font-size: 11px; font-weight: 550; text-align: right; }
+.development-secondary-context[open] > summary > svg:last-child { transform: rotate(180deg); }
+.development-secondary-context > summary:focus-visible { outline: 2px solid #287d68; outline-offset: 3px; border-radius: 8px; }
+.development-secondary-context > .development-construction { margin: 0; border: 0; border-top: 1px solid #e3eadf; border-radius: 0 0 10px 10px; }
+.development-secondary-context > .development-comparison-chart { padding: 5px 12px 12px; border-top: 1px solid #e3eadf; }
 .development-construction { margin-top: 24px; padding-top: 24px; border-top: 1px solid #dbe6db; }
 .development-construction-heading { display: flex; align-items: flex-start; gap: 20px; justify-content: space-between; }
 .development-construction-heading h3 { margin-top: 6px; font-size: 20px; font-weight: 600; line-height: 1.5; color: #284f43; }
@@ -493,7 +504,7 @@
   .development-header-meta { gap: 3px; }
   .development-header-meta > span { font-size: 10px; }
   .development-task-workspace .development-header-meta .development-button > span { display: none; }
-  .development-task-workspace .development-header-meta .development-button { min-width: 36px; min-height: 36px; }
+  .development-task-workspace .development-header-meta .development-button { min-width: 44px; min-height: 44px; }
   .development-view-tabs { margin-bottom: 13px; }
   .development-view-tabs > button { flex: 1; padding: 10px 9px; gap: 6px; min-width: 0; font-size: 12px; min-height: 47px; }
   .development-task-workspace .development-filters { padding: 13px; margin-bottom: 17px; }

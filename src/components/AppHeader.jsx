@@ -9,7 +9,7 @@ export default function AppHeader({ activeWorkspace = 'map', onWorkspaceChange, 
     <header className="app-header">
       <a className="app-brand" href="./" aria-label={t('app.title')} onClick={(event) => { if (onWorkspaceChange) { event.preventDefault(); onWorkspaceChange('map'); } }}>
         <span className="app-brand-icon"><Building2 size={23} aria-hidden="true" /></span>
-        <span><span className="app-brand-name">Sofia<span>Permits</span></span><span className="app-brand-caption">{t('app.subtitle')}</span></span>
+        <span className="app-brand-name">Sofia<span>Permits</span></span>
       </a>
       {onWorkspaceChange && <nav className="workspace-navigation" aria-label={lang === 'bg' ? 'Основна навигация' : 'Main navigation'}>
         <button type="button" aria-current={activeWorkspace === 'map' ? 'page' : undefined} onClick={() => onWorkspaceChange('map')}><Map size={16} aria-hidden="true" />{lang === 'bg' ? 'Карта' : 'Map'}</button>

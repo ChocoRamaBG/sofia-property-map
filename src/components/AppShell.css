@@ -1,0 +1,33 @@
+.map-app > .app-header { min-height:64px; padding:10px 22px; gap:16px; }
+.app-header .app-brand-icon { width:36px; height:36px; border-radius:10px; }
+.app-header .app-brand { gap:10px; }
+.app-header .app-brand-name { font-size:19px; }
+.app-header .workspace-navigation button { min-height:44px; }
+.app-header .app-header-actions button { min-width:44px; min-height:44px; }
+.map-sidebar-toolbar { position:sticky; top:0; z-index:3; display:flex; align-items:center; background:#fff; border-bottom:1px solid #e2e9e5; }
+.map-sidebar-toolbar .map-dataset-switch { flex:1; min-width:0; padding:10px 10px 10px 14px; border:0; }
+.map-sidebar-collapse { flex:none; width:44px; height:44px; display:grid; place-items:center; margin-right:7px; border-radius:8px; color:#59766c; }
+.map-sidebar-collapse:hover { background:#eef5f0; color:#175b49; }
+.map-sidebar-collapse:focus-visible,.map-panel-opener:focus-visible { outline:2px solid #267d64; outline-offset:2px; }
+.map-panel-opener { gap:9px; padding:10px 13px; min-height:44px; font-size:12px; }
+.map-panel-opener .map-panel-filter-count { display:grid; place-items:center; min-width:22px; height:22px; padding:0 5px; font-size:10px; font-weight:650; border-radius:6px; color:#145f4e; background:#e5f1e9; }
+.dataset-summary .dataset-summary-disclosure > summary { display:flex; align-items:center; gap:9px; min-height:44px; color:#5a736b; font-size:12px; font-weight:600; cursor:pointer; list-style:none; }
+.dataset-summary-disclosure > summary::-webkit-details-marker { display:none; }
+.dataset-summary-disclosure > summary > span { flex:1; }
+.dataset-summary-disclosure[open] > summary > svg:last-child { transform:rotate(180deg); }
+.dataset-summary-disclosure .dataset-stats { padding-top:12px; }
+.dataset-summary .dataset-page-links { margin-top:10px; padding-top:10px; border-top:1px solid #e4eae5; }
+.workspace-sidebar .filter-heading-row,.mobile-sidebar-sheet .filter-heading-row { top:65px; }
+.sidebar-footer { display:flex; flex-wrap:wrap; gap:4px 18px; padding:10px 20px 16px; border-top:1px solid #e6ece8; font-size:11px; color:#6b8077; }
+.sidebar-footer > a { min-height:44px; display:inline-flex; align-items:center; }
+.sidebar-footer > a:hover { color:#1a6954; text-decoration:underline; }
+.sidebar-footer > a:focus-visible { outline:2px solid #267d64; outline-offset:2px; }
+@media (max-width:1100px) { .map-app > .app-header { padding-inline:15px; } }
+@media (max-width:700px) {
+  .map-app > .app-header { padding:9px 12px; gap:9px; }
+  .app-header .app-brand-icon { width:32px; height:32px; }
+  .app-header .app-brand-name { font-size:18px; }
+  .mobile-sidebar-sheet .map-sidebar-toolbar { padding-right:48px; }
+  .mobile-sidebar-sheet .map-dataset-switch { padding:10px; }
+  .mobile-sidebar-sheet > button { width:44px; height:44px; top:10px; right:6px; display:grid; place-items:center; }
+}

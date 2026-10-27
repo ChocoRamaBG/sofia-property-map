@@ -1,0 +1,88 @@
+/* Scoped to property/address details; map and workspace layouts stay separate. */
+.details-panel.detail-panels { min-width: 0; color: #294b46; }
+.detail-panels *, .detail-panels *::before, .detail-panels *::after { min-width: 0; box-sizing: border-box; }
+.detail-panels .details-header { padding: 16px; gap: 12px; }
+.detail-panels .details-header > div:first-child { flex: 1; min-width: 0; }
+.detail-panels .details-header h2 { font-size: 19px; line-height: 1.5; overflow-wrap: anywhere; }
+.detail-panels .details-header-actions { flex: 0 0 auto; gap: 4px; }
+.detail-panels .details-header-actions button { width: 44px; height: 44px; border: 1px solid #e1e9e5; border-radius: 9px; color: #42695f; background: #fff; }
+.detail-panels .details-back-search { min-height: 48px; padding: 10px 16px; text-align: left; line-height: 1.5; }
+.detail-panels .details-scroll { padding: 16px; overscroll-behavior: contain; scroll-padding-top: 16px; }
+.detail-panels .details-scroll > :is(section, details, .source-cards) { margin: 0 0 14px; }
+.detail-panels :is(p, dd, h2, h3, h4, strong, a) { overflow-wrap: anywhere; }
+.detail-panels :is(button, a, summary):focus-visible { outline: 2px solid #16826b; outline-offset: 3px; border-radius: 5px; }
+.detail-panels :is(summary, button, a) > svg { flex-shrink: 0; }
+.detail-panels :is(.detail-section-disclosure, .boundary-dimensions, .source-additional-records, .register-record-disclosure) > summary { display: flex; align-items: center; gap: 9px; min-height: 44px; color: #365d53; font-size: 12px; line-height: 1.6; font-weight: 600; cursor: pointer; list-style: none; }
+.detail-panels :is(.detail-section-disclosure, .boundary-dimensions, .source-additional-records, .register-record-disclosure) > summary::-webkit-details-marker { display: none; }
+.detail-panels :is(.detail-section-disclosure, .boundary-dimensions, .source-additional-records) > summary > svg:last-child { margin-left: auto; }
+.detail-panels :is(.detail-section-disclosure, .boundary-dimensions, .source-additional-records, .register-record-disclosure)[open] > summary > svg:last-child { transform: rotate(180deg); }
+.detail-panels .detail-section-disclosure { border-top: 1px solid #e2eae5; margin-top: 10px; }
+.detail-panels .detail-section-disclosure > summary > span { padding: 1px 6px; background: #edf4f0; color: #3d6a5d; border-radius: 5px; font-size: 11px; }
+.detail-panels .certificate-status-compact { padding: 13px; }
+.detail-panels .certificate-status-compact .certificate-status-top p { font-size: 11px; line-height: 1.5; }
+.detail-panels .certificate-status-compact .certificate-status-top h3 { font-size: 14px; line-height: 1.5; }
+.detail-panels .certificate-explanation { font-size: 12px; line-height: 1.7; }
+.detail-panels .certificate-view-records { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 44px; min-height: 44px; border-radius: 8px; background: #e5f3e9; color: #226448; font-weight: 700; font-size: 13px; }
+.detail-panels .certificate-term > summary { min-height: 44px; gap: 7px; font-size: 11px; }
+.detail-panels .certificate-term > summary > svg:last-child { margin-left: auto; }
+.detail-panels .cadastre-summary { padding: 14px; }
+.detail-panels .cadastre-area { margin: 12px 0 8px; padding: 11px; }
+.detail-panels .cadastre-area-value { font-size: 23px; }
+.detail-panels .cadastre-note { font-size: 11px; line-height: 1.65; }
+.detail-panels .cadastre-key-facts > .cadastre-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; margin-top: 10px; }
+.detail-panels .cadastre-key-facts .register-field:first-child { grid-column: 1 / -1; }
+.detail-panels .cadastre-fields .register-field { padding: 9px 0; }
+.detail-panels .cadastre-fields .register-field > dt { font-size: 11px; }
+.detail-panels .cadastre-fields .register-field > dd { font-size: 12px; line-height: 1.6; }
+.detail-panels .cadastre-source { margin-top: 8px; padding-top: 9px; font-size: 11px; }
+.detail-panels .cadastre-source > a { min-height: 44px; }
+.detail-panels .boundary-dimensions { padding: 0 14px 5px; }
+.detail-panels .detail-secondary-note { font-size: 11px; line-height: 1.7; color: #6d8177; }
+.detail-panels .property-overview { padding: 14px; }
+.detail-panels .property-overview-heading p { font-size: 11px; }
+.detail-panels .property-overview-field { margin-top: 9px; padding-top: 9px; }
+.detail-panels .property-overview-field dt { font-size: 11px; }
+.detail-panels .property-overview-value p { font-size: 12px; line-height: 1.7; }
+.detail-panels .overview-value-sources button { min-height: 40px; font-size: 11px; }
+.detail-panels .property-development-timeline { padding: 14px; }
+.detail-panels .property-development-timeline ol { margin-top: 12px; }
+.detail-panels .property-development-timeline li { padding-bottom: 12px; gap: 9px; }
+.detail-panels .property-development-timeline li > div { flex: 1; }
+.detail-panels .property-development-timeline li strong { font-size: 12px; }
+.detail-panels .property-development-timeline li button { min-height: 44px; gap: 6px; font-size: 11px; width: 100%; }
+.detail-panels .property-development-timeline li button small { margin-left: auto; }
+.detail-panels .development-stage-evidence { font-size: 11px; line-height: 1.65; }
+.detail-panels .development-stages-help dl { margin: 3px 0 8px; }
+.detail-panels .development-stages-help dl > div + div { margin-top: 10px; }
+.detail-panels .development-stages-help dt { font-size: 11px; font-weight: 600; }
+.detail-panels .development-stages-help dd { margin-top: 3px; font-size: 11px; line-height: 1.7; color: #657e72; }
+.detail-panels .detail-featured-document { border: 1px solid #c7ded2; border-radius: 10px; background: #fff; overflow: hidden; }
+.detail-panels .detail-featured-document > h3 { padding: 13px 14px 0; font-size: 13px; font-weight: 650; color: #2d5c4b; }
+.detail-panels .detail-featured-document > p { padding: 4px 14px 10px; font-size: 11px; color: #6f8378; }
+.detail-panels .register-document { padding: 12px 14px; }
+.detail-panels .document-heading { font-size: 12px; line-height: 1.6; }
+.detail-panels .document-heading > strong { flex: 1; }
+.detail-panels .document-dates { font-size: 11px; line-height: 1.6; }
+.detail-panels .document-source-link { min-height: 44px; font-size: 11px; }
+.detail-panels .document-fields-disclosure > summary { min-height: 44px; font-size: 11px; }
+.detail-panels .register-field dd { overflow-wrap: anywhere; white-space: pre-wrap; }
+.detail-panels .source-disclosure-heading { min-height: 54px; padding: 11px 13px; }
+.detail-panels .source-card-header { padding: 12px 14px; }
+.detail-panels .source-card-header a { min-height: 44px; margin-top: 3px; }
+.detail-panels .source-additional-records { padding: 0 13px 5px; border-top: 1px solid #e3ebe5; }
+.detail-panels .register-record-disclosure { border-top: 1px solid #e4ece6; }
+.detail-panels .register-record-disclosure > summary { padding: 10px 0; }
+.detail-panels .register-record-disclosure > summary > span { flex: 1; }
+.detail-panels .register-record-disclosure > summary strong { display: block; }
+.detail-panels .register-record-disclosure > summary small { display: block; font-size: 10px; font-weight: 400; color: #74877c; }
+.detail-panels .register-record-disclosure .register-document { padding: 5px 0 10px; }
+.detail-panels .evidence-details > summary { min-height: 44px; }
+.detail-panels .evidence-details > summary > svg:last-child:not(:first-child) { margin-left: auto; }
+.detail-panels .detail-coordinate-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+.detail-panels .details-disclaimer { font-size: 11px; line-height: 1.7; }
+@media (max-width: 420px) {
+  .detail-panels .details-header { padding: 13px; gap: 8px; }
+  .detail-panels .details-header h2 { font-size: 17px; }
+  .detail-panels .details-scroll { padding: 13px; }
+  .detail-panels .cadastre-key-facts > .cadastre-fields { column-gap: 10px; }
+}

@@ -7,6 +7,7 @@ import CadastralSummary from '@/components/details/CadastralSummary';
 import DevelopmentTimeline from './DevelopmentTimeline';
 import DocumentTypeIcon from '@/components/DocumentTypeIcon';
 import RegisteredBusinesses from './RegisteredBusinesses';
+import './DetailPanels.css';
 
 const REGISTER_GROUPS = ['building_permits', 'projecting_visas', 'exploitation_certificates', 'exploitation_certificates_legacy'];
 const SOURCE_ORDER = Object.fromEntries(REGISTER_GROUPS.map((code, index) => [code, index]));
@@ -80,10 +81,10 @@ function collectOverview(sources, lang) {
   }).filter((field) => field.values.length);
 }
 
-function RegisterDocument({ source, document, lang, t }) {
+function RegisterDocument({ source, document, lang, t, hideHeading = false }) {
   const entries = Object.entries(document.raw_fields || {});
   return <article className="register-document">
-    <div className="document-heading"><DocumentTypeIcon type={source.code} size={15} /><strong>{recordTitle(source, document, lang, t)}</strong></div>
+    {!hideHeading && <div className="document-heading"><DocumentTypeIcon type={source.code} size={15} /><strong>{recordTitle(source, document, lang, t)}</strong></div>}
     <div className="document-dates">
       {document.issued_at && <span>{t('panel.issueDate', { date: displayDate(document.issued_at, lang) })}</span>}
       <span>{document.snapshot_date ? t('dataset.snapshot', { date: displayDate(document.snapshot_date, lang) }) : t('dataset.dateUnknown')}</span>
@@ -102,10 +103,21 @@ function BoundaryDimensions({ parcel, currentKey, lang, t }) {
   const sourceName = sourceLabel(source, lang) || (bg ? 'АГКК · КАИС, Отворени данни' : 'AGCC · KAIS Open Data');
   const dimension = (value, unit) => typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? `${new Intl.NumberFormat(bg ? 'bg-BG' : 'en-GB', { maximumFractionDigits: 2 }).format(value)} ${unit}` : '—';
-  return <section className="property-overview mb-4" aria-label={bg ? 'Размери от избраната кадастрална геометрия' : 'Dimensions from the selected cadastral geometry'}>
-    <div className="property-overview-heading"><div><h3>{bg ? 'Размери от избраната граница' : 'Selected boundary dimensions'}</h3><p>{bg ? 'Публикувани геометрични стойности на този слой. Кадастралните атрибути по-долу имат отделна снимка и дата.' : 'Published geometry values from this layer. The cadastral attributes below have their own snapshot and capture date.'}</p></div></div>
+  return <details className="property-overview boundary-dimensions" aria-label={bg ? 'Размери от избраната кадастрална геометрия' : 'Dimensions from the selected cadastral geometry'}>
+    <summary><span>{bg ? 'Размери от избраната граница' : 'Selected boundary dimensions'}</span><ChevronDown size={16} aria-hidden="true" /></summary>
+    <p className="detail-secondary-note">{bg ? 'Публикувани геометрични стойности на този слой. Кадастралните атрибути имат отделна снимка и дата.' : 'Published geometry values from this layer. The cadastral attributes have their own snapshot and capture date.'}</p>
     <dl className="mt-3 grid grid-cols-2 gap-3 text-xs"><div><dt className="leading-relaxed text-slate-600">{bg ? 'Публикувана площ' : 'Published area'}</dt><dd className="mt-1 break-words text-sm font-semibold text-emerald-900">{dimension(parcel.area_m2, bg ? 'м²' : 'm²')}</dd></div><div><dt className="leading-relaxed text-slate-600">{bg ? 'Публикуван периметър' : 'Published perimeter'}</dt><dd className="mt-1 break-words text-sm font-semibold text-emerald-900">{dimension(parcel.published_perimeter_m, bg ? 'м' : 'm')}</dd></div></dl>
     <div className="mt-3 text-xs leading-relaxed text-slate-600">{sourceUrl ? <a className="inline-flex min-h-9 items-center gap-1 text-emerald-800 underline underline-offset-2" href={sourceUrl} target="_blank" rel="noreferrer">{sourceName}<ArrowUpRight size={13} aria-hidden="true" /></a> : <span>{sourceName}</span>}<p>{source.captured_at ? `${bg ? 'Извлечено:' : 'Captured:'} ${displayDate(source.captured_at, lang)}` : t('dataset.dateUnknown')}</p></div>
+  </details>;
+}
+
+function CertificateStatus({ documents, sources, lang, t, onOpenSource }) {
+  const found = documents.length > 0;
+  const source = sources.find((item) => item.code.startsWith('exploitation_certificates') && item.documents?.length);
+  return <section className={`certificate-status certificate-status-compact ${found ? 'certificate-found' : 'certificate-unknown'}`} aria-label={t('certificate.heading')}>
+    <div className="certificate-status-top"><span className="certificate-icon"><DocumentTypeIcon type="exploitation_certificates" size={18} /></span><div><p>{t('certificate.heading')} · „{t('panel.act16')}“</p><h3>{found ? t('certificate.found') : t('certificate.notLinked')}</h3></div>{found && <button className="certificate-view-records" type="button" onClick={() => onOpenSource(source.code)} aria-label={lang === 'bg' ? 'Вижте свързаните удостоверения' : 'View linked certificates'}>{documents.length}<ArrowDown size={13} aria-hidden="true" /></button>}</div>
+    <p className="certificate-explanation">{found ? t('certificate.foundHelp') : t('certificate.notLinkedHelp')}</p>
+    <details className="certificate-term"><summary><Info size={13} aria-hidden="true" />{t('certificate.term')}<ChevronDown size={13} aria-hidden="true" /></summary><p>{t('certificate.termHelp')}</p></details>
   </section>;
 }
 
@@ -146,43 +158,48 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
   })).sort((a, b) => (SOURCE_ORDER[a.code] ?? 9) - (SOURCE_ORDER[b.code] ?? 9));
   const count = sources.reduce((total, source) => total + (source.documents?.length || 0), 0);
   const certificateDocuments = sources.filter((source) => source.code.startsWith('exploitation_certificates')).flatMap((source) => source.documents || []);
-  const hasCertificate = Boolean(certificateDocuments.length);
   const locationAvailable = plot.lat != null && plot.lng != null;
   const overview = collectOverview(sources, lang);
+  const mainOverview = overview.filter((field) => ['address', 'district'].includes(field.key));
+  const additionalOverview = overview.filter((field) => !['address', 'district'].includes(field.key));
+  const featuredSource = sources.find((source) => source.code.startsWith('exploitation_certificates') && source.documents.length)
+    || sources.find((source) => source.documents.length);
+  function overviewFields(fields) {
+    return <dl className="property-overview-fields">{fields.map((field) => <div className="property-overview-field" key={field.key}><dt>{t(`panel.overview.${field.key}`)}</dt><dd>{field.values.map((entry) => <div className="property-overview-value" key={entry.value}><p>{entry.value}</p><div className="overview-value-sources">{[...entry.sources.values()].map((source) => <button type="button" key={source.code} onClick={() => goToSource(source.code)} title={sourceLabel(source, lang)}>{sourceShortLabel(source, lang, t)}<ArrowDown size={10} aria-hidden="true" /></button>)}</div></div>)}</dd></div>)}</dl>;
+  }
   return (
-    <div className="details-panel" onKeyDown={(event) => { if (closeOnEscape && event.key === 'Escape' && !event.defaultPrevented) { event.stopPropagation(); onClose?.(); } }}>
+    <div className="details-panel detail-panels" onKeyDown={(event) => { if (closeOnEscape && event.key === 'Escape' && !event.defaultPrevented) { event.stopPropagation(); onClose?.(); } }}>
       {onBackToActivity && <button className="details-back-search" type="button" onClick={onBackToActivity}><ArrowLeft size={17} aria-hidden="true" /><span>{lang === 'bg' ? 'Обратно към списъка с документи' : 'Back to the document list'}</span></button>}
       {onBackToSearch && <button className="details-back-search" type="button" onClick={onBackToSearch}><ArrowLeft size={17} aria-hidden="true" /><span>{t('panel.backToSearch')}</span></button>}
       <div className="details-header">
         <div><p className="eyebrow">{t('panel.title')}</p><h2 ref={heading} tabIndex={-1}>{plot.cadastral_id}</h2><span className="details-coordinate-type"><MapPin size={12} />{locationAvailable ? t('panel.coordinateMarker') : t('panel.noCoordinate')}</span></div>
-        <div className="details-header-actions"><button onClick={copyId} aria-label={t('panel.copyId')} title={copied ? t('panel.copied') : t('panel.copyId')}>{copied ? <Check size={17} className="text-emerald-700" /> : <Copy size={17} />}</button>{onClose && <button onClick={onClose} aria-label={t('panel.close')}><X size={19} /></button>}</div>
+        <div className="details-header-actions"><button type="button" onClick={copyId} aria-label={copied ? t('panel.copied') : t('panel.copyId')} title={copied ? t('panel.copied') : t('panel.copyId')}>{copied ? <Check size={17} className="text-emerald-700" /> : <Copy size={17} />}</button>{onClose && <button type="button" onClick={onClose} aria-label={t('panel.close')}><X size={19} /></button>}</div>
       </div>
       <div className="details-scroll" ref={scrollArea}>
-        <BoundaryDimensions parcel={parcel} currentKey={key} lang={lang} t={t} />
+        {(state.loading || state.key !== key || state.error) && <BoundaryDimensions parcel={parcel} currentKey={key} lang={lang} t={t} />}
         {state.loading || state.key !== key ? <div className="details-loading"><Loader2 size={24} className="animate-spin" /><span>{t('panel.loading')}</span></div> : state.error ? <div className="details-error" role="alert">{t('panel.loadError')}<p>{state.error}</p></div> : <>
+          <CertificateStatus documents={certificateDocuments} sources={sources} lang={lang} t={t} onOpenSource={goToSource} />
+          <CadastralSummary cadastre={currentData?.cadastre} status={currentData?.cadastre_status} />
+          <BoundaryDimensions parcel={parcel} currentKey={key} lang={lang} t={t} />
+          {featuredSource && <section className="detail-featured-document"><h3>{lang === 'bg' ? 'Ключов свързан документ' : 'Key linked record'}</h3><p>{sourceShortLabel(featuredSource, lang, t)}</p><RegisterDocument source={featuredSource} document={featuredSource.documents[0]} lang={lang} t={t} /></section>}
           <section className="property-overview">
             <div className="property-overview-heading"><div><h3>{t('panel.overview')}</h3><p>{t('panel.overviewHelp')}</p></div><span className="property-record-total">{t('panel.recordsCount', { n: count })}</span></div>
-            <details className="property-coordinate-details"><summary><MapPin size={14} />{lang === 'bg' ? 'Координати на точката' : 'Point coordinates'}<ChevronDown size={14} /></summary><div className="property-coordinate"><MapPin size={15} /><div><span>{t('panel.location')}</span>{locationAvailable ? <strong>{Number(plot.lat).toFixed(6)}, {Number(plot.lng).toFixed(6)}</strong> : <p>{t('panel.noCoordinateHelp')}</p>}</div></div></details>
-            {overview.length > 0 && <dl className="property-overview-fields">{overview.map((field) => <div className="property-overview-field" key={field.key}><dt>{t(`panel.overview.${field.key}`)}</dt><dd>{field.values.map((entry) => <div className="property-overview-value" key={entry.value}><p>{entry.value}</p><div className="overview-value-sources">{[...entry.sources.values()].map((source) => <button key={source.code} onClick={() => goToSource(source.code)} title={sourceLabel(source, lang)}>{sourceShortLabel(source, lang, t)}<ArrowDown size={10} /></button>)}</div></div>)}</dd></div>)}</dl>}
+            {overviewFields(mainOverview)}
+            {additionalOverview.length > 0 && <details className="detail-section-disclosure"><summary>{lang === 'bg' ? 'Описание и обхват на строежите' : 'Construction descriptions and scope'}<span>{additionalOverview.reduce((total, field) => total + field.values.length, 0)}</span><ChevronDown size={15} aria-hidden="true" /></summary>{overviewFields(additionalOverview)}</details>}
           </section>
-          <CadastralSummary cadastre={currentData?.cadastre} status={currentData?.cadastre_status} />
-          <RegisteredBusinesses cadastralId={key} lang={lang} />
           <DevelopmentTimeline sources={sources} lang={lang} onOpenSource={goToSource} />
-          <section className={`certificate-status certificate-status-compact ${hasCertificate ? 'certificate-found' : 'certificate-unknown'}`}>
-            <div className="certificate-status-top"><span className="certificate-icon"><DocumentTypeIcon type="exploitation_certificates" size={18} /></span><div><p>{t('certificate.heading')} · „{t('panel.act16')}“</p><h3>{hasCertificate ? t('certificate.found') : t('certificate.notLinked')}</h3></div>{hasCertificate && <span className="certificate-linked-count">{certificateDocuments.length}</span>}</div>
-            <p className="certificate-explanation">{hasCertificate ? t('certificate.foundHelp') : t('certificate.notLinkedHelp')}</p>
-            <details className="certificate-term"><summary><Info size={13} />{t('certificate.term')}</summary><p>{t('certificate.termHelp')}</p></details>
-          </section>
           <div className="record-summary"><h3>{t('panel.allAvailableRecords')}</h3><span>{t('panel.recordsCount', { n: count })}</span></div>
           {count > 0 && <p className="record-versions-note">{t('panel.recordVersions')}</p>}
           {sources.length === 0 && <div className="no-records"><FileText size={25} /><p>{t('panel.noRecords')}</p><a href="https://nag.sofia.bg/RegisterCertificateForExploitationBuildings" target="_blank" rel="noreferrer">{t('panel.openSource')}<ArrowUpRight size={14} /></a></div>}
           <div className="source-cards">{sources.map((source) => <details className="source-card source-card-disclosure" key={source.code} ref={(element) => { sourceSections.current[source.code] = element; }} style={{ '--source-color': sourceColor(source.code) }}>
             <summary className="source-disclosure-heading"><span><strong>{sourceShortLabel(source, lang, t)}</strong><small>{t('panel.recordsCount', { n: source.documents?.length || 0 })}</small></span><ChevronDown size={17} aria-hidden="true" /></summary>
             <div className="source-card-header"><div className="source-card-kind-row"><span className="source-kind">{t(`source.${source.code}`) === `source.${source.code}` ? sourceLabel(source, lang) : t(`source.${source.code}`)}</span><span className="source-record-count">{t('panel.recordsCount', { n: source.documents?.length || 0 })}</span></div><h4>{sourceLabel(source, lang)}</h4><p>{source.snapshot_date ? t('dataset.snapshot', { date: displayDate(source.snapshot_date, lang) }) : t('dataset.dateUnknown')}</p><a href={source.source_url} target="_blank" rel="noreferrer">{t('panel.openSource')}<ArrowUpRight size={15} /></a></div>
-            {(source.documents || []).map((document) => <RegisterDocument key={document.id} source={source} document={document} lang={lang} t={t} />)}
+            {source.documents?.[0] && <RegisterDocument source={source} document={source.documents[0]} lang={lang} t={t} />}
+            {source.documents.length > 1 && <details className="source-additional-records"><summary>{lang === 'bg' ? 'Още записи от този регистър' : 'More records from this register'}<span>{source.documents.length - 1}</span><ChevronDown size={15} aria-hidden="true" /></summary>{source.documents.slice(1).map((document) => <details className="register-record-disclosure" key={document.id}><summary><DocumentTypeIcon type={source.code} size={15} /><span><strong>{recordTitle(source, document, lang, t)}</strong><small>{document.issued_at ? displayDate(document.issued_at, lang) : t('dataset.dateUnknown')}</small></span><ChevronDown size={15} aria-hidden="true" /></summary><RegisterDocument source={source} document={document} lang={lang} t={t} hideHeading /></details>)}</details>}
           </details>)}</div>
+          <RegisteredBusinesses cadastralId={key} lang={lang} />
           <details className="evidence-details"><summary><Link2 size={15} />{t('panel.matchMethod')}</summary><p>{t('panel.matchHelp')}</p></details>
-          <details className="evidence-details"><summary><MapPin size={15} />{t('panel.coordinateSource')}</summary><p>{locationAvailable ? t('panel.coordinateEvidence') : t('panel.noCoordinateHelp')}</p></details>
+          <details className="evidence-details"><summary><MapPin size={15} aria-hidden="true" />{t('panel.coordinateSource')}<ChevronDown size={14} aria-hidden="true" /></summary>{locationAvailable && <p className="detail-coordinate-value">{Number(plot.lat).toFixed(6)}, {Number(plot.lng).toFixed(6)}</p>}<p>{locationAvailable ? t('panel.coordinateEvidence') : t('panel.noCoordinateHelp')}</p></details>
           <p className="details-disclaimer">{t('panel.disclaimer')}</p>
         </>}
       </div>

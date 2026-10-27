@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, ArrowUpRight, Database, Ruler } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, ChevronDown, Database, Ruler } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { displayCount, displayDate } from '@/lib/registerUi';
 
@@ -67,11 +67,15 @@ export default function CadastralSummary({ cadastre, status }) {
   const source = cadastre.source || {};
   const sourceLabel = cadastralSourceLabel(source, lang, t);
   const fields = cadastralFields(cadastre, t);
+  const primary = fields.filter((field) => !['cadastral_id', 'approval_act'].includes(field.key));
+  const secondary = fields.filter((field) => ['cadastral_id', 'approval_act'].includes(field.key));
+  const renderFields = (items) => <dl className="cadastre-fields">{items.map((field) => <div className="register-field" key={field.key}><dt>{field.label}</dt><dd className={!present(field.value) ? 'register-field-empty' : undefined}>{present(field.value) ? field.value : t('value.notAvailable')}</dd></div>)}</dl>;
   return <section className="cadastre-summary">
     <div className="cadastre-summary-heading"><Database size={17} aria-hidden="true" /><div><h3>{t('cadastre.title')}</h3><p>{t('cadastre.exactMatch')}</p></div></div>
     <div className="cadastre-area"><Ruler size={20} aria-hidden="true" /><div><span>{t('cadastre.geometricArea')}</span><strong className="cadastre-area-value">{areaText(cadastre.area_m2, lang, t)}</strong></div></div>
     <p className="cadastre-note">{t('cadastre.areaHelp')}</p>
-    <dl className="cadastre-fields">{fields.map((field) => <div className="register-field" key={field.key}><dt>{field.label}</dt><dd className={!present(field.value) ? 'register-field-empty' : undefined}>{present(field.value) ? field.value : t('value.notAvailable')}</dd></div>)}</dl>
+    <div className="cadastre-key-facts">{renderFields(primary)}</div>
+    <details className="detail-section-disclosure cadastre-secondary-fields"><summary>{lang === 'bg' ? 'Кадастрален номер и акт за одобрение' : 'Cadastral identifier and approval act'}<ChevronDown size={15} aria-hidden="true" /></summary>{renderFields(secondary)}</details>
     <div className="cadastre-source"><strong>{sourceLabel}</strong>{source.captured_at && <p>{t('cadastre.capturedAt', { date: capturedDate(source.captured_at, lang) })}</p>}{source.source_url && <a href={source.source_url} target="_blank" rel="noreferrer">{t('cadastre.openSource')}<ArrowUpRight size={14} /></a>}</div>
     <details className="evidence-details cadastre-provenance"><summary><Database size={14} aria-hidden="true" />{t('cadastre.provenance')}</summary><dl>
       {cadastre.area_method && <div className="register-field"><dt>{t('cadastre.areaMethod')}</dt><dd>{cadastre.area_method === 'published_AREA_BGS2005_LCC' ? t('cadastre.publishedAreaMethod') : cadastre.area_method}</dd></div>}

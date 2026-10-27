@@ -3,6 +3,7 @@ import { ArrowRight, Loader2, MapPin, Search, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import SearchResults from '@/components/search/SearchResults';
 import BusinessAddressSearch from './BusinessAddressSearch';
+import './SidebarPanels.css';
 
 export default function SearchPanel({
   panelRef, query = '', onQueryChange, onSubmit, onClear, loading, results = [], resultQuery, onSelectResult,
@@ -22,7 +23,6 @@ export default function SearchPanel({
   return (
     <section className="search-panel" ref={panelRef}>
       <h1>{t('search.heading')}</h1>
-      <p className="search-description">{pick('Адрес, кадастрален номер или име на фирма.', 'Address, cadastral ID or company name.')}</p>
       <form onSubmit={(event) => { event.preventDefault(); if (canSubmit) onSubmit(); }}>
         <label className="search-input-wrap">
           <Search size={18} aria-hidden="true" />
@@ -34,7 +34,7 @@ export default function SearchPanel({
         </button>
       </form>
       {queryLength > 0 && <button type="button" className="search-intent-alternative" disabled={addressIntent ? !canAddRecordTerm : !canFindAddress} onClick={addressIntent ? onSubmitAsRecords : onFindAddress}>{addressIntent ? <Search size={14} aria-hidden="true" /> : <MapPin size={14} aria-hidden="true" />}{t(addressIntent ? 'search.asRecords' : 'search.asAddress')}{!addressIntent && <small> · {addressProviderLabel || t('search.addressService')}</small>}</button>}
-      <p className="search-hint" id={`${matchGroup}-hint`}>{addressIntent ? t('search.addressHint') : pick('Добавяйте и премахвайте условия, без да губите резултатите.', 'Add or remove conditions without losing your results.')}</p>
+      <p className="search-hint" id={`${matchGroup}-hint`}>{addressIntent ? t('search.addressHint') : pick('Думите филтрират регистрите; адресът премества картата.', 'Keywords filter records; an address moves the map.')}</p>
       {addressIntent && queryLength > 0 && <p className="search-provider-notice">{t('search.addressProvider', { provider: addressProviderLabel || t('search.addressService') })}</p>}
       {termTooLong && <p className="search-term-limit" id={`${matchGroup}-limit`} role="status">{t(addressIntent ? 'search.addressTooLong' : 'search.termTooLong')}</p>}
       {searchTerms.length > 0 && (

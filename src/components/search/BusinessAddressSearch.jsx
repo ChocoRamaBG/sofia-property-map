@@ -107,7 +107,7 @@ export default function BusinessAddressSearch({ onSelect, lang: language, state:
     }}>
       <summary><Building2 size={17} aria-hidden="true" /><span>{pick('Намерете фирмен адрес на картата', 'Find a registered business address')}<small>{pick('По име на фирма или ЕИК', 'By company name or UIC')}</small></span><ChevronDown size={16} aria-hidden="true" /></summary>
       <div className="business-address-search-body">
-        <p id={hintId}>{pick('Търси фирми с установен регистриран адрес. Резултатът отваря парцела или официалната адресна точка; строителните филтри се запазват.', 'Find companies with an established registered address. A result opens its parcel or official address point; construction filters are retained.')}</p>
+        <p id={hintId}>{pick('Отделно търсене в Търговския регистър. Филтрите за документи се запазват.', 'Separate Commercial Register search. Your document filters are preserved.')}</p>
         <form onSubmit={submit}>
           <label htmlFor={inputId}>{pick('Фирма или ЕИК', 'Company name or UIC')}</label>
           <div className="business-address-search-input"><Search size={16} aria-hidden="true" /><input id={inputId} value={state.query || ''} onChange={(event) => setState((previous) => ({ ...previous, query: event.target.value }))} placeholder={pick('Име или 9-цифрен ЕИК…', 'Name or 9-digit UIC…')} aria-describedby={hintId} aria-invalid={length > 120 || undefined} />{(state.query || state.submitted) && <button type="button" onClick={clear} aria-label={pick('Изчисти фирменото търсене', 'Clear the business search')}><X size={15} aria-hidden="true" /></button>}</div>
@@ -124,8 +124,11 @@ export default function BusinessAddressSearch({ onSelect, lang: language, state:
           </>}
           {navigationError && <p role="status">{pick('Имотът не се отвори. Опитайте отново.', 'The plot could not be opened. Please try again.')}</p>}
         </div>
+        <details className="business-address-search-method"><summary>{pick('Покритие и източници', 'Coverage and sources')}<ChevronDown size={14} aria-hidden="true" /></summary>
         {Number.isSafeInteger(matched) && <p className="business-address-search-coverage">{pick('Покритие:', 'Coverage:')} {countLabel(matched)} {pick('фирми с установено местоположение', 'companies with an established location')}{Number.isSafeInteger(candidates) ? ` / ${countLabel(candidates)} ${pick('фирми с адрес в София в извлечението', 'Sofia address candidates in the extract')}` : ''}{Number.isSafeInteger(matchedParcels) ? ` · ${countLabel(matchedParcels)} ${pick('имота', 'plots')}` : ''}.</p>}
         <p className="business-address-search-note">{pick('Регистриран фирмен адрес ≠ собственик на имота. Непълните и нееднозначните адреси не се поставят приблизително на картата. Източници: Търговски регистър (предоставени извлечения) и АГКК.', 'A company’s registered address does not establish property ownership. Incomplete and ambiguous addresses are not placed approximately on the map. Sources: supplied Commercial Register extracts and AGKK.')}</p>
+        </details>
+        <p className="business-address-search-scope">{pick('Регистриран адрес ≠ собственик на имота.', 'A registered address does not establish ownership.')}</p>
       </div>
     </details>
   );

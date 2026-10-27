@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import * as SliderPrimitive from '@radix-ui/react-slider';
 import { CalendarDays, ChevronDown, RotateCcw, X } from 'lucide-react';
 import DocumentTypeIcon from '@/components/DocumentTypeIcon';
@@ -67,8 +67,15 @@ export default function DocumentPeriods({ filters, options, disabled, onChange }
   const id = useId();
   const bg = lang === 'bg';
   const active = TYPES.filter(([type]) => filters.documentDates[type]?.from || filters.documentDates[type]?.to).length;
-  return <details className="document-periods filter-disclosure filter-period-disclosure" open>
-    <summary className="filter-disclosure-heading"><CalendarDays size={17} aria-hidden="true" /><span><strong id={id + '-title'}>{bg ? 'Период по документ' : 'Period by document'}</strong><small>{active ? (bg ? `${active} избрани периода` : `${active} selected periods`) : bg ? 'От и до за разрешения, визи и Акт 16' : 'From and to for permits, visas and Act 16'}</small></span>{active > 0 && <span className="filter-active-count">{active}</span>}<ChevronDown size={17} aria-hidden="true" /></summary>
+  const disclosure = useRef(null);
+  const periodKey = JSON.stringify(filters.documentDates);
+  const invalidPeriods = TYPES.some(([type]) => {
+    const range = filters.documentDates[type] || {};
+    return (range.from && dateDay(range.from) === null) || (range.to && dateDay(range.to) === null) || (range.from && range.to && range.from > range.to);
+  });
+  useEffect(() => { if (active && disclosure.current) disclosure.current.open = true; }, [active, periodKey]);
+  return <details ref={disclosure} className="document-periods filter-disclosure filter-period-disclosure">
+    <summary className="filter-disclosure-heading"><CalendarDays size={17} aria-hidden="true" /><span><strong id={id + '-title'}>{bg ? 'Период по документ' : 'Period by document'}</strong><small>{active ? (bg ? `${active} избрани периода` : `${active} selected periods`) : bg ? 'От и до за разрешения, визи и Акт 16' : 'From and to for permits, visas and Act 16'}</small>{invalidPeriods && <small className="filter-period-warning">{bg ? 'Проверете началната и крайната дата' : 'Check the start and end dates'}</small>}</span>{active > 0 && <span className="filter-active-count">{active}</span>}<ChevronDown size={17} aria-hidden="true" /></summary>
     <div className="document-periods-body" aria-labelledby={id + '-title'}>
       <p className="document-periods-explanation">{bg ? 'Плъзнете началото и края на периода. Картата се обновява при отпускане. Използва се датата на издаване; записи без дата не участват в избран период.' : 'Drag the start and end of the period. The map updates on release. Filters use issue dates; undated records do not match a selected period.'}</p>
       {TYPES.map(([type, labelBg, labelEn]) => {

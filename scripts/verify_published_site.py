@@ -61,8 +61,10 @@ def main() -> None:
             raise ValueError('Expected exactly one application entry module')
         module = read(entries[0], MAX_ASSET_BYTES)
 
-        def chunk(prefix: str) -> str:
-            references = re.findall(r'(?:assets/)?' + re.escape(prefix) + r'-[A-Za-z0-9_-]+\.js', module)
+        def chunk(prefix) -> str:
+            prefixes = prefix if isinstance(prefix, (tuple, list)) else [prefix]
+            pattern = '(?:' + '|'.join(re.escape(value) for value in prefixes) + ')'
+            references = re.findall(r'(?:assets/)?' + pattern + r'-[A-Za-z0-9_-]+\.js', module)
             names = {asset_name(name if name.startswith('assets/') else 'assets/' + name) for name in references}
             if len(names) != 1:
                 raise ValueError(f'Cannot identify deployed {prefix} module')
@@ -71,7 +73,7 @@ def main() -> None:
 
         dashboard = chunk('DevelopmentDashboard')
         details = chunk('DetailsPanel')
-        registered = chunk('RegisteredBusinesses')
+        registered = chunk(('RegisteredBusinesses', 'DetailPanels'))
         address_details = chunk('BusinessAddressDetails')
         if 'business-data.php' not in module or 'business-data.php' not in registered or 'Companies registered at this address' not in registered:
             raise ValueError('Deployed website does not include the company address finder and plot section')
@@ -79,6 +81,8 @@ def main() -> None:
             raise ValueError('Deployed website does not distinguish official addresses and parcel associations')
         if 'company-map-panel' not in module or 'map-dataset-switch' not in module:
             raise ValueError('Deployed website does not include the complete company map layer')
+        if not all(marker in module for marker in ('map-sidebar-collapse', 'map-panel-opener', 'map-display-menu', 'filter-disclosure')) or 'source-additional-records' not in details:
+            raise ValueError('Deployed website lacks the compact sidebar, map tools or evidence disclosures')
         if 'Ownership and registered acts' in details or 'Companies in documents' in details:
             raise ValueError('The removed ownership/document-company interface is still deployed')
         business_api = read('business-data.php', 128 * 1024)
@@ -127,7 +131,7 @@ def main() -> None:
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True, 'municipal_address_enrichment': True, 'separate_location_evidence_levels': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True, 'municipal_address_enrichment': True, 'separate_location_evidence_levels': True, 'collapsible_map_sidebar': True, 'compact_map_tools': True, 'progressive_detail_disclosures': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

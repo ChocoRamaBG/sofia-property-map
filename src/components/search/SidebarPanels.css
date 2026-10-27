@@ -1,0 +1,17 @@
+.search-panel { min-width: 0; overflow-wrap: anywhere; }
+.search-panel > h1 { margin-bottom: 14px; font-size: 21px; line-height: 1.3; }
+.search-panel .search-input-wrap { min-height: 46px; }
+.search-panel .search-input-wrap input { min-width: 0; min-height: 44px; }
+.search-panel .search-input-wrap button { display: grid; place-items: center; flex: none; width: 44px; min-height: 44px; }
+.search-panel .search-submit { min-height: 44px; margin-top: 8px; }
+.search-panel .search-hint { margin-top: 8px; line-height: 1.6; font-size: 11px; }
+.search-panel .search-intent-alternative { min-height: 44px; margin-top: 3px; }
+.search-panel .search-terms-heading { gap: 8px; flex-wrap: wrap; }
+.search-panel .search-terms-heading button,.search-panel .search-term-chip { min-height: 44px; }
+.search-panel .search-term-chip { max-width: 100%; }
+.search-panel .search-term-chip > span { min-width: 0; overflow-wrap: anywhere; }
+.search-panel .search-help { margin-top: 12px; border-top: 1px solid #e0e8e3; }
+.search-panel .search-help > summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; font-size: 12px; color: #58756b; }
+.search-panel .search-help > p { font-size: 12px; line-height: 1.7; color: #60786e; margin-bottom: 8px; }
+.search-panel :is(button,summary):focus-visible { outline: 2px solid #197a68; outline-offset: 2px; }
+@media (max-width: 767px) { .search-panel .search-input-wrap input { font-size: 16px; } }
