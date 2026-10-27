@@ -30,11 +30,12 @@ jobs:
       - name: Install verified parcel geometry readers
         run: python -m pip install -r scripts/requirements-boundaries.txt
       - name: Check address matching and data minimization
-        run: python -m unittest discover -s scripts -p 'test_business_addresses.py'
+        run: |
+          python -m unittest discover -s scripts -p 'test_business*.py'
+          python -m unittest discover -s scripts -p 'test_municipal_business_addresses.py'
       - name: Check the read-only company API
         run: |
           php -l public/business-data.php
-          python -m unittest discover -s scripts -p 'test_business_api.py'
       - name: Fetch the previous protected company pointer
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}

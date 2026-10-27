@@ -7,6 +7,7 @@ import { displayCount, pointType, REGISTER_COLORS } from '@/lib/registerUi';
 import ParcelGeometryLayer, { useParcelGeometry } from './ParcelGeometryLayer';
 
 const EMPTY_GEOMETRY = { type: 'FeatureCollection', features: [] };
+const pointIdentity = (item) => item?.cadastral_id || item?.address_id || null;
 
 const TILES = {
   standard: {
@@ -72,7 +73,7 @@ export default function MapView({
   const selectedInGeometry = geometryReady && geometry.data.features.some((feature) => feature.properties.cadastral_id === selectedKey);
   useEffect(() => { onBoundaryStatusChange?.(parcelMode === 'boundaries' ? geometry.status : null); }, [onBoundaryStatusChange, parcelMode, geometry.status]);
   const tiles = TILES[baseLayer] || TILES.standard;
-  const selectedInView = selectedInGeometry || visiblePoints.some((item) => item.cadastral_id === selectedKey);
+  const selectedInView = selectedInGeometry || visiblePoints.some((item) => pointIdentity(item) === selectedKey);
   const selectedOutside = !selectedInView && selectedParcel?.lat != null && selectedParcel?.lng != null && Number.isFinite(Number(selectedParcel.lat)) && Number.isFinite(Number(selectedParcel.lng)) ? selectedParcel : null;
   const fallbackHelp = geometryReady ? pick('Координатна точка · няма налична еднозначна граница в тази снимка.', 'Coordinate point · no unambiguous boundary is available in this snapshot.') : pick('Координатна точка · пълните граници не са заредени за този изглед.', 'Coordinate point · complete boundaries are not loaded for this view.');
 
@@ -83,11 +84,13 @@ export default function MapView({
       <Pane name="parcel-points" style={{ zIndex: 430 }} />
       {visiblePoints.map((item, index) => {
         const cluster = item.kind === 'cluster';
-        const selected = item.cadastral_id === selectedKey;
-        const hovered = item.cadastral_id === hoveredKey;
+        const identity = pointIdentity(item);
+        const addressOnly = businesses && Boolean(item.address_id) && !item.cadastral_id;
+        const selected = identity === selectedKey;
+        const hovered = identity === hoveredKey;
         const type = pointType(item);
         const radius = selected ? 9 : hovered ? 8 : businesses ? 6 : type === 'no_records' ? 4 : 6;
-        const color = selected ? '#163f47' : businesses ? '#176982' : REGISTER_COLORS[type];
+        const color = selected ? '#163f47' : businesses ? (addressOnly ? '#b67624' : '#176982') : REGISTER_COLORS[type];
         const position = [Number(item.lat), Number(item.lng)];
         if (!Number.isFinite(position[0]) || !Number.isFinite(position[1])) return null;
         if (cluster) {
@@ -96,33 +99,34 @@ export default function MapView({
           const certificateCount = Number(item.certificate_count) || 0;
           const scale = count >= 1000 ? 'xlarge' : count >= 100 ? 'large' : count >= 10 ? 'medium' : 'small';
           const size = { small: 44, medium: 56, large: 68, xlarge: 80 }[scale];
-          const clusterLabel = businesses ? pick(`${displayCount(count, lang)} имота · ${displayCount(item.company_count, lang)} фирми`, `${displayCount(count, lang)} plots · ${displayCount(item.company_count, lang)} companies`) : t(count === 1 ? 'map.clusterSingle' : 'map.cluster', { n: displayCount(count, lang) });
+          const clusterLabel = businesses ? pick(`${displayCount(count, lang)} местоположения · ${displayCount(item.company_count, lang)} фирми`, `${displayCount(count, lang)} locations · ${displayCount(item.company_count, lang)} companies`) : t(count === 1 ? 'map.clusterSingle' : 'map.cluster', { n: displayCount(count, lang) });
           const certificateLabel = certificateCount > 0 ? t('map.clusterCertificates', { n: displayCount(certificateCount, lang) }) : '';
           const clusterZoom = Number.isFinite(Number(item.zoom)) ? Number(item.zoom) : 13;
+          const addressCluster = businesses && item.parcel_count === 0 && item.address_only_count > 0;
           const icon = divIcon({
             className: 'plot-cluster-icon', iconSize: [size, size], iconAnchor: [size / 2, size / 2],
-            html: `<span class="plot-cluster plot-cluster-${scale} ${businesses ? 'plot-cluster-business' : ''} ${certificateCount ? 'has-certificate' : ''}" style="width:${size}px;height:${size}px"><span class="cluster-count">${displayCount(count, lang)}</span>${count >= 10 ? `<span class="cluster-count-label">${t('map.clusterPlots')}</span>` : ''}${certificateCount ? '<span class="cluster-certificate-dot" aria-hidden="true"></span>' : ''}</span>`,
+            html: `<span class="plot-cluster plot-cluster-${scale} ${businesses ? 'plot-cluster-business' : ''} ${addressCluster ? 'plot-cluster-address' : ''} ${certificateCount ? 'has-certificate' : ''}" style="width:${size}px;height:${size}px"><span class="cluster-count">${displayCount(count, lang)}</span>${count >= 10 ? `<span class="cluster-count-label">${businesses ? pick('места', 'locations') : t('map.clusterPlots')}</span>` : ''}${certificateCount ? '<span class="cluster-certificate-dot" aria-hidden="true"></span>' : ''}</span>`,
           });
           return <Marker key={`cluster-${item.cell_key || index}`} position={position} icon={icon} title={[clusterLabel, certificateLabel].filter(Boolean).join(' ')} keyboard zIndexOffset={size} eventHandlers={{ click: () => onClusterClick(position, Math.min(19, clusterZoom + 2), item.bounds, count) }}>
-            <Tooltip direction="top" offset={[0, -(size / 2) + 5]}><span>{clusterLabel}</span>{certificateCount > 0 && <span className="cluster-tooltip-certificate">{certificateLabel}</span>}</Tooltip>
+            <Tooltip direction="top" offset={[0, -(size / 2) + 5]}><span>{clusterLabel}</span>{businesses && Number.isFinite(Number(item.parcel_count)) && Number.isFinite(Number(item.address_only_count)) && <span className="cluster-tooltip-certificate">{pick(`${displayCount(item.parcel_count, lang)} с парцел · ${displayCount(item.address_only_count, lang)} само адрес`, `${displayCount(item.parcel_count, lang)} with parcels · ${displayCount(item.address_only_count, lang)} address only`)}</span>}{certificateCount > 0 && <span className="cluster-tooltip-certificate">{certificateLabel}</span>}</Tooltip>
           </Marker>;
         }
         return (
-          <CircleMarker key={`${parcelMode}:${item.cadastral_id}`} center={position} radius={radius} renderer={parcelMode === 'boundaries' ? pointRenderer : undefined} pane={parcelMode === 'boundaries' ? 'parcel-points' : 'overlayPane'}
+          <CircleMarker key={`${dataMode}:${parcelMode}:${identity}`} center={position} radius={radius} renderer={parcelMode === 'boundaries' ? pointRenderer : undefined} pane={parcelMode === 'boundaries' ? 'parcel-points' : 'overlayPane'}
             pathOptions={{ color: selected ? '#fff' : color, weight: selected ? 3 : 1, fillColor: color, fillOpacity: !businesses && type === 'no_records' && !selected ? 0.58 : 0.94, ...(parcelMode === 'boundaries' ? { dashArray: '2 2' } : {}) }}
             eventHandlers={{
               click: () => onSelect(item),
-              mouseover: () => onHover(item.cadastral_id),
+              mouseover: () => onHover(identity),
               mouseout: () => onHover(null),
             }}>
-            <Tooltip direction="top" offset={[0, -4]} className={businesses ? 'parcel-fallback-tooltip company-point-tooltip' : parcelMode === 'boundaries' ? 'parcel-fallback-tooltip' : undefined}><strong>{item.cadastral_id}</strong><span className="point-tooltip-status">{businesses ? pick(`${displayCount(item.company_count, lang)} фирми с регистриран адрес`, `${displayCount(item.company_count, lang)} companies with a registered address`) : t(`legend.${type}`)}</span>{businesses ? <span>{pick('Точка в кадастралния имот · отворете за фирмените данни.', 'Point inside the cadastral plot · open for company details.')}</span> : parcelMode === 'boundaries' && <span>{fallbackHelp}</span>}</Tooltip>
+            <Tooltip direction="top" offset={[0, -4]} className={businesses ? 'parcel-fallback-tooltip company-point-tooltip' : parcelMode === 'boundaries' ? 'parcel-fallback-tooltip' : undefined}><strong>{addressOnly ? item.registered_address || item.label || pick('Официален адрес', 'Official address') : item.cadastral_id}</strong><span className="point-tooltip-status">{businesses ? pick(`${displayCount(item.company_count, lang)} фирми с регистриран адрес`, `${displayCount(item.company_count, lang)} companies with a registered address`) : t(`legend.${type}`)}</span>{businesses ? <span>{addressOnly ? pick('Официална общинска адресна точка · парцелът не е установен.', 'Official municipal address point · parcel not established.') : pick('Точка в кадастралния имот · отворете за фирмените данни.', 'Point inside the cadastral plot · open for company details.')}</span> : parcelMode === 'boundaries' && <span>{fallbackHelp}</span>}</Tooltip>
           </CircleMarker>
         );
       })}
       {selectedOutside ? (
         <CircleMarker key={`selected:${parcelMode}`} center={[Number(selectedOutside.lat), Number(selectedOutside.lng)]} radius={8} renderer={parcelMode === 'boundaries' ? pointRenderer : undefined} pane={parcelMode === 'boundaries' ? 'parcel-points' : 'overlayPane'}
-          pathOptions={{ color: '#fff', weight: 3, fillColor: '#163f47', fillOpacity: 1 }}>
-          <Tooltip className={parcelMode === 'boundaries' ? 'parcel-fallback-tooltip' : undefined}><strong>{selectedOutside.cadastral_id}</strong>{parcelMode === 'boundaries' && <span>{pick('Избрана координатна точка · за този имот в текущия филтриран изглед няма заредена граница.', 'Selected coordinate point · this plot has no loaded boundary in the current filtered view.')}</span>}</Tooltip>
+          pathOptions={{ color: '#fff', weight: 3, fillColor: businesses && selectedOutside.address_id && !selectedOutside.cadastral_id ? '#b67624' : '#163f47', fillOpacity: 1 }}>
+          <Tooltip className={parcelMode === 'boundaries' ? 'parcel-fallback-tooltip' : undefined}><strong>{selectedOutside.cadastral_id || selectedOutside.label || selectedOutside.registered_address || pick('Официален адрес', 'Official address')}</strong>{businesses && selectedOutside.address_id && !selectedOutside.cadastral_id && <span>{pick('Официален адрес · парцелът не е установен.', 'Official address · parcel not established.')}</span>}{parcelMode === 'boundaries' && <span>{pick('Избрана координатна точка · за този имот в текущия филтриран изглед няма заредена граница.', 'Selected coordinate point · this plot has no loaded boundary in the current filtered view.')}</span>}</Tooltip>
         </CircleMarker>
       ) : null}
       {userLocation ? (

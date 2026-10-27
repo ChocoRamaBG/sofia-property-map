@@ -4,6 +4,7 @@ import { useI18n } from '@/lib/i18n';
 import './RegisteredBusinesses.css';
 
 const CADASTRAL_ID = /^68134\.\d{1,6}\.\d{1,6}$/;
+const ADDRESS_ID = /^address-[a-f0-9]{24}$/;
 
 async function readBusinessData(action, params, signal) {
   const url = new URL('./business-data.php', window.location.href);
@@ -26,7 +27,11 @@ function dateLabel(value, lang) {
   return Number.isFinite(date.getTime()) ? date.toLocaleDateString(lang === 'bg' ? 'bg-BG' : 'en-GB') : null;
 }
 
-export default function RegisteredBusinesses({ cadastralId, lang: language }) {
+export default function RegisteredBusinesses({ cadastralId, addressId, lang: language }) {
+  const addressOnly = Boolean(addressId);
+  const resourceId = addressOnly ? addressId : cadastralId;
+  const validId = (addressOnly ? ADDRESS_ID : CADASTRAL_ID).test(resourceId || '');
+  const action = addressOnly ? 'address' : 'plot';
   const i18n = useI18n();
   const lang = language || i18n.lang;
   const pick = (bg, en) => lang === 'bg' ? bg : en;
@@ -40,33 +45,33 @@ export default function RegisteredBusinesses({ cadastralId, lang: language }) {
     requestRef.current?.abort();
     setLoadingMore(false);
     setMoreError(false);
-    if (!CADASTRAL_ID.test(cadastralId || '')) {
+    if (!validId) {
       setState({ key: null, loading: false, companies: [], total: 0, coverage: null, error: false });
       return undefined;
     }
     const controller = new AbortController();
     requestRef.current = controller;
-    setState({ key: cadastralId, loading: true, companies: [], total: 0, coverage: null, error: false });
-    readBusinessData('plot', { id: cadastralId, offset: 0, limit: 20 }, controller.signal)
+    setState({ key: resourceId, loading: true, companies: [], total: 0, coverage: null, error: false });
+    readBusinessData(action, { id: resourceId, offset: 0, limit: 20 }, controller.signal)
       .then((data) => {
         if (controller.signal.aborted) return;
         if (!Array.isArray(data.companies) || !Number.isSafeInteger(data.total) || data.total < data.companies.length) throw new Error('Invalid company response');
-        setState({ key: cadastralId, loading: false, companies: data.companies, total: data.total, coverage: data.coverage || null, snapshotId: data.snapshot_id, error: false });
+        setState({ key: resourceId, loading: false, companies: data.companies, total: data.total, coverage: data.coverage || null, snapshotId: data.snapshot_id, error: false });
       })
-      .catch(() => { if (!controller.signal.aborted) setState({ key: cadastralId, loading: false, companies: [], total: 0, coverage: null, error: true }); });
+      .catch(() => { if (!controller.signal.aborted) setState({ key: resourceId, loading: false, companies: [], total: 0, coverage: null, error: true }); });
     return () => { controller.abort(); requestRef.current?.abort(); };
-  }, [cadastralId]);
+  }, [resourceId, action, validId]);
 
   async function loadMore() {
-    if (state.key !== cadastralId || loadingMore || state.companies.length >= state.total) return;
+    if (state.key !== resourceId || loadingMore || state.companies.length >= state.total) return;
     requestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
-    const key = cadastralId;
+    const key = resourceId;
     setLoadingMore(true);
     setMoreError(false);
     try {
-      const data = await readBusinessData('plot', { id: key, offset: state.companies.length, limit: 20 }, controller.signal);
+      const data = await readBusinessData(action, { id: key, offset: state.companies.length, limit: 20 }, controller.signal);
       if (controller.signal.aborted) return;
       if (!Array.isArray(data.companies) || !Number.isSafeInteger(data.total) || !data.companies.length || (state.snapshotId && data.snapshot_id !== state.snapshotId) || data.total !== state.total) throw new Error('Invalid or changed company page');
       setState((previous) => previous.key === key ? { ...previous, companies: [...previous.companies, ...data.companies], total: data.total, coverage: data.coverage || previous.coverage } : previous);
@@ -77,8 +82,8 @@ export default function RegisteredBusinesses({ cadastralId, lang: language }) {
     }
   }
 
-  if (!CADASTRAL_ID.test(cadastralId || '')) return null;
-  const current = state.key === cadastralId ? state : { loading: true, companies: [], total: 0 };
+  if (!validId) return null;
+  const current = state.key === resourceId ? state : { loading: true, companies: [], total: 0 };
   const coverage = current.coverage || {};
   const generatedDate = dateLabel(coverage.generated_at, lang);
   const sourceDate = dateLabel(coverage.source?.committed_at || coverage.source?.commit_date, lang);
@@ -91,14 +96,15 @@ export default function RegisteredBusinesses({ cadastralId, lang: language }) {
     : null;
   return (
     <section className="registered-businesses" aria-labelledby={titleId} aria-busy={current.loading || loadingMore}>
-      <div className="registered-businesses-heading"><Building2 size={18} aria-hidden="true" /><h3 id={titleId}>{pick('Фирми с регистриран адрес тук', 'Companies registered at this address')}</h3>{!current.loading && !current.error && <span>{current.total.toLocaleString(lang === 'bg' ? 'bg-BG' : 'en-GB')}</span>}</div>
-      <p className="registered-businesses-explanation">{pick('Адресът на управление съвпада еднозначно с кадастрален адрес. Това не установява собственост върху имота или реална дейност на място.', 'The registered office matches one unambiguous cadastral address. This establishes neither property ownership nor actual activity at the location.')}</p>
+      <div className="registered-businesses-heading"><Building2 size={18} aria-hidden="true" /><h3 id={titleId}>{addressOnly ? pick('Фирми на този официален адрес', 'Companies at this official address') : pick('Фирми с регистриран адрес тук', 'Companies registered at this address')}</h3>{!current.loading && !current.error && <span>{current.total.toLocaleString(lang === 'bg' ? 'bg-BG' : 'en-GB')}</span>}</div>
+      <p className="registered-businesses-explanation">{addressOnly ? pick('Фирменият адрес е намерен в официалните адресни данни на София. Не е установена еднозначна връзка с кадастрален имот. Адресът не доказва собственост или реална дейност на място.', 'The registered address was found in Sofia’s official address data. A unique cadastral parcel has not been established. An address proves neither ownership nor actual activity here.') : pick('Фирмите са свързани с този парцел чрез адресни данни. Методът е посочен за всяка фирма. Връзката не доказва собственост или реална дейност на място.', 'Companies are linked to this plot through address data. Each company states its matching method. This establishes neither ownership nor actual activity here.')}</p>
       {current.loading ? <p className="registered-businesses-status" role="status"><Loader2 size={15} className="animate-spin" aria-hidden="true" />{pick('Проверка на регистрираните адреси…', 'Checking registered addresses…')}</p> : current.error ? <p className="registered-businesses-status" role="status">{pick('Фирмените адреси временно не са достъпни.', 'Business addresses are temporarily unavailable.')}</p> : <>
         {current.total === 0 ? <p className="registered-businesses-status">{pick('Няма еднозначно свързан фирмен адрес в наличното извлечение. Това не означава, че тук няма регистрирани фирми.', 'No company address is unambiguously linked in this extract. This does not establish that no companies are registered here.')}</p> : <>
           <ul className="registered-businesses-list">{current.companies.map((company) => <li key={company.uic}>
             <h4>{company.name}</h4>
             <div className="registered-businesses-identity"><span>{pick('ЕИК', 'UIC')} {company.uic}</span>{company.legal_form && <span>{company.legal_form}</span>}</div>
             {company.registered_address && <p className="registered-businesses-address">{company.registered_address}</p>}
+            <p className="registered-businesses-match">{(company.match_method || (addressOnly ? 'municipal_address' : 'cadastre_address')) === 'municipal_address' ? pick('Официален общински адрес · без установен парцел', 'Official municipal address · parcel not established') : company.match_method === 'municipal_parcel' ? pick('Общински адрес · всички адресни точки са строго в един парцел', 'Municipal address · every address point is strictly inside one parcel') : pick('Точно съвпадение с кадастрален адрес', 'Exact cadastral address match')}</p>
             <dl>{company.status && <div><dt>{pick('Състояние в извлечението', 'State in the extract')}</dt><dd>{company.status === 'not_verified' ? pick('Не е проверено — вижте фирмената партида', 'Not verified — check the company profile') : company.status}</dd></div>}<div><dt>{pick('Състояние към', 'Report as of')}</dt><dd>{dateLabel(company.as_of, lang) || pick('Няма посочена дата', 'Date not stated')}</dd></div></dl>
             {company.activity && <details className="registered-businesses-activity"><summary>{pick('Предмет на дейност', 'Registered business activity')}<ChevronDown size={13} aria-hidden="true" /></summary><p>{company.activity}</p></details>}
             {officialCompanyUrl(company) && <a className="registered-businesses-source" href={officialCompanyUrl(company)} target="_blank" rel="noreferrer">{pick('Фирмена партида · Търговски регистър', 'Company profile · Commercial Register')}<ArrowUpRight size={13} aria-hidden="true" /></a>}
@@ -106,7 +112,7 @@ export default function RegisteredBusinesses({ cadastralId, lang: language }) {
           {current.companies.length < current.total && <button className="registered-businesses-more" type="button" onClick={loadMore} disabled={loadingMore}>{loadingMore && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}{pick('Покажи още фирми', 'Show more companies')}<span>{current.companies.length} / {current.total}</span></button>}
           {moreError && <p className="registered-businesses-status" role="status">{pick('Следващите записи не се заредиха. Опитайте отново.', 'The next records could not be loaded. Please try again.')}</p>}
         </>}
-        <details className="registered-businesses-method"><summary>{pick('Източник и свързване', 'Source and matching')}<ChevronDown size={13} aria-hidden="true" /></summary><p>{pick('Фирмени извлечения от Търговския регистър, предоставени чрез проекта на ChocoRamaBG, и адреси от отворените данни на АГКК за София. Свързването изисква точно име на улица и номер; нееднозначните и непълните адреси остават несвързани. Наборът има ограничено покритие.', 'Commercial Register extracts supplied through the ChocoRamaBG project, matched to addresses in AGKK Sofia open data. Exact street names and house numbers are required; ambiguous and incomplete addresses remain unlinked. Dataset coverage is limited.')}</p>{generatedDate && <p>{pick('Подготвено извлечение:', 'Prepared snapshot:')} {generatedDate}</p>}{sourceDate && <p>{pick('Версия на фирмените извлечения:', 'Company export revision:')} {sourceDate}</p>}{cadastreDate && <p>{pick('Кадастрални данни, изтеглени на:', 'Cadastral data captured:')} {cadastreDate}</p>}{sourceLink && <a href={sourceLink} target="_blank" rel="noreferrer">{pick('Версия на предоставените данни', 'Supplied data revision')} · {commit.slice(0, 7)}<ArrowUpRight size={13} aria-hidden="true" /></a>}<a href="https://kais.cadastre.bg/bg/OpenData" target="_blank" rel="noreferrer">{pick('Кадастрален източник · АГКК', 'Cadastral source · AGKK')}<ArrowUpRight size={13} aria-hidden="true" /></a></details>
+        <details className="registered-businesses-method"><summary>{pick('Източник и свързване', 'Source and matching')}<ChevronDown size={13} aria-hidden="true" /></summary><p>{pick('Фирмени извлечения от Търговския регистър, предоставени чрез проекта на ChocoRamaBG, кадастрални данни на АГКК и официални адреси на Столична община. Методите за адрес и за парцел се показват отделно. Наборът има ограничено покритие; нееднозначните парцели не се избират приблизително.', 'Commercial Register extracts supplied through the ChocoRamaBG project, AGKK cadastral data and official Sofia Municipality addresses. Address and parcel matching are stated separately. Coverage is limited; ambiguous parcels are never selected approximately.')}</p>{generatedDate && <p>{pick('Подготвено извлечение:', 'Prepared snapshot:')} {generatedDate}</p>}{sourceDate && <p>{pick('Версия на фирмените извлечения:', 'Company export revision:')} {sourceDate}</p>}{cadastreDate && <p>{pick('Кадастрални данни, изтеглени на:', 'Cadastral data captured:')} {cadastreDate}</p>}{sourceLink && <a href={sourceLink} target="_blank" rel="noreferrer">{pick('Версия на предоставените данни', 'Supplied data revision')} · {commit.slice(0, 7)}<ArrowUpRight size={13} aria-hidden="true" /></a>}<a href="https://kais.cadastre.bg/bg/OpenData" target="_blank" rel="noreferrer">{pick('Кадастрален източник · АГКК', 'Cadastral source · AGKK')}<ArrowUpRight size={13} aria-hidden="true" /></a>{coverage.municipal_source && <div className="registered-businesses-municipal-source"><a href="https://urbandata.sofia.bg/dataset/address_sofia-zip" target="_blank" rel="noreferrer">{pick('Столична община · официални адреси', 'Sofia Municipality · official addresses')}<ArrowUpRight size={13} aria-hidden="true" /></a><a href="https://urbandata.sofia.bg/dataset/streets_names_new_old-zip" target="_blank" rel="noreferrer">{pick('Официални стари и нови имена на улици', 'Official former and current street names')}<ArrowUpRight size={13} aria-hidden="true" /></a><p>{pick('Адресни данни: Столична община,', 'Address data: Sofia Municipality,')} <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>. {pick('Адресите са нормализирани и съпоставени за този сайт.', 'Addresses were normalized and matched for this website.')}</p></div>}</details>
       </>}
     </section>
   );

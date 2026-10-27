@@ -61,6 +61,9 @@ STREET_MARKER = re.compile(r"(?<![а-яa-z])(?P<kind>улица|ул|булев�
 NUMBER_MARKER = re.compile(r"(?:№|(?<!\w)(?:номер|No\.?|N)(?!\w))\s*", re.I)
 HOUSE_NUMBER = re.compile(r"[0-9]{1,5}(?:\s?[а-яa-z])?", re.I)
 GENERIC_STREET_LABEL = re.compile(r"(?<![а-яa-z])(?:бул\.?\s*/\s*ул\.?|ул\.?\s*/\s*бул\.?)\s+", re.I)
+HOUSE_TOKEN = re.compile(r"(?P<number>[0-9]{1,5})(?:\s?(?P<suffix>[а-яa-z])(?![а-яa-z]))?", re.I)
+UNIT_OR_CONTACT_TAIL = re.compile(r"^(?:ет(?:аж)?|вх(?:од)?|ап(?:артамент)?|офис|бл(?:ок)?|тел(?:ефон)?|факс|e-?mail|имейл)\.?\s*[:№0-9\s]", re.I)
+EXTRA_UNIT_NUMBER = re.compile(r"(?<!\w)(?:ет(?:аж)?|вх(?:од)?|ап(?:артамент)?|офис|бл(?:ок)?)\.?\s*:?\s*$", re.I)
 
 
 def clean(value):
@@ -123,43 +126,73 @@ def number_key(value):
 
 
 def address_key(value):
-    """Extract one explicit street and exact simple number; discard unit/contact tails."""
+    """Return (EKATTE, kind|'unknown', full street name, exact simple number).
+
+    Unknown street kind is evidence of a generic source field label, never an
+    assumed street. It may resolve only against all official kinds together.
+    """
     value = clean(value)
     if not value or len(value) > 16384:
         return None
-    # The export formats its field label as "бул./ул. ул. NAME". Remove only
-    # that generic field label; an explicit actual kind must still follow it.
-    # A bare "бул./ул. NAME" therefore remains unresolved.
+    original = value
+    generic = bool(GENERIC_STREET_LABEL.search(value))
     value = GENERIC_STREET_LABEL.sub(" ", value)
     markers = list(STREET_MARKER.finditer(value))
+    unknown_kind = not markers and generic
+    if unknown_kind:
+        # The synthetic prefix only invokes the existing full-name normalizer;
+        # it is never used as a claimed official kind or public address.
+        value = GENERIC_STREET_LABEL.sub("ул. ", original)
+        markers = list(STREET_MARKER.finditer(value))
     if len(markers) != 1:
         return None
     marker = markers[0]
+    if generic and NUMBER_MARKER.search(value[:marker.start()]):
+        # Do not ignore an earlier generically labelled address in favor of a
+        # later, explicitly typed second street.
+        return None
     following = value[marker.end():]
     numbers = list(NUMBER_MARKER.finditer(following))
-    if len(numbers) != 1:
-        return None
-    number_start = numbers[0]
-    street = following[:number_start.start()].strip(" ,;\n\r")
+    if numbers:
+        number_start = numbers[0]
+        street = following[:number_start.start()].strip(" ,;\n\r")
+        tail = re.sub(r"^:\s*", "", following[number_start.end():])
+    else:
+        # A house number without № must be a separate final token following a
+        # named street. Street numbers and apartment/block numbers are not used.
+        unmarked = re.match(r"^(?P<street>[^,;\n\r]+?)\s+(?P<tail>[0-9]{1,5}(?:\s?[а-яa-z])?(?:\s*[,;].*)?)$", following, re.I)
+        if not unmarked:
+            return None
+        street, tail = unmarked["street"], unmarked["tail"]
     # A single source street label must not absorb quarter/unit/contact text.
     if not street or re.search(r"[,;\n\r]", street):
+        return None
+    if re.search(r"(?<!\w)(?:ет(?:аж)?|вх(?:од)?|ап(?:артамент)?|офис|бл(?:ок)?|тел(?:ефон)?|факс)\.?\s*(?:[:0-9]|$)", street, re.I):
         return None
     prefix = marker.group("kind").casefold()
     prefix = "ул." if prefix in {"ул", "улица"} else "бул." if prefix in {"бул", "булевард"} else "пл."
     normalized = street_key(prefix + " " + street)
-    tail = following[number_start.end():]
-    match = HOUSE_NUMBER.match(tail)
+    match = HOUSE_TOKEN.match(tail)
     if not normalized or not match:
         return None
     remainder = tail[match.end():]
-    # Reject ranges, alternative numbers and unseparated extra address tokens.
-    if remainder and not re.match(r"^\s*(?:[,;\r\n]|$)", remainder):
+    clean_remainder = remainder.lstrip()
+    if clean_remainder and clean_remainder[0] not in ",;\r\n" and not UNIT_OR_CONTACT_TAIL.match(clean_remainder):
         return None
-    number = number_key(match.group())
-    return ("68134", *normalized, number) if number else None
+    # A second № belongs only to an explicitly named unit, never a second
+    # house number or an unqualified number appearing in a contact remainder.
+    for extra in NUMBER_MARKER.finditer(remainder):
+        if not EXTRA_UNIT_NUMBER.search(remainder[:extra.start()]):
+            return None
+    if re.match(r"^\s*[,;]\s*[0-9]", remainder):
+        return None
+    number = number_key(match.group("number") + (match.group("suffix") or ""))
+    return ("68134", "unknown" if unknown_kind else normalized[0], normalized[1], number) if number else None
 
 
 def canonical_address(key):
+    if key[1] == "unknown":
+        raise ValueError("An unresolved street kind cannot form a public address")
     prefix = {"street": "ул.", "boulevard": "бул.", "square": "пл."}[key[1]]
     return f"гр. София, {prefix} {key[2]} № {key[3]}"
 
@@ -415,7 +448,7 @@ def candidate(row, counts):
     elif not key:
         reason = "missing_or_unparseable_street_number"
     activity = safe_text(values["activity"], TEXT_LIMITS["activity"], True)
-    company = {"uic": uic, "name": name, "legal_form": form, "activity": activity, "registered_address": canonical_address(key) if key else "", "status": "not_verified", "as_of": as_of, "source_url": source_url(uic)}
+    company = {"uic": uic, "name": name, "legal_form": form, "activity": activity, "registered_address": canonical_address(key) if key and key[1] != "unknown" else "", "status": "not_verified", "as_of": as_of, "source_url": source_url(uic)}
     # Only a digest is retained for rejected raw address variants; never publish it.
     signature = hashlib.sha256(json_bytes([company, reason, key, clean(values["country"]).casefold(), clean(values["settlement"]).casefold(), hashlib.sha256(values["address"].encode()).hexdigest() if not key else ""])).hexdigest()
     return uic, as_of, signature, company, key, reason
@@ -456,8 +489,26 @@ def select_companies(directory, source):
     return selected, counts
 
 
+def address_kind_index(reference):
+    """Full-name/number lookup across ALL official kinds, retaining each key."""
+    result = defaultdict(dict)
+    for key, identifiers in reference.items():
+        for identifier in identifiers:
+            result[(key[0], key[2], key[3])].setdefault(identifier, set()).add(key)
+    return result
+
+
+def address_matches(key, reference, across_kinds=None):
+    """Return {parcel ID: set(official keys)}; caller must require ONE ID."""
+    if key[1] == "unknown":
+        across_kinds = address_kind_index(reference) if across_kinds is None else across_kinds
+        return across_kinds.get((key[0], key[2], key[3]), {})
+    return {identifier: {key} for identifier in reference.get(key, set())}
+
+
 def match_companies(selected, reference, counts):
     parcels = defaultdict(list)
+    across_kinds = address_kind_index(reference)
     for _, _, company, key, reason in selected.values():
         # Count city corporate candidates even when their street/number is absent.
         if not reason or reason == "missing_or_unparseable_street_number":
@@ -465,13 +516,26 @@ def match_companies(selected, reference, counts):
         if reason:
             counts[reason] += 1
             continue
-        matches = reference.get(key, set())
+        if key[1] == "unknown":
+            counts["unknown_kind_sofia_candidates"] += 1
+        matches = address_matches(key, reference, across_kinds)
         if not matches:
             counts["address_not_in_cadastre"] += 1
         elif len(matches) != 1:
             counts["ambiguous_cadastral_address"] += 1
         else:
-            parcels[next(iter(matches))].append(company)
+            identifier = next(iter(matches))
+            official_keys = matches[identifier]
+            # A unique parcel with conflicting official address kinds still
+            # lacks a canonical address; do not pick an arbitrary variant.
+            if len(official_keys) != 1:
+                counts["ambiguous_cadastral_address"] += 1
+                continue
+            official_key = next(iter(official_keys))
+            published = dict(company, registered_address=canonical_address(official_key))
+            if key[1] == "unknown":
+                counts["matched_unknown_kind_companies"] += 1
+            parcels[identifier].append(published)
     for companies in parcels.values():
         companies.sort(key=lambda x: x["uic"])
     counts["matched_companies"] = sum(len(v) for v in parcels.values())
@@ -664,6 +728,9 @@ def validate_snapshot(output_root, snapshot_id=None):
     manifest = read_json(manifest_path, MAX_MANIFEST_BYTES)
     if pointer is not None and file_digest(manifest_path) != pointer["manifest_sha256"]:
         raise ValueError("Business manifest pointer hash mismatch")
+    if isinstance(manifest, dict) and manifest.get('version') == 2:
+        from business_snapshot_v2 import validate_snapshot as validate_v2
+        return validate_v2(output_root, snapshot_id)
     required_manifest = {"version", "snapshot_id", "generated_at", "source", "cadastre", "counts", "shards", "parcel_index", "search_index"}
     if not isinstance(manifest, dict) or set(manifest) not in (required_manifest, required_manifest | {"points_index"}) or manifest.get("version") != 1 or manifest.get("snapshot_id") != snapshot_id or not timestamp_valid(manifest.get("generated_at")):
         raise ValueError("Invalid business manifest")
@@ -744,8 +811,14 @@ def build(args):
     selected, company_counts = select_companies(directory, source)
     counts.update(company_counts)
     parcels = match_companies(selected, reference, counts)
+    if not args.without_municipal:
+        from business_snapshot_v2 import enrich, write_snapshot as write_v2
+        parcels, addresses, municipal_source = enrich(directory, source, selected, parcels, args, counts)
     points = cadastral_points(parcels, args.cadastre_archives, cadastre, counts)
-    manifest = write_snapshot(args.output, parcels, source, cadastre, counts, points)
+    if args.without_municipal:
+        manifest = write_snapshot(args.output, parcels, source, cadastre, counts, points)
+    else:
+        manifest = write_v2(args.output, parcels, addresses, source, cadastre, counts, points, municipal_source)
     print(json.dumps({"snapshot_id": manifest["snapshot_id"], "source_commit": source["commit"], "counts": manifest["counts"]}, ensure_ascii=True))
     return manifest
 
@@ -758,6 +831,9 @@ def main():
     parser.add_argument("--cadastre-manifest", type=Path)
     parser.add_argument("--cadastre-archives", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--municipal-cache", type=Path, default=Path("seed/business/municipal"))
+    parser.add_argument("--municipal-offline", action="store_true", help="Use only a previously verified municipal source capture")
+    parser.add_argument("--without-municipal", action="store_true", help="Prepare legacy cadastral-address evidence only")
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
     if args.validate_only:

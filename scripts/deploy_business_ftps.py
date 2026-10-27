@@ -86,8 +86,14 @@ def check_manifest(value: object, pointer_value: dict) -> dict:
     keys = {"version", "snapshot_id", "generated_at", "source", "cadastre", "counts", "shards", "parcel_index", "search_index"}
     if isinstance(value, dict) and 'points_index' in value:
         keys.add('points_index')
-    if not isinstance(value, dict) or set(value) != keys or type(value["version"]) is not int or value["version"] != 1 or value["snapshot_id"] != pointer_value["snapshot_id"]:
+    v2 = isinstance(value, dict) and value.get('version') == 2
+    if v2:
+        keys.update({'municipal_source', 'address_index', 'address_shards'})
+    if not isinstance(value, dict) or set(value) != keys or type(value["version"]) is not int or value["version"] not in (1, 2) or value["snapshot_id"] != pointer_value["snapshot_id"]:
         raise ValueError("Business manifest format is invalid")
+    if v2:
+        from business_snapshot_v2 import validate_municipal_source
+        validate_municipal_source(value['municipal_source'])
     source = value["source"]
     if not isinstance(source, dict) or set(source) != {"repo", "commit", "path", "files"} or source["repo"] != SOURCE_REPO or source["path"] != SOURCE_PATH:
         raise ValueError("Business source repository is invalid")
@@ -111,7 +117,7 @@ def check_manifest(value: object, pointer_value: dict) -> dict:
     if not isinstance(counts, dict) or not 1 <= len(counts) <= 100 or any(not isinstance(key, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key) or type(count) is not int or not 0 <= count <= 10_000_000 for key, count in counts.items()):
         raise ValueError("Business coverage counts are invalid")
     for key in ("matched_companies", "matched_parcels", "sofia_candidates"):
-        if type(counts.get(key)) is not int or not 1 <= counts[key] <= 2_000_000:
+        if type(counts.get(key)) is not int or not (0 if v2 and key != 'sofia_candidates' else 1) <= counts[key] <= 2_000_000:
             raise ValueError("Business publication lacks positive validated coverage")
     if not counts["matched_parcels"] <= counts["matched_companies"] <= counts["sofia_candidates"]:
         raise ValueError("Business coverage counts are inconsistent")
@@ -123,8 +129,17 @@ def descriptors(manifest: dict) -> list[dict]:
     result = [descriptor(manifest["parcel_index"], "parcel-index.json", MAX_INDEX_BYTES), descriptor(manifest["search_index"], "search-index.json", MAX_INDEX_BYTES)]
     if 'points_index' in manifest:
         result.append(descriptor(manifest['points_index'], 'points-index.json', MAX_INDEX_BYTES))
+    if manifest['version'] == 2:
+        result.append(descriptor(manifest['address_index'], 'address-index.json', MAX_INDEX_BYTES))
+        address_shards = manifest['address_shards']
+        if not isinstance(address_shards, dict) or len(address_shards) > 512:
+            raise ValueError('Invalid address shard collection')
+        for name, evidence in address_shards.items():
+            if not isinstance(name, str) or not re.fullmatch(r'addresses-[0-9]{3}\.json', name):
+                raise ValueError('Invalid address shard filename')
+            result.append(descriptor(evidence, name, MAX_SHARD_BYTES, with_file=False))
     shards = manifest["shards"]
-    if not isinstance(shards, dict) or not 1 <= len(shards) <= 512:
+    if not isinstance(shards, dict) or not (0 if manifest['version'] == 2 else 1) <= len(shards) <= 512:
         raise ValueError("Business shard collection is invalid")
     for name, evidence in sorted(shards.items()):
         if not isinstance(name, str) or not re.fullmatch(r"companies-[0-9]{3}\.json", name):
@@ -320,7 +335,7 @@ def main() -> None:
         ftp.mkd(directory)
         files = descriptors(manifest)
         for position, evidence in enumerate(files, 1):
-            maximum = MAX_INDEX_BYTES if evidence["file"] in ("parcel-index.json", "search-index.json", "points-index.json") else MAX_SHARD_BYTES
+            maximum = MAX_INDEX_BYTES if evidence["file"] in ("parcel-index.json", "search-index.json", "points-index.json", "address-index.json") else MAX_SHARD_BYTES
             payload = read_local(local / evidence["file"], maximum)
             if len(payload) != evidence["bytes"] or digest(payload) != evidence["sha256"]:
                 raise ValueError("Local business snapshot changed before upload")

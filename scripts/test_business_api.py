@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import argparse
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -15,7 +16,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-PHP = shutil.which("php")
+PHP = os.environ.get("SOFIA_PHP_BINARY") or shutil.which("php")
 API = Path(__file__).resolve().parents[1] / "public" / "business-data.php"
 CID = "68134.100.100"
 STAMP = "2026-10-27T10:00:00+00:00"
@@ -44,7 +45,12 @@ def verify_prepared_snapshot(snapshot_root: Path) -> None:
     """Check the real producer/API contract in an isolated copied docroot."""
     if PHP is None:
         raise RuntimeError("PHP is required to verify a prepared business snapshot")
-    from refresh_business_addresses import validate_snapshot
+    pointer = json.loads((snapshot_root / "business-active.json").read_bytes())
+    initial_manifest = json.loads((snapshot_root / "business-snapshots" / pointer["snapshot_id"] / "manifest.json").read_bytes())
+    if initial_manifest.get("version") == 2:
+        from business_snapshot_v2 import validate_snapshot
+    else:
+        from refresh_business_addresses import validate_snapshot
     manifest = validate_snapshot(snapshot_root)
     snapshot_id = manifest["snapshot_id"]
     source = snapshot_root / "business-snapshots" / snapshot_id
@@ -53,12 +59,13 @@ def verify_prepared_snapshot(snapshot_root: Path) -> None:
     parcel_index = json.loads((source / "parcel-index.json").read_bytes())
     if "points_index" in manifest:
         points = json.loads((source / "points-index.json").read_bytes())
-        cadastral_id = next(iter(points)) if points else next(iter(parcel_index))
-        shard_name = parcel_index[cadastral_id]
+        cadastral_id = next(iter(points)) if points else next(iter(parcel_index),None)
+        shard_name = parcel_index[cadastral_id] if cadastral_id else None
     else:
-        cadastral_id, shard_name = next(iter(parcel_index.items()))
-    companies = json.loads((source / shard_name).read_bytes())[cadastral_id]
-    uic = companies[0]["uic"]
+        cadastral_id, shard_name = next(iter(parcel_index.items()),(None,None))
+    companies = json.loads((source / shard_name).read_bytes())[cadastral_id] if cadastral_id else []
+    uic = companies[0]["uic"] if companies else None
+    address_index = json.loads((source / "address-index.json").read_bytes()) if manifest.get("version") == 2 else {}
     with tempfile.TemporaryDirectory(prefix="sofia-business-real-api-") as temporary:
         root = Path(temporary)
         private = root / "private"
@@ -98,19 +105,38 @@ def verify_prepared_snapshot(snapshot_root: Path) -> None:
                 raise RuntimeError("Prepared PHP verification server did not start")
             if metadata.get("counts") != manifest["counts"] or metadata.get("source") != manifest["source"] or metadata.get("cadastre") != manifest["cadastre"]:
                 raise ValueError("Prepared PHP metadata and builder metadata differ")
-            plot = request({"action": "plot", "id": cadastral_id})
-            if plot.get("total") != len(companies) or not any(company.get("uic") == uic for company in plot.get("companies", [])):
-                raise ValueError("Prepared PHP plot response differs from its immutable shard")
-            search = request({"action": "search", "q": uic})
-            if not any(row.get("uic") == uic and row.get("cadastral_id") == cadastral_id for row in search.get("results", [])):
-                raise ValueError("Prepared PHP company search did not find the matched parcel")
-            if "points_index" in manifest:
-                viewport = request({"action": "viewport", "north": 43.1, "south": 42.4, "east": 24, "west": 22.8, "zoom": 10})
-                if viewport.get("total") != manifest["counts"]["mapped_business_parcels"] or viewport.get("company_total") != manifest["counts"]["mapped_companies"]:
-                    raise ValueError("Prepared PHP map coverage differs from the validated point index")
+            if cadastral_id:
+                plot = request({"action": "plot", "id": cadastral_id})
+                if plot.get("total") != len(companies) or not any(company.get("uic") == uic for company in plot.get("companies", [])):
+                    raise ValueError("Prepared PHP plot response differs from its immutable shard")
+                search = request({"action": "search", "q": uic})
+                if not any(row.get("uic") == uic and row.get("cadastral_id") == cadastral_id for row in search.get("results", [])):
+                    raise ValueError("Prepared PHP company search did not find the matched parcel")
+            if address_index:
+                aid,entry=next(iter(address_index.items()))
+                group=json.loads((source/entry["file"]).read_bytes())[aid]
+                address=request({"action":"address","id":aid})
+                if address.get("total") != len(group["companies"]) or address.get("address",{}).get("address_id") != aid:
+                    raise ValueError("Prepared PHP municipal address response differs from its shard")
+                address_uic=group["companies"][0]["uic"]
+                search=request({"action":"search","q":address_uic})
+                if not any(row.get("uic")==address_uic and row.get("address_id")==aid for row in search.get("results",[])):
+                    raise ValueError("Prepared PHP municipal address search missed its location")
+            if "points_index" in manifest or address_index:
+                viewparams={"action":"viewport","north":43.1,"south":42.4,"east":24,"west":22.8,"zoom":10}
+                viewport=request(viewparams)
+                expected_locations=manifest["counts"].get("located_locations",manifest["counts"].get("mapped_business_parcels",0))
+                expected_companies=manifest["counts"].get("located_companies",manifest["counts"].get("mapped_companies",0))
+                if viewport.get("total") != expected_locations or viewport.get("company_total") != expected_companies:
+                    raise ValueError("Prepared PHP map coverage differs from validated location indexes")
                 represented = sum(item.get("count", 1) for item in viewport.get("items", []))
                 if represented != viewport["total"] or sum(item["company_count"] for item in viewport["items"]) != viewport["company_total"] or viewport.get("truncated"):
                     raise ValueError("Prepared PHP map aggregation omits matched records")
+                if manifest.get("version")==2:
+                    for level,locations,count in [("parcel",manifest["counts"]["mapped_business_parcels"],manifest["counts"]["mapped_companies"]),("address",manifest["counts"]["address_only_locations"],manifest["counts"]["address_only_companies"])]:
+                        selected=request(viewparams|{"level":level})
+                        if selected.get("total")!=locations or selected.get("company_total")!=count:
+                            raise ValueError("Prepared PHP level coverage differs from validated snapshot")
             print(f"Verified real PHP API metadata, plot, EIK search and optional map coverage for {manifest['counts']['matched_companies']:,} prepared company associations; no source rows printed")
         finally:
             process.terminate()
@@ -210,6 +236,48 @@ class BusinessApiTests(unittest.TestCase):
         self.directory = directory
         self.publish_manifest()
         return companies
+
+    def fixture_v2(self, address_count=45):
+        second = "68134.200.200"
+        self.fixture(count=2, parcel_ids=[CID, second], points={CID: {"lat": 42.7, "lng": 23.3}, second: {"lat": 42.8, "lng": 23.4}})
+        parcel_path = self.directory / "companies-000.json"
+        parcel_groups = json.loads(parcel_path.read_bytes())
+        for cid, companies in parcel_groups.items():
+            for company in companies:
+                company.update(match_method="cadastre_address" if cid == CID else "municipal_parcel", reference_ids=[] if cid == CID else ["rn-parcel"])
+        parcel_path.write_bytes(encoded(parcel_groups))
+        aid = "address-" + "a" * 24
+        label = "гр. София, ж.к. Пример, бл. 12"
+        template = dict(parcel_groups[CID][0])
+        companies = [dict(template, uic=fake_uic(100+i), name=f"Тест Имоти Alpha Realty Address {i}", registered_address=label, match_method="municipal_address", reference_ids=["rn-address"], source_url="https://portal.registryagency.bg/CR/Reports/ActiveConditionTabResult?uic="+fake_uic(100+i)) for i in range(address_count)]
+        address_groups = {aid: {"address_label": label, "lat": 42.75, "lng": 23.35, "companies": companies}}
+        address_index = {aid: {"file": "addresses-000.json", "lat": 42.75, "lng": 23.35, "label": label, "company_count": address_count}}
+        search = [{key: company[key] for key in ("uic","name","registered_address")} | {"cadastral_id": cid} for cid, records in parcel_groups.items() for company in records]
+        search.extend({key: company[key] for key in ("uic","name","registered_address")} | {"address_id": aid} for company in companies)
+        for name, value in [("addresses-000.json",address_groups),("address-index.json",address_index),("search-index.json",search)]:
+            (self.directory/name).write_bytes(encoded(value))
+        def evidence(name):
+            payload=(self.directory/name).read_bytes()
+            return {"bytes":len(payload),"sha256":sha(payload)}
+        sources=[]
+        for dataset, resource, filename, form, dataset_id in [
+            ("address_sofia-zip","7b32c5f8-5f25-4b24-92f9-43e265275587","address_sofia","GeoJSON","5dd1b862-7b4e-4fed-9061-96f1f1288c1e"),
+            ("streets_names_new_old-zip","c3ec6293-b1b0-48b7-98ae-9693ae7abd77","streets_names_new_old","CSV","ee06f1c1-869c-41fa-b2e9-8d09d1ea8d05")]:
+            sources.append({"dataset":dataset,"resource_id":resource,"url":f"https://urbandata.sofia.bg/dataset/{dataset_id}/resource/{resource}/download/{filename}.zip","format":form,"data_as_of":"2026-08-28","retrieved_at":STAMP,"bytes":100,"sha256":"a"*64,"metadata_sha256":"b"*64,"license_id":"CC-BY-4.0","license_url":"https://creativecommons.org/licenses/by/4.0/","policy_url":"https://www.sofia.bg/bg/web/guest/urbanization-data"})
+        self.manifest.update(version=2, municipal_source={"version":1,"source_revision":"c"*64,"coordinate_crs":"OGC:CRS84","crs_basis":"GeoJSON_default_CRS84","publisher_crs_explicit":False,"sources":sources},
+                             address_index={"file":"address-index.json",**evidence("address-index.json")},address_shards={"addresses-000.json":evidence("addresses-000.json")})
+        self.manifest["shards"]["companies-000.json"]=evidence("companies-000.json")
+        self.manifest["search_index"]={"file":"search-index.json",**evidence("search-index.json")}
+        self.manifest["counts"].update(sofia_candidates=address_count+2,address_only_companies=address_count,address_only_locations=1,located_companies=address_count+2,located_locations=3,exact_cadastral_address_companies=1,municipal_parcel_companies=1)
+        self.publish_manifest()
+        return aid
+
+    def rewrite_json(self,name,value):
+        raw=encoded(value);(self.directory/name).write_bytes(raw); info={"bytes":len(raw),"sha256":sha(raw)}
+        if name.startswith("addresses-"): self.manifest["address_shards"][name]=info
+        elif name=="address-index.json":self.manifest["address_index"]={"file":name,**info}
+        elif name=="search-index.json":self.manifest["search_index"]={"file":name,**info}
+        self.publish_manifest()
 
     def publish_manifest(self):
         raw = encoded(self.manifest)
@@ -482,6 +550,76 @@ class BusinessApiTests(unittest.TestCase):
                 status, body, _ = self.request(params)
                 self.assertEqual(status, 200)
                 self.assertFalse(body["coverage"]["map_available"])
+
+    def test_v2_address_pagination_provenance_and_no_ownership_assertion(self):
+        aid=self.fixture_v2()
+        status,body,_=self.request({"action":"address","id":aid})
+        self.assertEqual(status,200)
+        self.assertEqual((body["total"],len(body["companies"])),(45,20))
+        self.assertEqual(body["address"]["address_id"],aid)
+        self.assertEqual(body["companies"][0]["match_method"],"municipal_address")
+        self.assertIn("municipal_source",body["coverage"])
+        _,last,_=self.request({"action":"address","id":aid,"offset":40})
+        self.assertEqual(len(last["companies"]),5)
+        self.assertFalse(last["has_more"])
+        _,plot,_=self.request({"action":"plot","id":CID})
+        self.assertEqual(plot["companies"][0]["match_method"],"cadastre_address")
+
+    def test_v2_all_parcel_address_levels_and_search_above_preview_limit(self):
+        self.fixture_v2(address_count=60)
+        for level,locations,companies in [("all",3,62),("parcel",2,2),("address",1,60)]:
+            status,body,_=self.viewport(level=level,zoom=18,q="Тест")
+            self.assertEqual(status,200)
+            self.assertEqual((body["total"],body["company_total"]),(locations,companies))
+            self.assertEqual(body["matching_total"],locations)
+            self.assertEqual(sum(item["company_count"] for item in body["items"]),companies)
+            if level=="address":
+                self.assertEqual(body["items"][0]["location_method"],"official_municipal_address_point")
+                self.assertIn("address_id",body["items"][0])
+                self.assertNotIn("cadastral_id",body["items"][0])
+        _,preview,_=self.request({"action":"search","q":"Тест"})
+        self.assertEqual((preview["total"],len(preview["results"])),(62,40))
+        status,clusters,_=self.viewport(zoom=4)
+        self.assertEqual(status,200)
+        self.assertEqual(sum(item["parcel_count"] for item in clusters["items"]),2)
+        self.assertEqual(sum(item["address_only_count"] for item in clusters["items"]),1)
+
+    def test_v2_invalid_address_ids_levels_and_group_schema(self):
+        aid=self.fixture_v2()
+        for params in [{"action":"address","id":"../../bad"},{"action":"address","id":CID},{"action":"address","id":aid,"limit":51}]:
+            self.assertEqual(self.request(params)[0],400)
+        self.assertEqual(self.viewport(level="nearest")[0],400)
+        groups=json.loads((self.directory/"addresses-000.json").read_bytes())
+        groups[aid]["lat"]=43.5
+        self.rewrite_json("addresses-000.json",groups)
+        self.assertEqual(self.request({"action":"address","id":aid})[0],503)
+
+    def test_v2_address_hashes_and_duplicate_uics_fail_closed(self):
+        aid=self.fixture_v2()
+        path=self.directory/"address-index.json";raw=path.read_bytes();path.write_bytes(b" "+raw[1:])
+        self.assertEqual(self.viewport()[0],503)
+        aid=self.fixture_v2()
+        rows=json.loads((self.directory/"search-index.json").read_bytes())
+        rows[-1]["uic"]=rows[0]["uic"]
+        self.rewrite_json("search-index.json",rows)
+        self.assertEqual(self.viewport()[0],503)
+        self.assertEqual(self.request({"action":"search","q":"Тест"})[0],503)
+        aid=self.fixture_v2()
+        groups=json.loads((self.directory/"addresses-000.json").read_bytes())
+        groups[aid]["companies"][1]["uic"]=groups[aid]["companies"][0]["uic"]
+        self.rewrite_json("addresses-000.json",groups)
+        self.assertEqual(self.request({"action":"address","id":aid})[0],503)
+
+    def test_v2_municipal_sources_and_reference_methods_are_checked(self):
+        aid=self.fixture_v2()
+        self.manifest["municipal_source"]["sources"][0]["url"]="https://example.invalid/address.zip"
+        self.publish_manifest()
+        self.assertEqual(self.request({"action":"meta"})[0],503)
+        aid=self.fixture_v2()
+        groups=json.loads((self.directory/"addresses-000.json").read_bytes())
+        groups[aid]["companies"][0]["match_method"]="municipal_parcel"
+        self.rewrite_json("addresses-000.json",groups)
+        self.assertEqual(self.request({"action":"address","id":aid})[0],503)
 
 
 if __name__ == "__main__":

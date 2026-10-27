@@ -47,8 +47,37 @@ class AddressEvidenceTests(unittest.TestCase):
     def test_source_generic_field_label_is_removed_only_before_explicit_kind(self):
         self.assertEqual(business.address_key("р-н Пример, бул./ул. ул. Пример № 12"), business.address_key("ул. Пример № 12"))
         self.assertEqual(business.address_key("р-н Пример, бул./ул. бул. Пример № 12"), business.address_key("бул. Пример № 12"))
-        self.assertIsNone(business.address_key("р-н Пример, бул./ул. Пример № 12"))
+        self.assertEqual(business.address_key("р-н Пример, бул./ул. Пример № 12"), ("68134", "unknown", "пример", "12"))
         self.assertIsNone(business.address_key("ул. Пример № 12, бул./ул. ул. Друг № 12"))
+
+    def test_unknown_kind_resolves_only_after_union_of_all_official_kinds(self):
+        selected, counts = self.select([row(address="бул./ул. Пример № 12")])
+        self.assertEqual(selected[test_uic()][2]["registered_address"], "")
+        street = ("68134", "street", "пример", "12")
+        boulevard = ("68134", "boulevard", "пример", "12")
+        matched = business.match_companies(selected, {boulevard: {"68134.1.2"}}, counts)
+        self.assertEqual(matched["68134.1.2"][0]["registered_address"], "гр. София, бул. пример № 12")
+        business.validate_company(matched["68134.1.2"][0])
+        selected, counts = self.select([row(address="бул./ул. Пример № 12")])
+        self.assertFalse(business.match_companies(selected, {street: {"68134.1.1"}, boulevard: {"68134.1.2"}}, counts))
+        self.assertEqual(counts["ambiguous_cadastral_address"], 1)
+
+    def test_known_unit_and_contact_tails_never_supply_the_house_number(self):
+        expected = ("68134", "street", "пример", "12а")
+        for address in ("ул. Пример №: 12А, ап. № 7", "ул. Пример № 12А телефон: 0888123456", "ул. Пример № 12А ет. 2", "ул. Пример 12А, вх. Б, ап. 7"):
+            self.assertEqual(business.address_key(address), expected, address)
+        self.assertEqual(business.address_key("ул. Пример № 12 телефон: 0888123456"), ("68134", "street", "пример", "12"))
+        for address in ("ул. Пример ап. № 12", "ул. Пример, ап. № 12", "ул. Пример телефон № 12", "ул. Пример ап. 12", "ул. Пример № 12, № 14", "ул. Пример № 12, телефон: № 14", "ул. Пример № 12, snap. №14", "ул. Пример № 12, снап. №14"):
+            self.assertIsNone(business.address_key(address), address)
+
+    def test_new_formats_preserve_suffix_and_reject_ranges_and_partial_names(self):
+        for address in ("бул./ул. Пример №12-14", "бул./ул. Пример №12/14", "ул. Пример №12,14", "ул. Пример 12-14", "ул. Пример №12 и 14", "бул./ул. Пример №12, бул. Друг №14"):
+            self.assertIsNone(business.address_key(address), address)
+        key = business.address_key("бул./ул. Пример №12А")
+        self.assertFalse(business.address_matches(key, {("68134", "street", "примерна", "12а"): {"68134.1.1"}}))
+        self.assertFalse(business.address_matches(key, {("68134", "street", "пример", "12a"): {"68134.1.1"}}))
+        with self.assertRaises(ValueError):
+            business.canonical_address(key)
 
     def test_contacts_units_and_other_data_are_never_copied(self):
         data = row(address="ул. Пример № 12, ет. 4, ап. 5, тел: 0888123456, owner@example.com", activity="Търговия. Тел: 0888123456")

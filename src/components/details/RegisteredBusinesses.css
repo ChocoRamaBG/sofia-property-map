@@ -12,6 +12,8 @@
 .registered-businesses-list h4 { font-size: 13px; font-weight: 650; line-height: 1.6; }
 .registered-businesses-identity { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px; font-size: 11px; color: #5e766e; }
 .registered-businesses-address { margin-top: 7px; font-size: 12px; line-height: 1.7; }
+.registered-businesses-match { margin-top: 7px; color: #79613f; font-size: 11px; line-height: 1.7; }
+.registered-businesses-municipal-source { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e5ece8; }
 .registered-businesses-list dl { margin-top: 8px; font-size: 11px; line-height: 1.6; }
 .registered-businesses-list dl > div { margin-top: 5px; }
 .registered-businesses-list dt { color: #73867f; }

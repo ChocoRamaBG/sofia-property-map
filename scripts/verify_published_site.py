@@ -32,8 +32,8 @@ def main() -> None:
     parser.add_argument('--output', type=Path)
     parser.add_argument('--wait-business-map', type=int, default=0, help='Bounded wait for a staged legacy company snapshot to gain its point index')
     args = parser.parse_args()
-    if not 0 <= args.wait_business_map <= 180:
-        parser.error('--wait-business-map must be between 0 and 180 seconds')
+    if not 0 <= args.wait_business_map <= 600:
+        parser.error('--wait-business-map must be between 0 and 600 seconds')
     credentials = {key: os.environ.get(key, '') for key in ('FTP_HOST', 'FTP_USER', 'FTP_PASSWORD')}
     if not all(credentials.values()) or any('\r' in value or '\n' in value for value in credentials.values()):
         raise ValueError('Valid hosting credentials are required')
@@ -71,8 +71,12 @@ def main() -> None:
 
         dashboard = chunk('DevelopmentDashboard')
         details = chunk('DetailsPanel')
-        if 'business-data.php' not in module or 'business-data.php' not in details or 'Companies registered at this address' not in details:
+        registered = chunk('RegisteredBusinesses')
+        address_details = chunk('BusinessAddressDetails')
+        if 'business-data.php' not in module or 'business-data.php' not in registered or 'Companies registered at this address' not in registered:
             raise ValueError('Deployed website does not include the company address finder and plot section')
+        if 'company-map-levels' not in module or not all(code in registered for code in ('municipal_address', 'municipal_parcel')) or 'address_id' not in address_details:
+            raise ValueError('Deployed website does not distinguish official addresses and parcel associations')
         if 'company-map-panel' not in module or 'map-dataset-switch' not in module:
             raise ValueError('Deployed website does not include the complete company map layer')
         if 'Ownership and registered acts' in details or 'Companies in documents' in details:
@@ -90,7 +94,7 @@ def main() -> None:
             if hashlib.sha256(manifest_raw).hexdigest() != pointer['manifest_sha256']:
                 raise ValueError('Deployed company manifest hash is invalid')
             business_manifest = json.loads(manifest_raw)
-            if 'points_index' in business_manifest or time.monotonic() >= deadline:
+            if business_manifest.get('version') == 2 or time.monotonic() >= deadline:
                 break
             time.sleep(min(10, max(0, deadline - time.monotonic())))
         points = business_manifest.get('points_index')
@@ -99,6 +103,13 @@ def main() -> None:
         point_raw = read_remote(ftp, f"{REMOTE_ROOT}/private/business-snapshots/{pointer['snapshot_id']}/points-index.json", 9_500_000)
         if len(point_raw) != points['bytes'] or hashlib.sha256(point_raw).hexdigest() != points['sha256'] or len(json.loads(point_raw)) != business_manifest['counts']['mapped_business_parcels']:
             raise ValueError('Deployed company map point index failed verification')
+        addresses = business_manifest.get('address_index')
+        if business_manifest.get('version') != 2 or not isinstance(addresses, dict) or addresses.get('file') != 'address-index.json' or type(addresses.get('bytes')) is not int or not 2 <= addresses['bytes'] <= 9_500_000 or not re.fullmatch(r'[a-f0-9]{64}', addresses.get('sha256', '')):
+            raise ValueError('Deployed company snapshot lacks verified municipal address data')
+        address_raw = read_remote(ftp, f"{REMOTE_ROOT}/private/business-snapshots/{pointer['snapshot_id']}/address-index.json", 9_500_000)
+        address_index = json.loads(address_raw)
+        if len(address_raw) != addresses['bytes'] or hashlib.sha256(address_raw).hexdigest() != addresses['sha256'] or len(address_index) != business_manifest['counts']['address_only_locations'] or sum(row['company_count'] for row in address_index.values()) != business_manifest['counts']['address_only_companies']:
+            raise ValueError('Deployed official-address index failed verification')
         report['business_addresses'] = {'snapshot_id': pointer['snapshot_id'], 'generated_at': business_manifest['generated_at'], 'source_commit': business_manifest['source']['commit'], 'counts': business_manifest['counts']}
         if 'transactions-context.json' not in dashboard or 'registered_sales' not in dashboard:
             raise ValueError('Deployed dashboard does not include the transaction statistics feature')
@@ -116,7 +127,7 @@ def main() -> None:
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True, 'municipal_address_enrichment': True, 'separate_location_evidence_levels': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

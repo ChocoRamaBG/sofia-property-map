@@ -80,11 +80,12 @@ export default function BusinessAddressSearch({ onSelect, lang: language, state:
   }
 
   async function select(result) {
-    if (opening || !onSelect || !/^68134\.\d{1,6}\.\d{1,6}$/.test(result.cadastral_id || '')) return;
+    const targetId = result.cadastral_id || result.address_id;
+    if (opening || !onSelect || !/^(?:68134\.\d{1,6}\.\d{1,6}|address-[a-f0-9]{24})$/.test(targetId || '')) return;
     setOpening(result.uic);
     setNavigationError(false);
     try {
-      await onSelect(result.cadastral_id, result);
+      await onSelect(targetId, result);
     } catch {
       if (mountedRef.current) setNavigationError(true);
     } finally {
@@ -96,7 +97,7 @@ export default function BusinessAddressSearch({ onSelect, lang: language, state:
   const coverage = data?.coverage || metadata?.coverage || metadata || {};
   const counts = coverage.counts || {};
   const candidates = counts.sofia_candidates;
-  const matched = counts.matched_companies;
+  const matched = counts.located_companies ?? counts.matched_companies;
   const matchedParcels = counts.matched_parcels;
   const results = Array.isArray(data?.results) ? data.results.slice(0, 40) : [];
   return (
@@ -106,7 +107,7 @@ export default function BusinessAddressSearch({ onSelect, lang: language, state:
     }}>
       <summary><Building2 size={17} aria-hidden="true" /><span>{pick('Намерете фирмен адрес на картата', 'Find a registered business address')}<small>{pick('По име на фирма или ЕИК', 'By company name or UIC')}</small></span><ChevronDown size={16} aria-hidden="true" /></summary>
       <div className="business-address-search-body">
-        <p id={hintId}>{pick('Търси фирми с еднозначно свързан регистриран адрес. Резултатът отваря имота на картата; строителните филтри се запазват.', 'Find companies with an unambiguous registered-address match. A result opens its plot on the map; construction filters are retained.')}</p>
+        <p id={hintId}>{pick('Търси фирми с установен регистриран адрес. Резултатът отваря парцела или официалната адресна точка; строителните филтри се запазват.', 'Find companies with an established registered address. A result opens its parcel or official address point; construction filters are retained.')}</p>
         <form onSubmit={submit}>
           <label htmlFor={inputId}>{pick('Фирма или ЕИК', 'Company name or UIC')}</label>
           <div className="business-address-search-input"><Search size={16} aria-hidden="true" /><input id={inputId} value={state.query || ''} onChange={(event) => setState((previous) => ({ ...previous, query: event.target.value }))} placeholder={pick('Име или 9-цифрен ЕИК…', 'Name or 9-digit UIC…')} aria-describedby={hintId} aria-invalid={length > 120 || undefined} />{(state.query || state.submitted) && <button type="button" onClick={clear} aria-label={pick('Изчисти фирменото търсене', 'Clear the business search')}><X size={15} aria-hidden="true" /></button>}</div>
@@ -118,12 +119,12 @@ export default function BusinessAddressSearch({ onSelect, lang: language, state:
             <div className="business-address-search-count"><strong>{countLabel(data.total)} {pick('фирми', 'companies')}</strong><span>{state.submitted}</span></div>
             {results.length === 0 ? <p>{pick('Няма еднозначно свързан адрес за това търсене. Фирмата може да липсва от извлечението или адресът ѝ да е непълен/нееднозначен.', 'No unambiguous address match was found. The company may be absent from the extract or its address may be incomplete or ambiguous.')}</p> : <>
               {(data.truncated || data.total > results.length) && <p>{pick(`Показани са първите ${results.length} от ${countLabel(data.total)} фирми. Уточнете името за по-тесен резултат.`, `Showing the first ${results.length} of ${countLabel(data.total)} companies. Refine the name to narrow the results.`)}</p>}
-              <ul>{results.map((result) => <li key={result.uic}><button type="button" data-business-result-id={result.cadastral_id} onClick={() => select(result)} disabled={Boolean(opening)}><Building2 size={16} aria-hidden="true" /><span><strong>{result.name}</strong><small>{pick('ЕИК', 'UIC')} {result.uic}</small><small>{result.registered_address}</small><small>{pick('Имот', 'Plot')} {result.cadastral_id}</small></span>{opening === result.uic ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : <ArrowUpRight size={15} aria-hidden="true" />}</button></li>)}</ul>
+              <ul>{results.map((result) => <li key={result.uic}><button type="button" data-business-result-id={result.cadastral_id || result.address_id} onClick={() => select(result)} disabled={Boolean(opening)}><Building2 size={16} aria-hidden="true" /><span><strong>{result.name}</strong><small>{pick('ЕИК', 'UIC')} {result.uic}</small><small>{result.registered_address}</small><small>{result.cadastral_id ? `${pick('Имот', 'Plot')} ${result.cadastral_id}` : pick('Официален адрес · парцелът не е установен', 'Official address · parcel not established')}</small></span>{opening === result.uic ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : <ArrowUpRight size={15} aria-hidden="true" />}</button></li>)}</ul>
             </>}
           </>}
           {navigationError && <p role="status">{pick('Имотът не се отвори. Опитайте отново.', 'The plot could not be opened. Please try again.')}</p>}
         </div>
-        {Number.isSafeInteger(matched) && <p className="business-address-search-coverage">{pick('Покритие:', 'Coverage:')} {countLabel(matched)} {pick('еднозначно свързани фирми', 'unambiguously matched companies')}{Number.isSafeInteger(candidates) ? ` / ${countLabel(candidates)} ${pick('фирми с адрес в София в извлечението', 'Sofia address candidates in the extract')}` : ''}{Number.isSafeInteger(matchedParcels) ? ` · ${countLabel(matchedParcels)} ${pick('имота', 'plots')}` : ''}.</p>}
+        {Number.isSafeInteger(matched) && <p className="business-address-search-coverage">{pick('Покритие:', 'Coverage:')} {countLabel(matched)} {pick('фирми с установено местоположение', 'companies with an established location')}{Number.isSafeInteger(candidates) ? ` / ${countLabel(candidates)} ${pick('фирми с адрес в София в извлечението', 'Sofia address candidates in the extract')}` : ''}{Number.isSafeInteger(matchedParcels) ? ` · ${countLabel(matchedParcels)} ${pick('имота', 'plots')}` : ''}.</p>}
         <p className="business-address-search-note">{pick('Регистриран фирмен адрес ≠ собственик на имота. Непълните и нееднозначните адреси не се поставят приблизително на картата. Източници: Търговски регистър (предоставени извлечения) и АГКК.', 'A company’s registered address does not establish property ownership. Incomplete and ambiguous addresses are not placed approximately on the map. Sources: supplied Commercial Register extracts and AGKK.')}</p>
       </div>
     </details>

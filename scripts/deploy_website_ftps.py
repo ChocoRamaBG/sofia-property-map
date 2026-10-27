@@ -29,6 +29,7 @@ def main() -> None:
     parser.add_argument('--public', type=Path, default=Path('public'))
     parser.add_argument('--input', type=Path, default=Path('dist'))
     parser.add_argument('--backup', type=Path, required=True)
+    parser.add_argument('--api-only', action='store_true', help='Stage backward-compatible PHP readers before a dataset format migration')
     args = parser.parse_args()
     root = args.public.resolve()
     api_plan = [(name, read_local(root / name, root)) for name in API_NAMES]
@@ -62,7 +63,8 @@ def main() -> None:
             ftp.rename(temporary, remote)
             verify_remote(ftp, remote, payload)
             print(f'Published {name}: {len(payload)} bytes; SHA-256 verified', flush=True)
-    subprocess.run([sys.executable, str(Path(__file__).with_name('deploy_site_ftps.py')), '--input', str(args.input)], check=True)
+    if not args.api_only:
+        subprocess.run([sys.executable, str(Path(__file__).with_name('deploy_site_ftps.py')), '--input', str(args.input)], check=True)
 
 
 if __name__ == '__main__':

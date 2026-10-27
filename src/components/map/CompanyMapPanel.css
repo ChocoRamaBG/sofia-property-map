@@ -26,4 +26,18 @@
 .company-map-method a { display:inline-block; margin-top:8px; font-size:12px; text-decoration:underline; }
 .company-map-panel .company-map-filter-note { border-top:1px solid #e0e8e4; padding-top:13px; margin-top:20px; font-size:11px; }
 .plot-cluster-business { background:#176982 !important; border-color:#fff !important; }
+.plot-cluster-business.plot-cluster-address { background:#b67624 !important; }
 .company-point-tooltip > span { display:block; margin-top:4px; }
+.company-map-levels { display: flex; gap: 4px; margin-top: 17px; padding: 4px; border: 1px solid #d8e4e3; border-radius: 8px; background: #f1f6f5; }
+.company-map-levels button { flex: 1; min-width: 0; min-height: 42px; padding: 6px; color: #5c746e; border-radius: 6px; font-size: 11px; font-weight: 600; }
+.company-map-levels button[aria-pressed="true"] { background: #fff; color: #176982; box-shadow: 0 1px 4px #274f4014; }
+.company-map-point-types { display: flex; flex-wrap: wrap; gap: 6px 13px; margin-top: 10px; color: #6a7e75; font-size: 10px; line-height: 1.7; }
+.company-map-point-types span { display: inline-flex; align-items: center; gap: 5px; }
+.company-map-point-types i { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #176982; }
+.company-map-point-types i.is-address { background: #b67624; }
+.company-map-coverage { margin-top: 18px; display: grid; gap: 8px; }
+.company-map-coverage > div { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 3px 8px; padding: 9px 0; border-bottom: 1px solid #e3eae6; }
+.company-map-coverage span { color: #61776f; font-size: 11px; }
+.company-map-coverage strong { color: #335b56; font-size: 12px; }
+.company-map-coverage small { flex-basis: 100%; color: #7a8c82; font-size: 10px; }
+.company-map-coverage > p { margin: 2px 0 0; color: #6d8176; font-size: 10px; line-height: 1.7; }

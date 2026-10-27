@@ -2,6 +2,12 @@ name: Publish SofiaPermits website
 
 on:
   workflow_dispatch:
+    inputs:
+      api_only:
+        description: 'Stage compatible PHP readers before a data format migration'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -18,14 +24,17 @@ jobs:
       - name: Check out the website and read-only API
         uses: actions/checkout@v6
       - name: Set up Node
+        if: ${{ inputs.api_only != true }}
         uses: actions/setup-node@v6
         with:
           node-version: '22.16.0'
       - name: Enable pnpm
+        if: ${{ inputs.api_only != true }}
         run: |
           corepack enable
           corepack prepare pnpm@10.11.0 --activate
       - name: Install frontend dependencies
+        if: ${{ inputs.api_only != true }}
         run: pnpm install --frozen-lockfile
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -38,20 +47,31 @@ jobs:
           php -l public/business-data.php
           php -l public/api.php
       - name: Build the production website
+        if: ${{ inputs.api_only != true }}
         run: pnpm run build
+      - name: Stage compatible read-only PHP APIs
+        if: ${{ inputs.api_only == true }}
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/deploy_website_ftps.py --api-only --public public --backup seed/website-previous-${{ github.run_id }}
       - name: Publish and verify the API and static website
+        if: ${{ inputs.api_only != true }}
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: python scripts/deploy_website_ftps.py --public public --input dist --backup seed/website-previous-${{ github.run_id }}
       - name: Verify published features and active company snapshot
+        if: ${{ inputs.api_only != true }}
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: python scripts/verify_published_site.py --wait-business-map 180 --output seed/website-verification-${{ github.run_id }}.json
+        run: python scripts/verify_published_site.py --wait-business-map 600 --output seed/website-verification-${{ github.run_id }}.json
       - name: Keep the deployed feature verification
+        if: ${{ inputs.api_only != true }}
         uses: actions/upload-artifact@v4
         with:
           name: website-feature-verification-${{ github.run_id }}

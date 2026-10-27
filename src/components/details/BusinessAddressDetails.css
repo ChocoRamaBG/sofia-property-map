@@ -1,0 +1,5 @@
+.business-address-details { min-width: 0; overflow-wrap: anywhere; }
+.business-address-details .details-header > div:first-child { min-width: 0; flex: 1; }
+.business-address-details .details-header h2 { font-size: 18px; line-height: 1.6; }
+.business-address-details .details-header-actions { flex: 0 0 auto; }
+.business-address-parcel-note { color: #7d633e; background: #fff8eb; border: 1px solid #eadbc1; border-radius: 9px; padding: 12px; font-size: 12px; line-height: 1.75; }
