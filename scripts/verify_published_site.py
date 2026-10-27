@@ -58,11 +58,12 @@ def main() -> None:
         module = read(entries[0], MAX_ASSET_BYTES)
 
         def chunk(prefix: str) -> str:
-            names = set(re.findall(r'(?:assets/)?' + re.escape(prefix) + r'-[A-Za-z0-9_-]+\.js', module))
+            references = re.findall(r'(?:assets/)?' + re.escape(prefix) + r'-[A-Za-z0-9_-]+\.js', module)
+            names = {asset_name(name if name.startswith('assets/') else 'assets/' + name) for name in references}
             if len(names) != 1:
                 raise ValueError(f'Cannot identify deployed {prefix} module')
             name = names.pop()
-            return read(asset_name(name if name.startswith('assets/') else 'assets/' + name), MAX_ASSET_BYTES)
+            return read(name, MAX_ASSET_BYTES)
 
         dashboard = chunk('DevelopmentDashboard')
         details = chunk('DetailsPanel')
