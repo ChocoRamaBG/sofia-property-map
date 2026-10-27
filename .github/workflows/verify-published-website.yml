@@ -1,0 +1,32 @@
+name: Verify the published SofiaPermits website
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out read-only verification
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Read and verify deployed public files
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/verify_published_site.py --output seed/verification/published-site.json
+      - name: Keep verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: sofia-published-site-verification-${{ github.run_id }}
+          path: seed/verification/published-site.json
+          retention-days: 31
+          if-no-files-found: error
