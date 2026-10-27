@@ -71,6 +71,8 @@ export default function Home() {
   const [baseLayer, setBaseLayer] = useState('standard');
   const [parcelMode, setParcelMode] = useState(initialParcelMode);
   const [mapDataset, setMapDataset] = useState(() => new URL(window.location.href).searchParams.get('layer') === 'companies' ? 'companies' : 'properties');
+  const mapDatasetRef = useRef(mapDataset);
+  mapDatasetRef.current = mapDataset;
   const [businessMapDraft, setBusinessMapDraft] = useState('');
   const [businessMapQuery, setBusinessMapQuery] = useState('');
   const [businessFitRequest, setBusinessFitRequest] = useState(() => new URL(window.location.href).searchParams.get('layer') === 'companies' ? { query: '', generation: 0 } : null);
@@ -404,7 +406,7 @@ export default function Home() {
       setSearchResponse(response);
       const extent = response.bounds;
       const coordinates = ['south', 'north', 'west', 'east'].map((key) => Number(extent?.[key]));
-      if (shouldFit && generation === navigationGeneration.current && extent && coordinates.every(Number.isFinite) && coordinates[0] <= coordinates[1] && coordinates[2] <= coordinates[3]) {
+      if (shouldFit && mapDatasetRef.current === 'properties' && workspaceRef.current === 'map' && generation === navigationGeneration.current && extent && coordinates.every(Number.isFinite) && coordinates[0] <= coordinates[1] && coordinates[2] <= coordinates[3]) {
         if (mapRef.current) mapRef.current.fitBounds([[coordinates[0], coordinates[2]], [coordinates[1], coordinates[3]]], { padding: [48, 48], maxZoom: 17 });
         else pendingMapNavigation.current = { kind: 'bounds', bounds: extent, generation };
       }
