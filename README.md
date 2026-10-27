@@ -281,6 +281,8 @@ Public business fields are restricted to company name, EIK, legal form, safely b
 
 The **Refresh Sofia registered company addresses** workflow supports **Run workflow** and is also called independently by the monthly refresh. It captures fresh official cadastral exports, imports all current company parts, builds bounded private shards and publishes them over verified FTPS. Activation changes `private/business-active.json` only after the immutable snapshot verifies. Failed imports preserve the current snapshot. Updating files in the source repository alone does not change the website until this workflow succeeds.
 
+Input growth is bounded at 64 parts of 128 MiB each, 8 GiB combined and 2 million processed rows. Hosted files remain below 10,000,000 bytes, with 1 MiB shards, 9.5 MB indices and a 128 MiB snapshot. Crossing a limit stops publication and preserves the prior active data.
+
 For a verified local source cache:
 
     python scripts/refresh_business_addresses.py --company-dir seed/company-exports/COMMIT --cadastre-manifest seed/cadastre/publish/cadastre-active.json --cadastre-archives seed/cadastre/archives --output seed/business/publish

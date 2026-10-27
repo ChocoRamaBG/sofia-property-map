@@ -103,7 +103,7 @@ def check_manifest(value: object, pointer_value: dict) -> dict:
             raise ValueError("Business source part evidence is invalid")
         seen.add(name)
         source_bytes += part["bytes"]
-    if source_bytes > 1024 * 1024 * 1024:
+    if source_bytes > 8 * 1024 * 1024 * 1024:
         raise ValueError("Business source parts exceed their total byte limit")
     counts = value["counts"]
     if not isinstance(counts, dict) or not 1 <= len(counts) <= 100 or any(not isinstance(key, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key) or type(count) is not int or not 0 <= count <= 10_000_000 for key, count in counts.items()):

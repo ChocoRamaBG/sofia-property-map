@@ -120,6 +120,13 @@ class AddressEvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             business.validate_source(source | {"files": files[:-2] + files[-1:]})
 
+    def test_growing_export_above_one_gib_is_accepted_with_individual_bounds(self):
+        files = [{"name": "registry_agency_data_mega" + (f"_part{i}" if i > 1 else "") + ".csv", "bytes": 128 * 1024 * 1024, "git_blob_sha1": "a" * 40, "sha256": "b" * 64} for i in range(1, 17)]
+        source = {"repo": business.REPO, "path": business.SOURCE_PATH, "commit": "a" * 40, "files": files}
+        business.validate_source(source)
+        with self.assertRaises(ValueError):
+            business.validate_source(source | {"files": [files[0] | {"bytes": 128 * 1024 * 1024 + 1}, *files[1:]]})
+
     def test_blob_git_hash_and_local_sha_are_both_checked(self):
         import hashlib
         payload = b"test,csv\n"
