@@ -1663,16 +1663,21 @@ try {
             $stmt = $pdo->prepare('SELECT cadastral_id, latitude AS lat, longitude AS lng FROM parcels WHERE cadastral_id = :id LIMIT 1');
             $stmt->execute(['id' => $id]);
             $plot = $stmt->fetch();
-            if (!$plot && !isset($registry['by_id'][$id])) respond(['error' => 'No record was found for this cadastral identifier.'], 404);
-            if (!$plot) $plot = ['cadastral_id' => $id, 'lat' => null, 'lng' => null];
             $cadastreRecord = cadastre_plot($id, $cadastre);
+            if (!$plot && !isset($registry['by_id'][$id]) && $cadastreRecord === null) respond(['error' => 'No record was found for this cadastral identifier.'], 404);
+            if (!$plot) $plot = ['cadastral_id' => $id, 'lat' => null, 'lng' => null];
             respond(['plot' => registry_plot($plot, $registry), 'sources' => registry_plot_sources($id, $registry),
                 'cadastre' => $cadastreRecord, 'cadastre_status' => cadastre_plot_status($cadastreRecord, $cadastre)]);
         }
         $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng, ' . document_flags_select() . ' FROM parcels p ' . document_flags_join() . ' WHERE p.cadastral_id = :id LIMIT 1');
         $stmt->execute(['id' => $id]);
         $plot = $stmt->fetch();
-        if (!$plot) respond(['error' => 'No record was found for this cadastral identifier.'], 404);
+        if (!$plot) {
+            $cadastreRecord = cadastre_plot($id, $cadastre);
+            if ($cadastreRecord === null) respond(['error' => 'No record was found for this cadastral identifier.'], 404);
+            respond(['plot' => serialize_plot(array_merge(['cadastral_id' => $id, 'lat' => null, 'lng' => null], empty_document_flags())),
+                'sources' => [], 'cadastre' => $cadastreRecord, 'cadastre_status' => cadastre_plot_status($cadastreRecord, $cadastre)]);
+        }
         $plot = serialize_plot($plot);
 
         $stmt = $pdo->prepare(

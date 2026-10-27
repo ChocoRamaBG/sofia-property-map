@@ -20,7 +20,7 @@ from ftplib import FTP_TLS, error_perm
 from pathlib import Path
 from uuid import uuid4
 
-from deploy_registry_ftps import read_remote
+from deploy_site_ftps import read_remote
 
 PRIVATE = "/htdocs/private"
 ACTIVE = f"{PRIVATE}/business-active.json"
