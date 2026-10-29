@@ -3,6 +3,8 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +14,11 @@ IDS = {'68134.1.1', '68134.1.2', '68134.1.3'}
 
 
 class CataloguePublicationTests(unittest.TestCase):
+    def test_cadastral_publisher_has_no_excel_dependency(self):
+        script = Path(__file__).with_name('deploy_cadastre_ftps.py')
+        result = subprocess.run([sys.executable, '-S', str(script), '--help'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='sofia-catalogue-publish-test-')
         self.addCleanup(temporary.cleanup)

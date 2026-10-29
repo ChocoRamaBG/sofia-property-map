@@ -18,7 +18,7 @@ from ftplib import FTP_TLS, error_perm
 from pathlib import Path
 from uuid import uuid4
 
-from deploy_registry_ftps import read_remote
+from deploy_site_ftps import read_remote
 from refresh_cadastre import (
     MAX_MANIFEST_BYTES, MAX_INDEX_BYTES, MAX_SHARD_BYTES,
     check_manifest, digest, file_digest, json_bytes, read_json,
