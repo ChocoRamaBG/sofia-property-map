@@ -64,6 +64,7 @@ def main() -> None:
     parser.add_argument('--output', type=Path)
     parser.add_argument('--wait-business-map', type=int, default=0, help='Bounded wait for a staged legacy company snapshot to gain its point index')
     parser.add_argument('--require-parcel-catalogue', action='store_true')
+    parser.add_argument('--require-fresh-market', action='store_true')
     args = parser.parse_args()
     if not 0 <= args.wait_business_map <= 600:
         parser.error('--wait-business-map must be between 0 and 600 seconds')
@@ -133,6 +134,8 @@ def main() -> None:
         if 'function development_plot_locations' not in development_api or 'parcel_catalogue_iterator' not in development_api:
             raise ValueError('Deployed construction feed still depends on legacy coordinates')
         report['parcel_catalogue'] = verify_parcel_catalogue(ftp, args.require_parcel_catalogue)
+        from verify_market_snapshot import verify_active_market
+        report['market'] = verify_active_market(ftp, require_fresh=args.require_fresh_market)
         business_api = read('business-data.php', 128 * 1024)
         if 'registered_office_address_association' not in business_api or 'function business_search' not in business_api or 'function business_viewport' not in business_api:
             raise ValueError('Deployed read-only business API is missing')

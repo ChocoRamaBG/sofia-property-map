@@ -27,6 +27,8 @@ MAX_MANIFEST_BYTES = 256 * 1024
 MAX_STATE_BYTES = 64 * 1024 * 1024
 MAX_STATE_COMPRESSED_BYTES = 9 * 1024 * 1024
 MAX_CAPTURE_BYTES = 96 * 1024 * 1024
+TOP_OFFERS_PREVIEW_LIMIT = 30
+DAILY_CANDIDATES_PREVIEW_LIMIT = 50
 HEX32 = re.compile(r"[a-f0-9]{32}")
 HEX64 = re.compile(r"[a-f0-9]{64}")
 OFFER_ID = re.compile(r"[a-z0-9]{6,64}")
@@ -297,6 +299,59 @@ def validate_manifest(manifest):
         raise ValueError("Listing counts do not reconcile")
 
 
+def validate_summary_projection(summary):
+    """The overview is a bounded projection, never the complete listing feed.
+
+    Earlier immutable summaries have no projection marker and remain readable.
+    New summaries make preview sizes and complete retrieval explicit, without
+    duplicating every fine-grained comparison partition inside the overview.
+    """
+    projection = summary.get("methodology", {}).get("summary_projection")
+    if projection is None:
+        return
+    expected = {"version": 2, "neighborhood_cohorts": "count_only", "listing_details_action": "listings",
+                "top_offers_limit": TOP_OFFERS_PREVIEW_LIMIT,
+                "daily_candidates_limit": DAILY_CANDIDATES_PREVIEW_LIMIT,
+                "daily_candidates_filter": "daily_only=1"}
+    if projection != expected:
+        raise ValueError("Invalid summary projection contract")
+    counts = summary.get("counts", {})
+    total = counts.get("listing_count")
+    if type(total) is not int or not 1 <= total <= MAX_LISTINGS:
+        raise ValueError("Invalid summary listing count")
+    for field in ("eligible_count", "daily_candidate_count"):
+        if type(counts.get(field)) is not int or not 0 <= counts[field] <= total:
+            raise ValueError("Invalid complete summary candidate count")
+    if summary.get("daily_candidates_total") != counts["daily_candidate_count"]:
+        raise ValueError("Daily candidate totals do not reconcile")
+    for field, total_field, preview_field, limit in (
+        ("top_offers", "eligible_count", "top_offers_preview_count", TOP_OFFERS_PREVIEW_LIMIT),
+        ("daily_candidates", "daily_candidate_count", "daily_candidates_preview_count", DAILY_CANDIDATES_PREVIEW_LIMIT),
+    ):
+        rows = summary.get(field)
+        expected_count = min(counts[total_field], limit)
+        if not isinstance(rows, list) or len(rows) != expected_count or counts.get(preview_field) != expected_count:
+            raise ValueError("Summary preview counts do not reconcile")
+        seen = set()
+        for offer in rows:
+            if not isinstance(offer, dict) or set(offer) - PUBLIC_FIELDS or not OFFER_ID.fullmatch(str(offer.get("id", ""))) or offer["id"] in seen:
+                raise ValueError("Invalid summary preview offer")
+            validate_public_enrichment(offer)
+            canonical_offer_id(offer.get("url"), offer["id"])
+            seen.add(offer["id"])
+    neighborhoods = summary.get("neighborhoods")
+    if not isinstance(neighborhoods, list):
+        raise ValueError("Invalid summary neighborhood statistics")
+    cohorts = 0
+    for row in neighborhoods:
+        if (not isinstance(row, dict) or "cohorts" in row or type(row.get("cohort_count")) is not int
+                or type(row.get("comparable_count")) is not int or not 0 <= row["cohort_count"] <= row["comparable_count"]):
+            raise ValueError("Invalid compact neighborhood cohort count")
+        cohorts += row["cohort_count"]
+    if counts.get("comparison_cohort_count") != cohorts:
+        raise ValueError("Summary cohort counts do not reconcile")
+
+
 def validate_snapshot(output):
     """Normal producer validation: all hashes, counts, identity and public schema."""
     root = Path(output)
@@ -321,6 +376,8 @@ def validate_snapshot(output):
         content = json.loads(decoded)
         if content.get("snapshot_id") != identifier:
             raise ValueError("Market file belongs to another snapshot")
+        if desc["path"] == manifest["summary_file"]["path"]:
+            validate_summary_projection(content)
         if desc["path"] == manifest["state_file"]["path"] and manifest["mode"] == "daily":
             completion = manifest["capture"]["completion"]
             evidence = content.get("audit", {}).get("completion")

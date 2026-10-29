@@ -8,6 +8,11 @@ on:
         required: false
         default: false
         type: boolean
+      require_fresh_market:
+        description: 'Require the active price dataset to be a daily capture within 48 hours'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -29,12 +34,16 @@ jobs:
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           REQUIRE_PARCEL_CATALOGUE: ${{ inputs.require_parcel_catalogue }}
+          REQUIRE_FRESH_MARKET: ${{ inputs.require_fresh_market }}
         run: |
+          verify_args=(--output seed/verification/published-site.json)
           if [ "$REQUIRE_PARCEL_CATALOGUE" = "true" ]; then
-            python scripts/verify_published_site.py --require-parcel-catalogue --output seed/verification/published-site.json
-          else
-            python scripts/verify_published_site.py --output seed/verification/published-site.json
+            verify_args+=(--require-parcel-catalogue)
           fi
+          if [ "$REQUIRE_FRESH_MARKET" = "true" ]; then
+            verify_args+=(--require-fresh-market)
+          fi
+          python scripts/verify_published_site.py "${verify_args[@]}"
       - name: Keep verification evidence
         uses: actions/upload-artifact@v4
         with:

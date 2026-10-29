@@ -22,6 +22,7 @@ from imot_location import LocationResolver
 from imot_market_format import (
     VERSION, MAX_LISTINGS, MAX_SHARD_BYTES, MAX_SUMMARY_BYTES, MAX_MANIFEST_BYTES,
     MAX_STATE_BYTES, MAX_STATE_COMPRESSED_BYTES, MAX_CAPTURE_BYTES, MAX_SHARDS, SHARD_ROWS, canonical_offer_id, digest,
+    TOP_OFFERS_PREVIEW_LIMIT, DAILY_CANDIDATES_PREVIEW_LIMIT,
     json_bytes, number, stable_key, text, timestamp, utc_now, validate_snapshot,
 )
 
@@ -559,8 +560,13 @@ def build_snapshot(capture, output, previous=None):
         cohort_groups = defaultdict(list)
         for offer in valid:
             cohort_groups[cohort_key(offer)].append(offer)
-        cohorts = [{"key": cohort, "type_key": rows[0]["type_key"], "type_bg": rows[0]["type_bg"], "vat_basis": rows[0]["vat_basis"], "construction_cohort": rows[0]["construction_cohort"], **stats([x["eur_per_sqm"] for x in rows])} for cohort, rows in sorted(cohort_groups.items())]
-        neighborhoods.append({"key": key, "label_bg": offers[0]["neighborhood_bg"], "count": len(offers), "priced_count": len([x for x in offers if x["price_eur"] is not None]), "comparable_count": len(valid), "headline_vat_basis": "included", **stats([x["eur_per_sqm"] for x in inclusive]), "median_price_eur": round(statistics.median([x["price_eur"] for x in inclusive]), 2) if inclusive else None, "cohorts": cohorts})
+        # Fine-grained comparison partitions grow with newly extracted facts.
+        # They are not a dashboard input: repeating every long key and group
+        # statistic here can exceed the bounded summary while the complete
+        # listing dataset is valid. Preserve exact partition counts and all
+        # neighborhood/VAT statistics; every offer keeps its comparison and
+        # cohort key in the independently paginated, byte-bounded shards.
+        neighborhoods.append({"key": key, "label_bg": offers[0]["neighborhood_bg"], "count": len(offers), "priced_count": len([x for x in offers if x["price_eur"] is not None]), "comparable_count": len(valid), "headline_vat_basis": "included", **stats([x["eur_per_sqm"] for x in inclusive]), "median_price_eur": round(statistics.median([x["price_eur"] for x in inclusive]), 2) if inclusive else None, "cohort_count": len(cohort_groups)})
         neighborhoods[-1]["count"] = len(offers)
         neighborhoods[-1]["headline_priced_count"] = len(inclusive)
         neighborhoods[-1]["by_vat_basis"] = vat_statistics(valid)
@@ -585,6 +591,9 @@ def build_snapshot(capture, output, previous=None):
     counts["agency_identity_count"] = sum(x["agency"] is not None for x in listings)
     counts["agency_phone_count"] = sum(bool(x["agency"] and x["agency"]["phone"]) for x in listings)
     counts["terms_review_count"] = sum(bool(x["analysis"]["risk_flags"]) for x in listings)
+    counts["comparison_cohort_count"] = sum(row["cohort_count"] for row in neighborhoods)
+    counts["top_offers_preview_count"] = min(len(eligible), TOP_OFFERS_PREVIEW_LIMIT)
+    counts["daily_candidates_preview_count"] = min(len(daily_candidates), DAILY_CANDIDATES_PREVIEW_LIMIT)
     source_dates = [x["observed_at"] for x in listings if x["observed_at"]]
     sources = capture.get("completion", {}).get("sources", [])
     coverage = {"city_bg": "София", "scope_bg": capture.get("scope_bg") or "Продажби на 2-, 3- и 4-стайни апартаменти; обяви, а не сключени сделки", "construction_year_min": capture.get("scope", {}).get("construction_year_min"), "price_min_eur": capture.get("scope", {}).get("price_min_eur"), "price_scope": capture.get("scope", {}).get("price_scope"), "source_date_min": min(source_dates), "source_date_max": max(source_dates), "captured_source_count": len(sources), "requested_neighborhood_count": capture.get("requested_neighborhood_count"), "captured_neighborhood_count": capture.get("captured_neighborhood_count"), "neighborhood_count": len(neighborhoods), "is_historical": historical, "availability_verified": False, "capture_complete": not historical, "notes_bg": "Исторически импорт от септември 2024 г. Наличността на обявите не е проверена." if historical else "Завършен обход на избраните категории и ценови диапазони. Обява, видяна при обхода, не гарантира наличност."}
@@ -607,8 +616,15 @@ def build_snapshot(capture, output, previous=None):
         "filter_options": {"neighborhoods": [{"key": x["key"], "label_bg": x["label_bg"], "count": x["count"]} for x in neighborhoods], "types": [{"key": key, "label_bg": type_labels[key], "count": count} for key, count in sorted(type_count.items())], "vat_bases": [{"key": key, "label_bg": VAT_LABELS[key], "count": count} for key, count in sorted(vat_count.items())]},
         "methodology": {"method_version": COMPARISON_METHOD_VERSION, "price_basis": "advertised_asking_price", "currency": "EUR", "bgn_per_eur": BGN_PER_EUR, "minimum_peer_count": MIN_PEERS, "deal_discount_pct": DEAL_DISCOUNT_PCT, "extreme_discount_pct": EXTREME_DISCOUNT_PCT, "peer_fields": ["neighborhood_key", "type_key", "vat_basis", "construction_cohort", "completion_stage", "area_basis", "floor_band", "construction_type", "furnishing", "elevator", "actual_year_evidence"], "area_tolerance_pct": AREA_TOLERANCE * 100, "building_year_tolerance": YEAR_TOLERANCE, "floor_tolerance": FLOOR_TOLERANCE, "condition_when_known": True, "street_sample_minimum": MIN_PEERS, "comparison_excludes_self": True, "trimmed_mean_each_tail_pct": 10, "trimmed_mean_min_count": 20,
             "notes_bg": ["Сравняваме офертни цени, а не продажни сделки или оценка на имота.", "Референтната група е същият квартал, тип апартамент, ДДС и година на строеж преди/от 2021 г. Неизвестните години и неизвестният ДДС образуват отделни групи.", "Самата обява е изключена от референтната медиана. Нужни са поне 8 други обяви.", "Годината на строеж и площта са заявени от рекламодателя. Групата с неизвестна година може да съдържа различни възрасти на сградите. Няма автоматично свързване с кадастър или официален Акт 16.", "Една обява се брои веднъж по ID. Различни обяви за един физически имот може да останат отделни.", "Средните стойности в заглавните показатели включват само цените с включен/неначисляван ДДС. Цени без или с неизвестен ДДС не се смесват с тях.", "Неизвестният ДДС позволява само сравнение с други цени с неизвестен ДДС. Тези сравнения не предполагат крайна цена и по подразбиране не изпращат известия.", "При обявена цена за кв.м общата сума се изчислява като тази цена × обявената площ и е отбелязана като изчислена. Промяна на площта или ценовата база не създава известие за намалена цена.", "Липсваща валута не се предполага. Не начисляваме ДДС автоматично."]},
-        "top_offers": eligible[:30], "daily_candidates": daily_candidates[:50], "daily_candidates_total": len(daily_candidates), "history": {"baseline": baseline, "alert_baseline_at": captured_at if baseline else previous.get("alert_baseline_at"), "same_day_refresh": same_capture_date, "series": history[-180:], "notes_bg": "До 180 завършени дневни снимки. Историята на отделна обява пази до 64 промени в цената за 90 дни; отсъствието не означава продажба."}}
+        "top_offers": eligible[:TOP_OFFERS_PREVIEW_LIMIT], "daily_candidates": daily_candidates[:DAILY_CANDIDATES_PREVIEW_LIMIT], "daily_candidates_total": len(daily_candidates), "history": {"baseline": baseline, "alert_baseline_at": captured_at if baseline else previous.get("alert_baseline_at"), "same_day_refresh": same_capture_date, "series": history[-180:], "notes_bg": "До 180 завършени дневни снимки. Историята на отделна обява пази до 64 промени в цената за 90 дни; отсъствието не означава продажба."}}
     summary["history"]["methodology_changed"] = methodology_changed
+    summary["methodology"]["summary_projection"] = {
+        "version": 2, "neighborhood_cohorts": "count_only",
+        "listing_details_action": "listings",
+        "top_offers_limit": TOP_OFFERS_PREVIEW_LIMIT,
+        "daily_candidates_limit": DAILY_CANDIDATES_PREVIEW_LIMIT,
+        "daily_candidates_filter": "daily_only=1",
+    }
     summary["coverage"]["enrichment"] = capture.get("enrichment", {})
     summary["coverage"]["location_reference_date"] = resolver.reference_date
     summary["coverage"]["location_source_url"] = "https://kais.cadastre.bg/bg/OpenData"

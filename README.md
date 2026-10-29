@@ -101,6 +101,14 @@ The source card's professional profile supports the `agency` seller label. `priv
 
 The dashboard provides neighborhood mean/median and sample sizes, top comparisons, combined listing filters, a bounded market history and local alert preferences. Only factual fields and original advert links are public; descriptions, photos and private-seller contacts are excluded. Advertised Act 16 or construction status is an advertiser claim and is never joined to official records by address or proximity.
 
+### Bounded market overview and publication health
+
+The market summary retains complete neighborhood/VAT statistics and exact fine-grained cohort counts. Detailed comparisons live in the complete paginated listing shards; unused cohort arrays are not repeated inside the overview. The original 2 MiB summary limit remains enforced. The first 30 top offers and 50 daily candidates are explicit previews with reconciled counts; alert queries paginate the complete `daily_only=1` feed.
+
+After publication, `verify_market_snapshot.py --expected-pointer ... --require-fresh` reads the active pointer, manifest and hash-checked summary over verified FTPS, reconciles the published counts and requires the original daily capture to be within 48 hours. The daily workflow retains this readback report. General website verification reports market capture age separately; `require_fresh_market=true` makes stale prices a verification failure. A green asset check alone must never be presented as a successful price refresh.
+
+Manual recovery can set **reuse_enriched_run_id** to an original completed daily run whose full capture and enrichment succeeded within six hours, even when a later build failed. This is mutually exclusive with raw capture recovery. The recovery checks same-repository main-branch origin, successful source-step timestamps, artifact hash/ZIP bounds, unchanged source prices/identities/context, and the current closed enrichment schemas. It preserves exact raw/enriched bytes and original capture/check dates, then runs the current comparison builder and verified publisher without another crawl. Scheduled runs leave both inputs blank and perform the normal fresh crawl. Certificate verification remains mandatory; provider TLS expiry stops the update.
+
 ### Buyer purchase budget
 
 Every listing shows an estimated cash purchase budget alongside the asking price. `src/lib/purchaseCosts.js` contains dated official source links, the progressive notary tariff/cap and euro conversion, Sofia acquisition tax (3%), registration (0.1%, minimum €5.11), and separate property/notary/commission VAT handling. The user assumption is agency commission 3% including VAT, private seller 0%; unknown sellers explicitly budget for agency commission. All assumptions are editable. Unknown property VAT shows two scenarios rather than one purported final total.

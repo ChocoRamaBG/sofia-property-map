@@ -1,5 +1,7 @@
 """Evidence and publication invariants for the asking-price comparison model."""
 import copy
+from collections import defaultdict
+from datetime import datetime
 import json
 from pathlib import Path
 import tempfile
@@ -7,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import imot_market as market
-from imot_market_format import MAX_SHARD_BYTES, json_bytes, read_state_payload, validate_public_enrichment, validate_snapshot
+from imot_market_format import MAX_SHARD_BYTES, MAX_SUMMARY_BYTES, json_bytes, read_state_payload, validate_public_enrichment, validate_snapshot, validate_summary_projection
 
 
 DATE = "2026-10-27T10:00:00Z"
@@ -170,6 +172,69 @@ class ModelTests(unittest.TestCase):
     def test_legacy_v2_estimate_remains_readable(self):
         estimate = {"status": "available", "method_version": 2, "peer_count": 8, "location_basis": "neighborhood", "median_eur_per_sqm": 2500, "p25_eur_per_sqm": 2400, "p75_eur_per_sqm": 2600, "indicated_price_eur": 200000, "range_low_eur": 192000, "range_high_eur": 208000}
         validate_public_enrichment({"asking_estimate": estimate})
+
+    def test_real_scale_fine_grained_cohorts_fit_bounded_summary(self):
+        # New advertised attributes split one large partition into thousands of
+        # small partitions. The old repeated-cohort overview exceeds 2 MiB even
+        # though this is only a fraction of the allowed 50,000 listing census.
+        rows = []
+        for i in range(6000):
+            row = raw_offer(i, neighborhood=f"Пробен район {i // 800}")
+            row["property_features"]["construction_type"] = ["brick", "panel", "epk", "monolithic", "other", "unknown"][i % 6]
+            row["property_features"]["furnishing"] = ["furnished", "partial", "unfurnished", "unknown"][(i // 6) % 4]
+            row["property_features"]["elevator"] = ["yes", "no", "unknown"][(i // 24) % 3]
+            row["analysis"]["completion_stage"] = ["planned", "completed", "unknown"][(i // 72) % 3]
+            row["analysis"]["area_basis"] = ["net", "gross", "terrace_included", "unknown"][(i // 216) % 4]
+            rows.append(row)
+        offers, summary, _, manifest = self.build(rows)
+        grouped = defaultdict(lambda: defaultdict(list))
+        for offer in offers:
+            grouped[offer["neighborhood_key"]][market.cohort_key(offer)].append(offer)
+        old = copy.deepcopy(summary)
+        for row in old["neighborhoods"]:
+            row["cohorts"] = [{"key": key, "type_key": items[0]["type_key"], "type_bg": items[0]["type_bg"], "vat_basis": items[0]["vat_basis"], "construction_cohort": items[0]["construction_cohort"], **market.stats([item["eur_per_sqm"] for item in items])} for key, items in grouped[row["key"]].items()]
+        self.assertGreater(len(json_bytes(old)), MAX_SUMMARY_BYTES)
+        self.assertLess(len(json_bytes(summary)), MAX_SUMMARY_BYTES // 4)
+        self.assertEqual(len(offers), 6000)
+        self.assertEqual(len({row["id"] for row in offers}), 6000)
+        self.assertEqual(sum(row["count"] for row in summary["neighborhoods"]), 6000)
+        self.assertEqual(summary["counts"]["comparison_cohort_count"], sum(row["cohort_count"] for row in summary["neighborhoods"]))
+        self.assertTrue(all("cohorts" not in row for row in summary["neighborhoods"]))
+        self.assertTrue(all(row["comparison"]["cohort_key"] for row in offers))
+        self.assertTrue(all(shard["bytes"] <= MAX_SHARD_BYTES for shard in manifest["listing_shards"]))
+
+    def test_candidate_preview_counts_do_not_limit_complete_listing_feed(self):
+        rows = [raw_offer(i) for i in range(310)]
+        _, _, previous, _ = self.build(rows)
+        for row in rows[:60]:
+            row["price"] = 140000
+        offers, summary, _, _ = self.build(rows, previous)
+        self.assertEqual(summary["daily_candidates_total"], 60)
+        self.assertEqual(summary["counts"]["daily_candidate_count"], 60)
+        self.assertEqual(summary["counts"]["daily_candidates_preview_count"], 50)
+        self.assertEqual(len(summary["daily_candidates"]), 50)
+        self.assertEqual(summary["counts"]["top_offers_preview_count"], 30)
+        self.assertEqual(len(summary["top_offers"]), 30)
+        complete = [row for row in offers if row["comparison"]["eligible"] and row["change"]["kind"] == "price_drop"]
+        self.assertEqual(len(complete), 60)
+        self.assertEqual(summary["methodology"]["summary_projection"]["daily_candidates_filter"], "daily_only=1")
+        broken = copy.deepcopy(summary)
+        broken["daily_candidates"].pop()
+        with self.assertRaises(ValueError):
+            validate_summary_projection(broken)
+
+    def test_rebuild_preserves_capture_timestamp_for_48_hour_alert_guard(self):
+        rows = [raw_offer(i) for i in range(10)]
+        _, _, previous, _ = self.build(rows)
+        rows[0]["price"] = 140000
+        rebuilt_at = "2026-10-29T10:00:01Z"
+        with patch.object(market, "utc_now", return_value=rebuilt_at):
+            offers, summary, _, _ = self.build(rows, previous)
+        self.assertEqual(summary["captured_at"], DATE)
+        self.assertEqual(summary["generated_at"], rebuilt_at)
+        self.assertEqual(summary["daily_candidates"][0]["observed_at"], DATE)
+        age_seconds = (datetime.fromisoformat(rebuilt_at.replace("Z", "+00:00")) - datetime.fromisoformat(summary["captured_at"].replace("Z", "+00:00"))).total_seconds()
+        self.assertGreater(age_seconds, 48 * 3600)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ from ftplib import FTP_TLS, error_perm
 from pathlib import Path
 from uuid import uuid4
 
-from deploy_registry_ftps import read_remote
+from deploy_site_ftps import read_remote
 from imot_market_format import (
     HEX32, MAX_MANIFEST_BYTES, MAX_SHARD_BYTES, MAX_STATE_BYTES, MAX_STATE_COMPRESSED_BYTES,
     MAX_SUMMARY_BYTES, VERSION, digest, json_bytes, timestamp,
