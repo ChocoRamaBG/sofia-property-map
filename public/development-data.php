@@ -11,6 +11,50 @@ const DEVELOPMENT_LABELS = [
     'exploitation_certificates_legacy' => 'Архивни удостоверения за въвеждане в експлоатация',
 ];
 
+function development_plot_locations(PDO $pdo, array $matchingIds, array $pageIds): array {
+    require_once __DIR__ . '/boundary-data.php';
+    $catalogue = load_parcel_catalogue_snapshot();
+    $mappedTotal = 0; $bounds = null; $coordinates = [];
+    if ($catalogue !== null) {
+        $missing = $pageIds;
+        // Finish the full verified stream even when the selected feed is empty.
+        foreach (parcel_catalogue_iterator($catalogue) as $entry) {
+            $id = $entry['cadastral_id'];
+            if (isset($matchingIds[$id]) && $entry['lat'] !== null) {
+                $mappedTotal++;
+                if ($bounds === null) $bounds = ['south' => $entry['lat'], 'north' => $entry['lat'], 'west' => $entry['lng'], 'east' => $entry['lng']];
+                else {
+                    $bounds['south'] = min($bounds['south'], $entry['lat']); $bounds['north'] = max($bounds['north'], $entry['lat']);
+                    $bounds['west'] = min($bounds['west'], $entry['lng']); $bounds['east'] = max($bounds['east'], $entry['lng']);
+                }
+            }
+            if (!isset($pageIds[$id])) continue;
+            $coordinates[$id] = ['cadastral_id' => $id, 'lat' => $entry['lat'], 'lng' => $entry['lng'],
+                'catalogue_status' => 'current', 'catalogue_source' => parcel_catalogue_source($catalogue, $entry),
+                'coordinate_method' => $entry['lat'] === null ? 'unavailable' : 'official_geometry_interior'];
+            unset($missing[$id]);
+        }
+        foreach ($missing as $id => $_) $coordinates[$id] = ['cadastral_id' => $id, 'lat' => null, 'lng' => null,
+            'catalogue_status' => boundary_id_valid($id) ? 'not_in_latest_snapshot' : 'unavailable',
+            'catalogue_source' => parcel_catalogue_source($catalogue), 'coordinate_method' => 'unavailable'];
+    } else {
+        // Legacy snapshots continue using the originally imported SQL points.
+        foreach (array_chunk(array_keys($matchingIds), 1000) as $chunk) {
+            $summary = $pdo->query('SELECT COUNT(*) AS total, MIN(latitude) AS south, MAX(latitude) AS north, MIN(longitude) AS west, MAX(longitude) AS east FROM parcels WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND cadastral_id IN (' . quoted_ids($pdo, $chunk) . ')')->fetch();
+            $mappedTotal += (int)$summary['total'];
+            if ((int)$summary['total'] === 0) continue;
+            foreach (['south', 'west'] as $edge) $bounds[$edge] = isset($bounds[$edge]) ? min($bounds[$edge], (float)$summary[$edge]) : (float)$summary[$edge];
+            foreach (['north', 'east'] as $edge) $bounds[$edge] = isset($bounds[$edge]) ? max($bounds[$edge], (float)$summary[$edge]) : (float)$summary[$edge];
+        }
+        foreach (array_chunk(array_keys($pageIds), 1000) as $chunk) {
+            foreach ($pdo->query('SELECT cadastral_id, latitude AS lat, longitude AS lng FROM parcels WHERE cadastral_id IN (' . quoted_ids($pdo, $chunk) . ')')->fetchAll() as $plot) {
+                $coordinates[$plot['cadastral_id']] = ['cadastral_id' => $plot['cadastral_id'], 'lat' => $plot['lat'] === null ? null : (float)$plot['lat'], 'lng' => $plot['lng'] === null ? null : (float)$plot['lng']];
+            }
+        }
+    }
+    return ['mapped_total' => $mappedTotal, 'bounds' => $bounds, 'coordinates' => $coordinates, 'parcel_catalogue' => parcel_catalogue_metadata($catalogue)];
+}
+
 function development_integer_param(string $key, int $default, int $minimum, int $maximum): int {
     $raw = $_GET[$key] ?? null;
     if ($raw === null || $raw === '') return $default;
@@ -275,23 +319,10 @@ function development_response(PDO $pdo, ?array $registry, array $params): array 
     }
     unset($groups);
 
-    $mappedTotal = 0;
-    $bounds = null;
-    foreach (array_chunk(array_keys($matchingIds), 1000) as $chunk) {
-        $summary = $pdo->query('SELECT COUNT(*) AS total, MIN(latitude) AS south, MAX(latitude) AS north, MIN(longitude) AS west, MAX(longitude) AS east FROM parcels WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND cadastral_id IN (' . quoted_ids($pdo, $chunk) . ')')->fetch();
-        $mappedTotal += (int)$summary['total'];
-        if ((int)$summary['total'] === 0) continue;
-        foreach (['south', 'west'] as $edge) $bounds[$edge] = isset($bounds[$edge]) ? min($bounds[$edge], (float)$summary[$edge]) : (float)$summary[$edge];
-        foreach (['north', 'east'] as $edge) $bounds[$edge] = isset($bounds[$edge]) ? max($bounds[$edge], (float)$summary[$edge]) : (float)$summary[$edge];
-    }
     $pageIds = [];
     foreach ($items as $item) foreach ($item['cadastral_ids'] as $id) $pageIds[$id] = true;
-    $coordinates = [];
-    foreach (array_chunk(array_keys($pageIds), 1000) as $chunk) {
-        foreach ($pdo->query('SELECT cadastral_id, latitude AS lat, longitude AS lng FROM parcels WHERE cadastral_id IN (' . quoted_ids($pdo, $chunk) . ')')->fetchAll() as $plot) {
-            $coordinates[$plot['cadastral_id']] = ['cadastral_id' => $plot['cadastral_id'], 'lat' => $plot['lat'] === null ? null : (float)$plot['lat'], 'lng' => $plot['lng'] === null ? null : (float)$plot['lng']];
-        }
-    }
+    $locations = development_plot_locations($pdo, $matchingIds, $pageIds);
+    $mappedTotal = $locations['mapped_total']; $bounds = $locations['bounds']; $coordinates = $locations['coordinates'];
     $feed = [];
     foreach ($pageIdentities as $identity) {
         if (!isset($items[$identity])) throw new RuntimeException('A selected development observation is missing.');
@@ -347,7 +378,7 @@ function development_response(PDO $pdo, ?array $registry, array $params): array 
             'identity_fallback_documents' => $selectedFallbackIdentities,
             'unknown_date_documents' => $selectedTypeCounts['total'] - $dated, 'linked_plots' => count($matchingIds),
             'mapped_plots' => $mappedTotal, 'published_investor_documents' => $knownInvestor, 'by_source' => $selectedTypeCounts],
-        'periods' => array_values($periods), 'items' => $feed, 'bounds' => $bounds,
+        'periods' => array_values($periods), 'items' => $feed, 'bounds' => $bounds, 'parcel_catalogue' => $locations['parcel_catalogue'],
         'pagination' => ['offset' => $params['offset'], 'limit' => $params['limit'], 'total' => $selectedTypeCounts['total'],
             'has_more' => $params['offset'] + count($feed) < $selectedTypeCounts['total'], 'max_offset' => 2000]];
 }

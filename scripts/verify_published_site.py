@@ -129,6 +129,9 @@ def main() -> None:
         catalogue_api = read('parcel-catalogue.php', 128 * 1024)
         if not all(marker in catalogue_api for marker in ('function parcel_catalogue_viewport', 'not_in_latest_snapshot', 'official_geometry_interior')):
             raise ValueError('Deployed API lacks the authoritative official parcel catalogue reader')
+        development_api = read('development-data.php', 128 * 1024)
+        if 'function development_plot_locations' not in development_api or 'parcel_catalogue_iterator' not in development_api:
+            raise ValueError('Deployed construction feed still depends on legacy coordinates')
         report['parcel_catalogue'] = verify_parcel_catalogue(ftp, args.require_parcel_catalogue)
         business_api = read('business-data.php', 128 * 1024)
         if 'registered_office_address_association' not in business_api or 'function business_search' not in business_api or 'function business_viewport' not in business_api:
@@ -176,7 +179,7 @@ def main() -> None:
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True, 'municipal_address_enrichment': True, 'separate_location_evidence_levels': True, 'collapsible_map_sidebar': True, 'compact_map_tools': True, 'progressive_detail_disclosures': True, 'buyer_purchase_budget': True, 'professional_agency_contacts': True, 'richer_listing_features': True, 'comparison_method3_reader': True, 'dynamic_official_parcel_reader': True, 'parcel_catalogue_provenance': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True, 'municipal_address_enrichment': True, 'separate_location_evidence_levels': True, 'collapsible_map_sidebar': True, 'compact_map_tools': True, 'progressive_detail_disclosures': True, 'buyer_purchase_budget': True, 'professional_agency_contacts': True, 'richer_listing_features': True, 'comparison_method3_reader': True, 'dynamic_official_parcel_reader': True, 'parcel_catalogue_provenance': True, 'development_catalogue_locations': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
