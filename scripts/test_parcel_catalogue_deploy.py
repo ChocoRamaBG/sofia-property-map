@@ -64,6 +64,10 @@ class CataloguePublicationTests(unittest.TestCase):
         with patch.object(deploy, 'read_remote', return_value=b'bad'):
             with self.assertRaises(ValueError): deploy.fetch_catalogue_ids(object(), manifest)
 
+    def test_new_catalogue_cannot_activate_before_reader_upgrade(self):
+        with patch.object(deploy, 'read_remote', return_value=b'<?php // legacy reader'):
+            with self.assertRaises(ValueError): deploy.verify_catalogue_readers(object())
+
     def test_capture_regression_or_large_drop_stops_publication(self):
         previous = dict(captured_at='2026-10-28T10:00:00Z', parcel_count=1000, ambiguous_parcel_count=1,
                         sources=[dict(source_url='https://kais.cadastre.bg/example', captured_at='2026-10-28T10:00:00Z', record_count=1001)])

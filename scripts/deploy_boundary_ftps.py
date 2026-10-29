@@ -145,6 +145,16 @@ def put_verified(ftp: FTP_TLS, remote: str, payload: bytes, limit: int) -> None:
         raise ValueError('Boundary upload failed its byte count or SHA-256 verification')
 
 
+def verify_catalogue_readers(ftp: FTP_TLS) -> None:
+    required = {'parcel-catalogue.php': ('function parcel_catalogue_viewport', 'official_geometry_interior'),
+                'boundary-data.php': ('parcel_catalogue_available', 'mapped_point_count'),
+                'api.php': ('parcel_catalogue_viewport', 'parcel_catalogue_search')}
+    for filename, markers in required.items():
+        source = read_remote(ftp, f'/htdocs/{filename}', 128 * 1024).decode('utf-8')
+        if not all(marker in source for marker in markers):
+            raise ValueError('Publish the compatible current parcel catalogue readers before activating v2 data')
+
+
 def activate(ftp: FTP_TLS, payload: bytes, previous: bytes | None) -> None:
     temporary = f'{PRIVATE}/boundaries-active.{uuid4().hex}.pending.json'
     pending = True
@@ -240,6 +250,8 @@ def main() -> None:
             print('Fetched verified boundary pointer' if raw is not None else 'Confirmed no boundary snapshot is active')
             return
         assert_pointer(ftp, previous)
+        if candidate['version'] == 2:
+            verify_catalogue_readers(ftp)
         original = ftp.pwd()
         try:
             try:
