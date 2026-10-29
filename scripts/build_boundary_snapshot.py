@@ -4,6 +4,8 @@
 Coordinates are transformed, never buffered, simplified, repaired or inferred
 from the coordinate workbook. Native published AREA/PERIM remain separate from
 map-display geometry. Invalid/conflicting parcel IDs are explicitly excluded.
+Version 2 also retains every observed identifier in a complete catalogue;
+verified interior map points and the unchanged polygons activate together.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from zipfile import ZipFile
 from refresh_cadastre import archive_records, load_catalogue, official_download_url, timestamp_valid
 
 REFERENCE_FORMAT = 'boundary-bbox-geojson-v1'
+POINT_METHOD = 'strict_native_and_published_interior_v1'
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_INDEX_BYTES = 10000000
 MAX_SHARD_BYTES = 1024 * 1024
@@ -90,7 +93,7 @@ def descriptor(value, name: str, limit: int, rows: str = 'rows') -> None:
 
 
 def check_manifest(value: dict) -> dict:
-    if not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] != 1 or value.get('reference_format') != REFERENCE_FORMAT or re.fullmatch(r'[a-f0-9]{32}', str(value.get('snapshot_id', ''))) is None:
+    if not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] not in (1, 2) or value.get('reference_format') != REFERENCE_FORMAT or re.fullmatch(r'[a-f0-9]{32}', str(value.get('snapshot_id', ''))) is None:
         raise ValueError('Invalid boundary snapshot identity')
     if not timestamp_valid(value.get('generated_at')) or not timestamp_valid(value.get('captured_at')) or value.get('source_url') != SOURCE_URL or value.get('source_name') != SOURCE_NAME:
         raise ValueError('Invalid official boundary provenance')
@@ -105,6 +108,14 @@ def check_manifest(value: dict) -> dict:
     descriptor(value.get('ambiguous_index'), 'ambiguous.tsv', MAX_INDEX_BYTES)
     if value['index']['rows'] != value['parcel_count'] or value['ambiguous_index']['rows'] != value['ambiguous_parcel_count']:
         raise ValueError('Boundary indexes do not reconcile')
+    catalogue_bytes = 0
+    if value['version'] == 2:
+        descriptor(value.get('catalogue'), 'catalogue.tsv', MAX_INDEX_BYTES)
+        if value.get('point_method') != POINT_METHOD or not integer(value.get('catalogue_count'), 1000, MAX_PARCELS) or not integer(value.get('mapped_point_count'), 0, value['parcel_count']) or not integer(value.get('unmapped_point_count'), 0, MAX_PARCELS):
+            raise ValueError('Official parcel catalogue counts or point method are invalid')
+        if value['catalogue']['rows'] != value['catalogue_count'] or value['catalogue_count'] != value['parcel_count'] + value['ambiguous_parcel_count'] or value['catalogue_count'] > value['record_count'] or value['mapped_point_count'] + value['unmapped_point_count'] != value['catalogue_count'] or value['catalogue']['bytes'] <= 0:
+            raise ValueError('Official parcel catalogue totals do not reconcile')
+        catalogue_bytes = value['catalogue']['bytes']
     sources = value.get('sources')
     if not isinstance(sources, list) or len(sources) != 24:
         raise ValueError('All 24 official district exports are required')
@@ -125,12 +136,117 @@ def check_manifest(value: dict) -> dict:
             raise ValueError('Invalid boundary shard geometry envelope')
     if sum(s['feature_count'] for s in shards) != value['parcel_count'] or sum(s['vertex_count'] for s in shards) != value['vertex_count']:
         raise ValueError('Boundary shard totals do not reconcile')
-    if sum(s['bytes'] for s in shards) + value['index']['bytes'] + value['ambiguous_index']['bytes'] > MAX_DATASET_BYTES:
+    if sum(s['bytes'] for s in shards) + value['index']['bytes'] + value['ambiguous_index']['bytes'] + catalogue_bytes > MAX_DATASET_BYTES:
         raise ValueError('Boundary snapshot exceeds its total byte limit')
     completion = value.get('completion')
     if not isinstance(completion, dict) or completion.get('status') != 'complete' or completion.get('source_count') != 24 or completion.get('record_count') != value['record_count']:
         raise ValueError('Boundary capture is incomplete')
     return value
+
+
+def verified_lines(root: Path, info: dict):
+    """Stream one exact bounded private index, verifying it on exhaustion."""
+    path = Path(root) / info['file']
+    if path.is_symlink() or not path.is_file() or path.stat().st_size != info['bytes'] or info['bytes'] > MAX_INDEX_BYTES:
+        raise ValueError('Official parcel index is absent, linked or exceeds its byte bound')
+    checksum, total = hashlib.sha256(), 0
+    with path.open('rb') as handle:
+        for raw in handle:
+            total += len(raw)
+            checksum.update(raw)
+            if total > info['bytes'] or len(raw) > 256 or not raw.endswith(b'\n'):
+                raise ValueError('Official parcel index has an invalid bounded line')
+            yield raw[:-1].decode('ascii')
+    if total != info['bytes'] or checksum.hexdigest() != info['sha256']:
+        raise ValueError('Official parcel index failed its bytes or SHA-256 check')
+
+
+def catalogue_rows(root: Path, manifest: dict):
+    """Yield complete v2 rows: ID, latitude, longitude, first source, status.
+
+    The source ordinal is the first (lowest) observing district. Conflicting
+    observations retain all source capture evidence in the manifest and never
+    produce a point. Consumers must exhaust the iterator to verify its hash.
+    """
+    check_manifest(manifest)
+    if manifest.get('version') != 2:
+        raise ValueError('The legacy boundary snapshot has no point catalogue')
+    previous, rows, mapped = '', 0, 0
+    for line in verified_lines(root, manifest['catalogue']):
+        fields = line.split('\t')
+        if len(fields) != 5 or CADASTRAL_ID.fullmatch(fields[0]) is None or fields[0] <= previous or not re.fullmatch(r'(?:[0-9]|1[0-9]|2[0-3])', fields[3]) or fields[4] not in ('mapped', 'unavailable'):
+            raise ValueError('Official parcel catalogue row is invalid or not unique and sorted')
+        if fields[4] == 'mapped':
+            if not all(re.fullmatch(r'[0-9]{2}\.[0-9]{7}', x) for x in fields[1:3]):
+                raise ValueError('Official parcel point precision is invalid')
+            lat, lng = map(float, fields[1:3])
+            if not valid_bounds([lng, lat, lng, lat]):
+                raise ValueError('Official parcel point is outside supported Sofia bounds')
+            mapped += 1
+        else:
+            if fields[1] or fields[2]:
+                raise ValueError('An unavailable official parcel cannot publish coordinates')
+            lat = lng = None
+        if manifest['sources'][int(fields[3])]['record_count'] < 1:
+            raise ValueError('The catalogue refers to an empty official source')
+        rows += 1
+        if rows > manifest['catalogue_count']:
+            raise ValueError('Official parcel catalogue exceeds its declared row count')
+        yield fields[0], lat, lng, int(fields[3]), fields[4]
+        previous = fields[0]
+    if rows != manifest['catalogue_count'] or mapped != manifest['mapped_point_count'] or rows - mapped != manifest['unmapped_point_count']:
+        raise ValueError('Official parcel catalogue completion counts disagree')
+
+
+def catalogue_ids(root: Path, manifest: dict) -> set[str]:
+    """Read the complete source-observed ID set, including legacy exclusions."""
+    check_manifest(manifest)
+    if manifest['version'] == 2:
+        return {row[0] for row in catalogue_rows(root, manifest)}
+    identifiers, previous, count = set(), '', 0
+    for line in verified_lines(root, manifest['index']):
+        fields = line.split('\t')
+        if len(fields) != 6 or CADASTRAL_ID.fullmatch(fields[0]) is None or fields[0] <= previous or not fields[5].isdigit():
+            raise ValueError('Previous official boundary index is invalid')
+        south, north, west, east = map(float, fields[1:5])
+        if not valid_bounds([west, south, east, north]) or not 0 <= int(fields[5]) < len(manifest['shards']):
+            raise ValueError('Previous official boundary envelope is invalid')
+        identifiers.add(fields[0]); previous = fields[0]; count += 1
+    if count != manifest['parcel_count']:
+        raise ValueError('Previous official boundary catalogue is incomplete')
+    previous, count = '', 0
+    for key in verified_lines(root, manifest['ambiguous_index']):
+        if CADASTRAL_ID.fullmatch(key) is None or key <= previous or key in identifiers:
+            raise ValueError('Previous official excluded identifier is invalid')
+        identifiers.add(key); previous = key; count += 1
+    if count != manifest['ambiguous_parcel_count']:
+        raise ValueError('Previous official exclusion catalogue is incomplete')
+    return identifiers
+
+
+def verified_interior_point(native, display, transformer):
+    """Derive a point and verify its published rounded coordinates twice.
+
+    No geometry is repaired or altered. An unsuitable interior point leaves the
+    ID in the current catalogue with unavailable coordinates.
+    """
+    from shapely.geometry import Point
+    from shapely.errors import GEOSException
+    from pyproj.exceptions import ProjError
+    try:
+        candidate = native.representative_point()
+        if native.is_empty or display.is_empty or not native.is_valid or not display.is_valid or not native.contains(candidate):
+            return None
+        lng, lat = transformer.transform(candidate.x, candidate.y, errcheck=True) if transformer is not None else (candidate.x, candidate.y)
+        lng, lat = round(lng, 7), round(lat, 7)
+        if not valid_bounds([lng, lat, lng, lat]) or not display.contains(Point(lng, lat)):
+            return None
+        x, y = transformer.transform(lng, lat, direction='INVERSE', errcheck=True) if transformer is not None else (lng, lat)
+        if not all(math.isfinite(v) for v in (x, y)) or not native.contains(Point(x, y)):
+            return None
+        return lat, lng
+    except (ValueError, TypeError, IndexError, OverflowError, GEOSException, ProjError):
+        return None
 
 
 def geometry_vertices(geometry: dict) -> tuple[int, list[float]]:
@@ -162,10 +278,14 @@ def validate_publish_tree(root: Path) -> dict:
         raise ValueError('Boundary publication root is absent or linked')
     manifest = check_manifest(read_json(root / 'manifest.json'))
     names = {'manifest.json', manifest['index']['file'], manifest['ambiguous_index']['file'], *[s['file'] for s in manifest['shards']]}
+    descriptors = [manifest['index'], manifest['ambiguous_index'], *manifest['shards']]
+    if manifest['version'] == 2:
+        names.add(manifest['catalogue']['file'])
+        descriptors.append(manifest['catalogue'])
     if {p.name for p in root.iterdir()} != names:
         raise ValueError('Unexpected or missing boundary publication files')
     index = {}
-    for info in [manifest['index'], manifest['ambiguous_index'], *manifest['shards']]:
+    for info in descriptors:
         path = root / info['file']
         if path.is_symlink() or not path.is_file() or path.stat().st_size != info['bytes'] or file_digest(path) != info['sha256']:
             raise ValueError('Boundary file failed its size or SHA-256 check')
@@ -185,6 +305,11 @@ def validate_publish_tree(root: Path) -> dict:
     ambiguous = (root / manifest['ambiguous_index']['file']).read_text(encoding='utf-8').splitlines()
     if ambiguous != sorted(set(ambiguous)) or any(CADASTRAL_ID.fullmatch(key) is None or key in index for key in ambiguous) or len(ambiguous) != manifest['ambiguous_parcel_count']:
         raise ValueError('Unusable boundary identifiers do not reconcile')
+    catalogue = {row[0]: row[1:] for row in catalogue_rows(root, manifest)} if manifest['version'] == 2 else None
+    if catalogue is not None and set(catalogue) != set(index) | set(ambiguous):
+        raise ValueError('The official catalogue omits or invents observed identifiers')
+    if catalogue is not None and any(catalogue[key][3] != 'unavailable' for key in ambiguous):
+        raise ValueError('An unusable geometry identifier cannot have an official interior point')
     seen = set()
     for position, info in enumerate(manifest['shards']):
         data = read_json(root / info['file'], MAX_SHARD_BYTES)
@@ -200,6 +325,13 @@ def validate_publish_tree(root: Path) -> dict:
                 raise ValueError('Boundary feature/index relationship is invalid')
             if set(props) != {'cadastral_id', 'area_m2', 'perimeter_m', 'source_key', 'vertex_count', 'native_crs'} or not finite(props['area_m2']) or props['area_m2'] <= 0 or not finite(props['perimeter_m']) or props['perimeter_m'] <= 0:
                 raise ValueError('Boundary properties are invalid or exceed their allowlist')
+            if catalogue is not None:
+                from shapely.geometry import Point, shape
+                lat, lng, source, status = catalogue[key]
+                if props['source_key'] != f'sofia-district-{source:02}':
+                    raise ValueError('The official parcel point and geometry source disagree')
+                if status == 'mapped' and not shape(feature['geometry']).contains(Point(lng, lat)):
+                    raise ValueError('Published official point is not strictly inside its complete polygon')
             seen.add(key)
             total += vertices
             shard_bounds = bbox if shard_bounds is None else [min(shard_bounds[0], bbox[0]), min(shard_bounds[1], bbox[1]), max(shard_bounds[2], bbox[2]), max(shard_bounds[3], bbox[3])]
@@ -255,7 +387,7 @@ def build(catalogue_path: Path, archives: Path, output: Path) -> dict:
     output.mkdir(parents=True)
     work = output.parent / f'boundary-{uuid4().hex}.work.sqlite'
     connection = sqlite3.connect(work)
-    connection.execute('CREATE TABLE observations (id TEXT PRIMARY KEY, identity TEXT, feature BLOB, bbox TEXT, vertices INTEGER, unusable INTEGER NOT NULL DEFAULT 0, conflict INTEGER NOT NULL DEFAULT 0)')
+    connection.execute('CREATE TABLE observations (id TEXT PRIMARY KEY, identity TEXT, feature BLOB, bbox TEXT, vertices INTEGER, unusable INTEGER NOT NULL DEFAULT 0, conflict INTEGER NOT NULL DEFAULT 0, latitude REAL, longitude REAL, source_ordinal INTEGER NOT NULL)')
     sources = []
     record_count = duplicates = invalid = 0
     invalid_reasons = {}
@@ -299,6 +431,7 @@ def build(catalogue_path: Path, archives: Path, output: Path) -> dict:
                         if record_count > MAX_PARCELS:
                             raise ValueError('Boundary record limit exceeded')
                         reason = None
+                        point = None
                         try:
                             if geometry_shape.shapeType != shapefile.POLYGON or not 4 <= len(geometry_shape.points) <= MAX_FEATURE_VERTICES:
                                 raise ValueError('unsupported_shape_or_vertex_count')
@@ -320,6 +453,7 @@ def build(catalogue_path: Path, archives: Path, output: Path) -> dict:
                             payload = json_bytes(feature)
                             if len(payload) > MAX_FEATURE_BYTES:
                                 raise ValueError('oversized_feature')
+                            point = verified_interior_point(native_shape, transformed_shape, transformer)
                         except (ValueError, TypeError, IndexError, OverflowError) as error:
                             reason = str(error).split(':', 1)[0]
                             invalid += 1
@@ -327,9 +461,9 @@ def build(catalogue_path: Path, archives: Path, output: Path) -> dict:
                             identity, payload, bbox, vertices = '', b'', [], 0
                         previous = connection.execute('SELECT identity, unusable FROM observations WHERE id=?', (key,)).fetchone()
                         if previous is None:
-                            connection.execute('INSERT INTO observations(id,identity,feature,bbox,vertices,unusable) VALUES(?,?,?,?,?,?)', (key, identity, payload, json.dumps(bbox), vertices, int(reason is not None)))
+                            connection.execute('INSERT INTO observations(id,identity,feature,bbox,vertices,unusable,latitude,longitude,source_ordinal) VALUES(?,?,?,?,?,?,?,?,?)', (key, identity, payload, json.dumps(bbox), vertices, int(reason is not None), point[0] if point else None, point[1] if point else None, position))
                         elif reason is not None or previous[1] or previous[0] != identity:
-                            connection.execute('UPDATE observations SET feature=NULL,bbox=NULL,vertices=0,unusable=1,conflict=CASE WHEN ? THEN conflict ELSE 1 END WHERE id=?', (int(reason is not None or previous[1]), key))
+                            connection.execute('UPDATE observations SET feature=NULL,bbox=NULL,vertices=0,latitude=NULL,longitude=NULL,unusable=1,conflict=CASE WHEN ? THEN conflict ELSE 1 END WHERE id=?', (int(reason is not None or previous[1]), key))
                         else:
                             duplicates += 1
                     if next(shapes, None) is not None or next(perimeters, None) is not None:
@@ -426,8 +560,25 @@ def finish_snapshot(connection, output, sources, record_count, duplicates, inval
         raise ValueError('Boundary lookup index exceeds its byte limit')
     write_new(output / 'boundaries.tsv', index_payload)
     write_new(output / 'ambiguous.tsv', ambiguous_payload)
+    catalogue_lines, mapped_points = [], 0
+    for key, lat, lng, source, is_unusable in connection.execute('SELECT id,latitude,longitude,source_ordinal,unusable FROM observations ORDER BY id'):
+        if not integer(source, 0, 23) or CADASTRAL_ID.fullmatch(key) is None or ((lat is None) != (lng is None)) or (is_unusable and lat is not None):
+            raise ValueError('The prepared official parcel catalogue is inconsistent')
+        if lat is not None:
+            if not valid_bounds([lng, lat, lng, lat]):
+                raise ValueError('The prepared official parcel point is out of bounds')
+            catalogue_lines.append(f'{key}\t{lat:.7f}\t{lng:.7f}\t{source}\tmapped\n')
+            mapped_points += 1
+        else:
+            catalogue_lines.append(f'{key}\t\t\t{source}\tunavailable\n')
+    catalogue_payload = ''.join(catalogue_lines).encode('ascii')
+    if len(catalogue_payload) > MAX_INDEX_BYTES:
+        raise ValueError('Official parcel catalogue exceeds the hosting file limit')
+    write_new(output / 'catalogue.tsv', catalogue_payload)
     total_vertices = sum(s['vertex_count'] for s in shards)
     manifest = {'version': 1, 'reference_format': REFERENCE_FORMAT, 'snapshot_id': uuid4().hex, 'generated_at': utc_now(), 'captured_at': max(s['captured_at'] for s in sources), 'source_name': SOURCE_NAME, 'source_url': SOURCE_URL, 'catalogue_sha256': catalogue_hash, 'crs': 'EPSG:4326', 'native_crs': 'EPSG:7801', 'coordinate_precision': 7, 'index_precision': 6, 'transform_accuracy_m': 1.0, 'min_zoom': 16, 'geometry_method': 'Full official polygon vertices transformed without simplification or repair; 7 decimal WGS84 display coordinates.', 'record_count': record_count, 'parcel_count': len(index_lines), 'feature_count': len(index_lines), 'ambiguous_parcel_count': len(unusable), 'duplicate_observation_count': duplicates, 'invalid_geometry_count': invalid, 'conflicting_parcel_count': connection.execute('SELECT COUNT(*) FROM observations WHERE conflict=1').fetchone()[0], 'invalid_geometry_reasons': reasons, 'vertex_count': total_vertices, 'index': {'file': 'boundaries.tsv', 'bytes': len(index_payload), 'sha256': digest(index_payload), 'rows': len(index_lines)}, 'ambiguous_index': {'file': 'ambiguous.tsv', 'bytes': len(ambiguous_payload), 'sha256': digest(ambiguous_payload), 'rows': len(unusable)}, 'shards': shards, 'sources': sources, 'completion': {'status': 'complete', 'source_count': len(sources), 'record_count': record_count}, 'notes': ['Official published cadastral snapshot geometry, not a certified current cadastral sketch or field survey.', 'Published AREA and PERIM use the native metre projection. The WGS84 display transform declares 1 metre operation accuracy.', 'Unusable IDs include conflicting original records and invalid polygons. Original geometries are never repaired, simplified, buffered or inferred.']}
+    manifest.update(version=2, catalogue={'file': 'catalogue.tsv', 'bytes': len(catalogue_payload), 'sha256': digest(catalogue_payload), 'rows': len(catalogue_lines)}, catalogue_count=len(catalogue_lines), mapped_point_count=mapped_points, unmapped_point_count=len(catalogue_lines) - mapped_points, point_method=POINT_METHOD)
+    manifest['notes'].append('The complete observed identifier catalogue and verified interior points activate with these boundaries. Missing identifiers in a later complete capture are not a legal retirement or successor determination.')
     check_manifest(manifest)
     payload = json_bytes(manifest)
     if len(payload) > MAX_MANIFEST_BYTES:
@@ -444,6 +595,7 @@ def main():
     args = parser.parse_args()
     result = build(args.catalogue, args.archives, args.output)
     print(f"Prepared complete boundary snapshot {result['snapshot_id']}: {result['parcel_count']} parcels, {result['ambiguous_parcel_count']} unavailable IDs, {len(result['shards'])} shards, {result['vertex_count']} vertices")
+    print(f"Prepared current official identifier catalogue: {result['catalogue_count']} IDs, {result['mapped_point_count']} verified interior points, {result['unmapped_point_count']} IDs without a usable point; {result['catalogue']['bytes']} catalogue bytes")
 
 
 if __name__ == '__main__':

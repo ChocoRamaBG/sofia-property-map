@@ -20,6 +20,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  official-cadastre:
+    uses: ./.github/workflows/refresh-boundaries.yml
+    secrets: inherit
+
   business-addresses:
     uses: ./.github/workflows/refresh-business-addresses.yml
     secrets: inherit
@@ -100,9 +104,6 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    concurrency:
-      group: sofia-parcel-boundaries
-      cancel-in-progress: false
     env:
       NAG_HEADLESS: '1'
     steps:
@@ -122,12 +123,6 @@ jobs:
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: python scripts/deploy_registry_ftps.py fetch --output seed/monthly/previous.json
-      - name: Fetch previous private cadastral pointer
-        env:
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_USER: ${{ secrets.FTP_USER }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: python scripts/deploy_cadastre_ftps.py fetch --output seed/monthly/previous-cadastre.json
       - name: Select an overlapping date window
         env:
           MANUAL_START_DATE: ${{ inputs.start_date }}
@@ -158,10 +153,6 @@ jobs:
           if-no-files-found: ignore
       - name: Validate and merge earlier observations
         run: python scripts/build_registry_snapshot.py --previous seed/monthly/previous.json --capture seed/monthly/capture --format sharded --output seed/monthly/publish
-      - name: Capture all 24 published Sofia cadastral parcel exports
-        run: python scripts/refresh_cadastre.py --archives seed/monthly/cadastre-archives --output seed/monthly/cadastre-publish
-      - name: Validate complete cadastral snapshot against earlier coverage
-        run: python scripts/deploy_cadastre_ftps.py validate --input seed/monthly/cadastre-publish --previous seed/monthly/previous-cadastre.json
       - name: Keep the completed merged snapshot
         uses: actions/upload-artifact@v4
         with:
@@ -169,47 +160,9 @@ jobs:
           path: seed/monthly/publish/
           retention-days: 31
           if-no-files-found: error
-      - name: Keep the completed cadastral snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: sofia-cadastre-snapshot-${{ github.run_id }}
-          path: seed/monthly/cadastre-publish/
-          retention-days: 31
-          if-no-files-found: error
-      - name: Publish verified private cadastral dataset
-        env:
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_USER: ${{ secrets.FTP_USER }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: python scripts/deploy_cadastre_ftps.py publish --input seed/monthly/cadastre-publish --previous seed/monthly/previous-cadastre.json
       - name: Publish verified private dataset
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: python scripts/deploy_registry_ftps.py publish --input seed/monthly/publish --previous seed/monthly/previous.json
-      - name: Fetch the previous protected parcel boundary pointer
-        env:
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_USER: ${{ secrets.FTP_USER }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: python scripts/deploy_boundary_ftps.py fetch --output seed/monthly/previous-boundaries.json
-      - name: Prepare full parcel boundaries from the same official archives
-        env:
-          PROJ_NETWORK: 'OFF'
-        run: python scripts/build_boundary_snapshot.py --catalogue scripts/cadastre-sofia-sources.json --archives seed/monthly/cadastre-archives --output seed/monthly/boundary-publish
-      - name: Validate complete parcel boundary snapshot
-        run: python scripts/deploy_boundary_ftps.py validate --input seed/monthly/boundary-publish --previous seed/monthly/previous-boundaries.json
-      - name: Publish verified private parcel boundaries
-        env:
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_USER: ${{ secrets.FTP_USER }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: python scripts/deploy_boundary_ftps.py publish --input seed/monthly/boundary-publish --previous seed/monthly/previous-boundaries.json
-      - name: Keep the boundary source and geometry hash manifest
-        uses: actions/upload-artifact@v4
-        with:
-          name: sofia-boundary-manifest-${{ github.run_id }}
-          path: seed/monthly/boundary-publish/manifest.json
-          retention-days: 31
-          if-no-files-found: error

@@ -20,6 +20,38 @@ MAX_ASSET_BYTES = 3 * 1024 * 1024
 ASSET = re.compile(r'assets/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:js|css)\Z')
 
 
+def verify_parcel_catalogue(ftp, required: bool) -> dict:
+    from build_boundary_snapshot import check_manifest, MAX_INDEX_BYTES
+    raw = read_remote(ftp, f'{REMOTE_ROOT}/private/boundaries-active.json', 256 * 1024)
+    manifest = check_manifest(json.loads(raw))
+    if manifest['version'] != 2:
+        if required:
+            raise ValueError('A complete current official parcel catalogue has not been activated')
+        return {'available': False, 'reason': 'legacy_boundary_snapshot'}
+    descriptor = manifest['catalogue']
+    payload = read_remote(ftp, f"{REMOTE_ROOT}/private/boundary-snapshots/{manifest['snapshot_id']}/{descriptor['file']}", MAX_INDEX_BYTES)
+    if len(payload) != descriptor['bytes'] or hashlib.sha256(payload).hexdigest() != descriptor['sha256'] or not payload.endswith(b'\n'):
+        raise ValueError('Hosted official parcel catalogue failed its byte/hash check')
+    count = mapped = 0
+    previous = ''
+    for line in payload.decode('ascii').splitlines():
+        parts = line.split('\t')
+        if len(parts) != 5 or not re.fullmatch(r'68134\.[0-9]{1,6}\.[0-9]{1,6}', parts[0]) or parts[0] <= previous or not re.fullmatch(r'(?:[0-9]|1[0-9]|2[0-3])', parts[3]):
+            raise ValueError('Hosted official parcel catalogue contains an invalid row')
+        if parts[4] == 'mapped':
+            if not all(re.fullmatch(r'[0-9]{2}\.[0-9]{7}', value) for value in parts[1:3]) or not (40 <= float(parts[1]) <= 45 and 21 <= float(parts[2]) <= 30):
+                raise ValueError('Hosted official parcel catalogue contains an invalid map point')
+            mapped += 1
+        elif parts[4] != 'unavailable' or parts[1] or parts[2]:
+            raise ValueError('Hosted unavailable parcel has fabricated coordinates')
+        count += 1
+        previous = parts[0]
+    if count != descriptor['rows'] or count != manifest['catalogue_count'] or mapped != manifest['mapped_point_count'] or count - mapped != manifest['unmapped_point_count']:
+        raise ValueError('Hosted official parcel catalogue totals do not reconcile')
+    return {'available': True, 'snapshot_id': manifest['snapshot_id'], 'captured_at': manifest['captured_at'], 'catalogue_count': count,
+            'mapped_point_count': mapped, 'unmapped_point_count': count - mapped, 'bytes': len(payload), 'sha256': descriptor['sha256']}
+
+
 def asset_name(value: str) -> str:
     name = html.unescape(value).removeprefix('/')
     if ASSET.fullmatch(name) is None:
@@ -31,6 +63,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--wait-business-map', type=int, default=0, help='Bounded wait for a staged legacy company snapshot to gain its point index')
+    parser.add_argument('--require-parcel-catalogue', action='store_true')
     args = parser.parse_args()
     if not 0 <= args.wait_business_map <= 600:
         parser.error('--wait-business-map must be between 0 and 600 seconds')
@@ -91,6 +124,12 @@ def main() -> None:
             raise ValueError('Deployed website lacks the compact sidebar, map tools or evidence disclosures')
         if 'Ownership and registered acts' in details or 'Companies in documents' in details:
             raise ValueError('The removed ownership/document-company interface is still deployed')
+        if 'parcel-catalogue-status' not in details:
+            raise ValueError('Deployed property details lack current/historical catalogue provenance')
+        catalogue_api = read('parcel-catalogue.php', 128 * 1024)
+        if not all(marker in catalogue_api for marker in ('function parcel_catalogue_viewport', 'not_in_latest_snapshot', 'official_geometry_interior')):
+            raise ValueError('Deployed API lacks the authoritative official parcel catalogue reader')
+        report['parcel_catalogue'] = verify_parcel_catalogue(ftp, args.require_parcel_catalogue)
         business_api = read('business-data.php', 128 * 1024)
         if 'registered_office_address_association' not in business_api or 'function business_search' not in business_api or 'function business_viewport' not in business_api:
             raise ValueError('Deployed read-only business API is missing')
@@ -137,7 +176,7 @@ def main() -> None:
         data = validate_transactions(payload)
         report['files']['data/transactions-context.json'] = {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
         report['transactions'] = {'coverage': data['coverage'], 'latest_period': data['series'][-1]['period'], 'latest_sales': data['series'][-1]['sales'], 'retrieved_at': data['retrieved_at']}
-        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True, 'municipal_address_enrichment': True, 'separate_location_evidence_levels': True, 'collapsible_map_sidebar': True, 'compact_map_tools': True, 'progressive_detail_disclosures': True, 'buyer_purchase_budget': True, 'professional_agency_contacts': True, 'richer_listing_features': True, 'comparison_method3_reader': True}
+        report['features'] = {'registered_sales_dashboard': True, 'direct_statistics_link': True, 'tooltip_wrapping_fix': True, 'tooltip_explicit_widths': True, 'business_address_finder': True, 'business_plot_section': True, 'ownership_placeholder_removed': True, 'company_map_layer': True, 'persistent_workspace_navigation': True, 'municipal_address_enrichment': True, 'separate_location_evidence_levels': True, 'collapsible_map_sidebar': True, 'compact_map_tools': True, 'progressive_detail_disclosures': True, 'buyer_purchase_budget': True, 'professional_agency_contacts': True, 'richer_listing_features': True, 'comparison_method3_reader': True, 'dynamic_official_parcel_reader': True, 'parcel_catalogue_provenance': True}
         report['status'] = 'verified'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

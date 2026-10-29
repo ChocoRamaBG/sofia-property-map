@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from deploy_site_ftps import MAX_FILE_BYTES, REMOTE_ROOT, read_local, read_remote, verify_remote
 
-API_NAMES = ('development-data.php', 'boundary-data.php', 'business-data.php', 'market.php', 'api.php')
+API_NAMES = ('development-data.php', 'parcel-catalogue.php', 'boundary-data.php', 'business-data.php', 'market.php', 'api.php')
 
 
 def main() -> None:
@@ -51,7 +51,7 @@ def main() -> None:
             try:
                 previous = read_remote(ftp, f'{REMOTE_ROOT}/{name}', MAX_FILE_BYTES)
             except error_perm as error:
-                if name not in ('development-data.php', 'boundary-data.php', 'business-data.php') or not str(error).startswith('550'):
+                if name not in ('development-data.php', 'boundary-data.php', 'parcel-catalogue.php', 'business-data.php') or not str(error).startswith('550'):
                     raise
             else:
                 (args.backup / name).write_bytes(previous)

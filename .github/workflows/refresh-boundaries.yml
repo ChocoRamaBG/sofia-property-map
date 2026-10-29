@@ -1,7 +1,15 @@
-name: Refresh official Sofia parcel boundaries
+name: Refresh official Sofia parcel catalogue and boundaries
 
 on:
   workflow_dispatch:
+  workflow_call:
+    secrets:
+      FTP_HOST:
+        required: true
+      FTP_USER:
+        required: true
+      FTP_PASSWORD:
+        required: true
 
 permissions:
   contents: read
@@ -28,6 +36,16 @@ jobs:
           cache-dependency-path: scripts/requirements-boundaries.txt
       - name: Install official geometry readers
         run: python -m pip install -r scripts/requirements-boundaries.txt
+      - name: Check current parcel catalogue and reader contracts
+        env:
+          SOFIA_PHP_BINARY: php
+        run: python -m unittest discover -s scripts -p 'test_*catalogue*.py'
+      - name: Fetch the previous protected cadastral pointer
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/deploy_cadastre_ftps.py fetch --output seed/boundaries/previous-cadastre.json
       - name: Fetch the previous protected boundary pointer
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
@@ -38,8 +56,16 @@ jobs:
         run: python scripts/refresh_cadastre.py --archives seed/boundaries/archives --output seed/boundaries/attribute-capture
       - name: Prepare full published parcel polygons
         run: python scripts/build_boundary_snapshot.py --catalogue scripts/cadastre-sofia-sources.json --archives seed/boundaries/archives --output seed/boundaries/publish
+      - name: Validate complete current cadastral attributes
+        run: python scripts/deploy_cadastre_ftps.py validate --input seed/boundaries/attribute-capture --previous seed/boundaries/previous-cadastre.json
       - name: Validate complete geometry and capture continuity
-        run: python scripts/deploy_boundary_ftps.py validate --input seed/boundaries/publish --previous seed/boundaries/previous.json
+        run: python scripts/deploy_boundary_ftps.py validate --input seed/boundaries/publish --previous seed/boundaries/previous.json --changes-output seed/boundaries/changes.json
+      - name: Publish verified current cadastral attributes
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: python scripts/deploy_cadastre_ftps.py publish --input seed/boundaries/attribute-capture --previous seed/boundaries/previous-cadastre.json
       - name: Publish verified private boundary geometry
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
@@ -50,6 +76,23 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sofia-boundary-manifest-${{ github.run_id }}
-          path: seed/boundaries/publish/manifest.json
+          path: |
+            seed/boundaries/publish/manifest.json
+            seed/boundaries/attribute-capture/cadastre-active.json
+            seed/boundaries/changes.json
           retention-days: 31
           if-no-files-found: error
+      - name: Summarize source identifier changes
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          changes = json.loads(Path('seed/boundaries/changes.json').read_text())
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
+              output.write('# Current official Sofia parcel catalogue\n\n')
+              output.write(f"Identifiers in the complete source: {changes['current_catalogue_count']:,}\n\n")
+              output.write(f"Captured: {changes['captured_at']}\n\n")
+              if changes['comparison_available']:
+                  output.write(f"New to this snapshot: {changes['new_to_snapshot_count']:,}; not present in the latest snapshot: {changes['not_in_latest_snapshot_count']:,}.\n\n")
+              output.write('Snapshot membership is not proof of legal cancellation or a successor relationship. Earlier immutable snapshots and document evidence remain retained.\n')
+          PY

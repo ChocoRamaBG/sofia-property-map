@@ -7,6 +7,7 @@ import CadastralSummary from '@/components/details/CadastralSummary';
 import DevelopmentTimeline from './DevelopmentTimeline';
 import DocumentTypeIcon from '@/components/DocumentTypeIcon';
 import RegisteredBusinesses from './RegisteredBusinesses';
+import ParcelCatalogueStatus from './ParcelCatalogueStatus';
 import './DetailPanels.css';
 
 const REGISTER_GROUPS = ['building_permits', 'projecting_visas', 'exploitation_certificates', 'exploitation_certificates_legacy'];
@@ -159,6 +160,10 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
   const count = sources.reduce((total, source) => total + (source.documents?.length || 0), 0);
   const certificateDocuments = sources.filter((source) => source.code.startsWith('exploitation_certificates')).flatMap((source) => source.documents || []);
   const locationAvailable = plot.lat != null && plot.lng != null;
+  const officialCoordinate = plot.coordinate_method === 'official_geometry_interior';
+  const coordinateEvidence = officialCoordinate
+    ? (lang === 'bg' ? 'Позицията е вътрешна точка на официалния кадастрален полигон от зареденото извлечение на АГКК, преобразувана до WGS84 за картата. Точката не обозначава вход, измерени на терен граници или сертифицирана кадастрална скица.' : 'The position is an interior point of the official cadastral polygon in the loaded AGCC extract, transformed to WGS84 for the map. It marks neither an entrance, surveyed boundaries nor a certified cadastral sketch.')
+    : t('panel.coordinateEvidence');
   const overview = collectOverview(sources, lang);
   const mainOverview = overview.filter((field) => ['address', 'district'].includes(field.key));
   const additionalOverview = overview.filter((field) => !['address', 'district'].includes(field.key));
@@ -172,12 +177,13 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
       {onBackToActivity && <button className="details-back-search" type="button" onClick={onBackToActivity}><ArrowLeft size={17} aria-hidden="true" /><span>{lang === 'bg' ? 'Обратно към списъка с документи' : 'Back to the document list'}</span></button>}
       {onBackToSearch && <button className="details-back-search" type="button" onClick={onBackToSearch}><ArrowLeft size={17} aria-hidden="true" /><span>{t('panel.backToSearch')}</span></button>}
       <div className="details-header">
-        <div><p className="eyebrow">{t('panel.title')}</p><h2 ref={heading} tabIndex={-1}>{plot.cadastral_id}</h2><span className="details-coordinate-type"><MapPin size={12} />{locationAvailable ? t('panel.coordinateMarker') : t('panel.noCoordinate')}</span></div>
+        <div><p className="eyebrow">{t('panel.title')}</p><h2 ref={heading} tabIndex={-1}>{plot.cadastral_id}</h2><span className="details-coordinate-type"><MapPin size={12} />{locationAvailable ? (officialCoordinate ? (lang === 'bg' ? 'Точка в официалния парцел' : 'Point inside the official parcel') : (lang === 'bg' ? 'Координатна точка' : 'Coordinate point')) : t('panel.noCoordinate')}</span></div>
         <div className="details-header-actions"><button type="button" onClick={copyId} aria-label={copied ? t('panel.copied') : t('panel.copyId')} title={copied ? t('panel.copied') : t('panel.copyId')}>{copied ? <Check size={17} className="text-emerald-700" /> : <Copy size={17} />}</button>{onClose && <button type="button" onClick={onClose} aria-label={t('panel.close')}><X size={19} /></button>}</div>
       </div>
       <div className="details-scroll" ref={scrollArea}>
         {(state.loading || state.key !== key || state.error) && <BoundaryDimensions parcel={parcel} currentKey={key} lang={lang} t={t} />}
         {state.loading || state.key !== key ? <div className="details-loading"><Loader2 size={24} className="animate-spin" /><span>{t('panel.loading')}</span></div> : state.error ? <div className="details-error" role="alert">{t('panel.loadError')}<p>{state.error}</p></div> : <>
+          <ParcelCatalogueStatus status={plot.catalogue_status} source={plot.catalogue_source} lang={lang} />
           <CertificateStatus documents={certificateDocuments} sources={sources} lang={lang} t={t} onOpenSource={goToSource} />
           <CadastralSummary cadastre={currentData?.cadastre} status={currentData?.cadastre_status} />
           <BoundaryDimensions parcel={parcel} currentKey={key} lang={lang} t={t} />
@@ -199,7 +205,7 @@ export default function DetailsPanel({ parcel, onClose, onBackToSearch, onBackTo
           </details>)}</div>
           <RegisteredBusinesses cadastralId={key} lang={lang} />
           <details className="evidence-details"><summary><Link2 size={15} />{t('panel.matchMethod')}</summary><p>{t('panel.matchHelp')}</p></details>
-          <details className="evidence-details"><summary><MapPin size={15} aria-hidden="true" />{t('panel.coordinateSource')}<ChevronDown size={14} aria-hidden="true" /></summary>{locationAvailable && <p className="detail-coordinate-value">{Number(plot.lat).toFixed(6)}, {Number(plot.lng).toFixed(6)}</p>}<p>{locationAvailable ? t('panel.coordinateEvidence') : t('panel.noCoordinateHelp')}</p></details>
+          <details className="evidence-details"><summary><MapPin size={15} aria-hidden="true" />{t('panel.coordinateSource')}<ChevronDown size={14} aria-hidden="true" /></summary>{locationAvailable && <p className="detail-coordinate-value">{Number(plot.lat).toFixed(6)}, {Number(plot.lng).toFixed(6)}</p>}<p>{locationAvailable ? coordinateEvidence : t('panel.noCoordinateHelp')}</p></details>
           <p className="details-disclaimer">{t('panel.disclaimer')}</p>
         </>}
       </div>

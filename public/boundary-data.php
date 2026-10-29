@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/parcel-catalogue.php';
+
 // Read-only, exact-ID parcel geometry. All coordinates are retained from the
 // validated official geometry export; point markers never become polygons.
 const BOUNDARY_MAX_FILE_BYTES = 10000000;
@@ -61,7 +63,7 @@ function load_boundary_snapshot(): ?array {
     $active = __DIR__ . '/private/boundaries-active.json';
     if (!file_exists($active) && !is_link($active)) return null;
     $data = bounded_registry_json($active, 256 * 1024);
-    if (($data['version'] ?? null) !== 1 || ($data['reference_format'] ?? null) !== 'boundary-bbox-geojson-v1'
+    if (!in_array($data['version'] ?? null, [1, 2], true) || ($data['reference_format'] ?? null) !== 'boundary-bbox-geojson-v1'
         || !is_string($data['snapshot_id'] ?? null) || !preg_match('/^[a-f0-9]{32}$/', $data['snapshot_id'])
         || !snapshot_timestamp_valid($data['generated_at'] ?? null) || !snapshot_timestamp_valid($data['captured_at'] ?? null)
         || ($data['crs'] ?? null) !== 'EPSG:4326' || ($data['native_crs'] ?? null) !== 'EPSG:7801' || ($data['coordinate_precision'] ?? null) !== 7
@@ -85,21 +87,32 @@ function load_boundary_snapshot(): ?array {
     if ($data['index']['rows'] !== $data['parcel_count']) throw new RuntimeException('Boundary index total is inconsistent.');
     boundary_descriptor($data['ambiguous_index'] ?? null, '/^ambiguous\.tsv$/', BOUNDARY_MAX_FILE_BYTES, 'rows', true);
     if ($data['ambiguous_index']['rows'] !== $data['ambiguous_parcel_count']) throw new RuntimeException('Boundary exclusions are inconsistent.');
+    if ($data['version'] === 2) {
+        boundary_descriptor($data['catalogue'] ?? null, '/^catalogue\.tsv$/', BOUNDARY_MAX_FILE_BYTES, 'rows');
+        if (!is_int($data['catalogue_count'] ?? null) || $data['catalogue_count'] !== $data['parcel_count'] + $data['ambiguous_parcel_count']
+            || $data['catalogue']['rows'] !== $data['catalogue_count'] || !is_int($data['mapped_point_count'] ?? null)
+            || $data['mapped_point_count'] < 0 || $data['mapped_point_count'] > $data['parcel_count']
+            || !is_int($data['unmapped_point_count'] ?? null) || $data['unmapped_point_count'] < 0
+            || $data['mapped_point_count'] + $data['unmapped_point_count'] !== $data['catalogue_count']
+            || ($data['point_method'] ?? null) !== 'strict_native_and_published_interior_v1') throw new RuntimeException('Parcel catalogue manifest is inconsistent.');
+        boundary_file($data, $data['catalogue']);
+    }
     if (!snapshot_list($data['sources'] ?? null) || count($data['sources']) !== 24) throw new RuntimeException('Boundary sources are incomplete.');
     $sourceLookup = []; $sourceRecords = 0;
-    foreach ($data['sources'] as $source) {
+    foreach ($data['sources'] as $position => $source) {
         if (!is_array($source) || !is_string($source['key'] ?? null) || !preg_match('/^sofia-district-(?:0[0-9]|1[0-9]|2[0-3])$/', $source['key'])
             || isset($sourceLookup[$source['key']]) || !snapshot_string($source['label_bg'] ?? null, 190)
             || !cadastre_source_url_valid($source['source_url'] ?? null) || !snapshot_timestamp_valid($source['captured_at'] ?? null)
             || !is_string($source['archive_sha256'] ?? null) || !preg_match('/^[a-f0-9]{64}$/', $source['archive_sha256'])
             || !is_string($source['projection_sha256'] ?? null) || !preg_match('/^[a-f0-9]{64}$/', $source['projection_sha256'])
-            || !is_int($source['record_count'] ?? null) || $source['record_count'] < 0 || $source['record_count'] > BOUNDARY_MAX_PARCELS) throw new RuntimeException('Boundary source metadata is invalid.');
+            || !is_int($source['record_count'] ?? null) || $source['record_count'] < 0 || $source['record_count'] > BOUNDARY_MAX_PARCELS
+            || ($data['version'] === 2 && $source['key'] !== sprintf('sofia-district-%02d', $position))) throw new RuntimeException('Boundary source metadata is invalid.');
         $sourceLookup[$source['key']] = $source;
         $sourceRecords += $source['record_count'];
     }
     if ($sourceRecords !== $data['record_count']) throw new RuntimeException('Boundary source record totals are inconsistent.');
     if (!snapshot_list($data['shards'] ?? null) || count($data['shards']) < 1 || count($data['shards']) > BOUNDARY_MAX_SHARDS) throw new RuntimeException('Boundary shards are invalid.');
-    $records = 0; $vertices = 0; $bytes = $data['index']['bytes'] + $data['ambiguous_index']['bytes'];
+    $records = 0; $vertices = 0; $bytes = $data['index']['bytes'] + $data['ambiguous_index']['bytes'] + ($data['catalogue']['bytes'] ?? 0);
     foreach ($data['shards'] as $position => $shard) {
         boundary_descriptor($shard, '/^boundaries-[0-9]{4}\.json$/', 1024 * 1024, 'feature_count');
         if ($shard['file'] !== sprintf('boundaries-%04d.json', $position) || !boundary_bbox_valid($shard['bounds'] ?? null)
@@ -124,15 +137,15 @@ function boundary_public_source(?array $snapshot, ?string $key = null): array {
         'geometry_method' => $snapshot['geometry_method'] ?? null, 'certified_survey' => false];
 }
 
-function boundary_metadata(): array {
+function boundary_metadata(?array $snapshot = null): array {
     try {
-        $snapshot = load_boundary_snapshot();
+        $snapshot = $snapshot ?? load_boundary_snapshot();
         return ['available' => $snapshot !== null, 'status' => $snapshot === null ? 'unavailable' : 'available',
             'min_zoom' => BOUNDARY_MIN_ZOOM, 'max_features' => BOUNDARY_MAX_FEATURES,
             'captured_at' => $snapshot['captured_at'] ?? null, 'generated_at' => $snapshot['generated_at'] ?? null,
             'parcel_count' => $snapshot['parcel_count'] ?? 0, 'unusable_parcel_count' => $snapshot['ambiguous_parcel_count'] ?? 0,
             'source_url' => CADASTRE_CATALOGUE_URL, 'source' => boundary_public_source($snapshot),
-            'scope' => 'exact_id_mapped_parcels', 'dimension_method' => 'published_AREA_and_PERIM_snapshot'];
+            'scope' => parcel_catalogue_available($snapshot) ? 'official_snapshot_parcels' : 'exact_id_mapped_parcels', 'dimension_method' => 'published_AREA_and_PERIM_snapshot'];
     } catch (Throwable $error) {
         error_log('Sofia boundary metadata error: ' . $error->getMessage());
         return ['available' => false, 'status' => 'unavailable', 'reason' => 'invalid_snapshot', 'min_zoom' => BOUNDARY_MIN_ZOOM, 'source_url' => CADASTRE_CATALOGUE_URL];
@@ -218,7 +231,7 @@ function boundary_reply(?array $snapshot, string $status, ?string $reason = null
         'geometry_count' => $status === 'available' ? 0 : null, 'missing_count' => $status === 'available' ? 0 : null,
         'min_zoom' => BOUNDARY_MIN_ZOOM, 'reason' => $reason, 'source' => boundary_public_source($snapshot),
         'generated_at' => $snapshot['generated_at'] ?? null, 'snapshot_id' => $snapshot['snapshot_id'] ?? null,
-        'dimension_method' => 'published_AREA_and_PERIM_snapshot', 'scope' => 'exact_id_mapped_parcels'];
+        'dimension_method' => 'published_AREA_and_PERIM_snapshot', 'scope' => parcel_catalogue_available($snapshot) ? 'official_snapshot_parcels' : 'exact_id_mapped_parcels'];
 }
 
 function boundary_response(PDO $pdo, ?array $registry, ?array $cadastre, array $filter): array {
@@ -231,9 +244,15 @@ function boundary_response(PDO $pdo, ?array $registry, ?array $cadastre, array $
     if ((float)$rawZoom < BOUNDARY_MIN_ZOOM) return boundary_reply($snapshot, 'zoom_in', 'minimum_zoom');
     if ($view['north'] - $view['south'] > 0.1 || $view['east'] - $view['west'] > 0.1) return boundary_reply($snapshot, 'zoom_in', 'viewport_too_large');
     $documentWhere = $registry !== null ? registry_filter($pdo, $registry, $filter) : record_filter($filter);
-    $pointQuery = $pdo->prepare('SELECT p.cadastral_id FROM parcels p WHERE p.latitude BETWEEN :south AND :north AND p.longitude BETWEEN :west AND :east' . $documentWhere . ' LIMIT ' . (BOUNDARY_MAX_CANDIDATES + 1));
-    $pointQuery->execute($view); $pointIds = [];
-    while ($row = $pointQuery->fetch(PDO::FETCH_NUM)) $pointIds[$row[0]] = true;
+    if (parcel_catalogue_available($snapshot)) {
+        $flags = parcel_catalogue_flags($pdo, $registry);
+        $pointIds = parcel_catalogue_candidates($snapshot, $view, true);
+        foreach ($pointIds as $id => $_) if (!parcel_catalogue_document_match($id, $registry, $flags, $filter)) unset($pointIds[$id]);
+    } else {
+        $pointQuery = $pdo->prepare('SELECT p.cadastral_id FROM parcels p WHERE p.latitude BETWEEN :south AND :north AND p.longitude BETWEEN :west AND :east' . $documentWhere . ' LIMIT ' . (BOUNDARY_MAX_CANDIDATES + 1));
+        $pointQuery->execute($view); $pointIds = [];
+        while ($row = $pointQuery->fetch(PDO::FETCH_NUM)) $pointIds[$row[0]] = true;
+    }
     if (count($pointIds) > BOUNDARY_MAX_CANDIDATES) return boundary_reply($snapshot, 'too_dense', 'candidate_limit');
     $candidates = []; $pointHasGeometry = []; $candidateCount = 0;
     foreach (boundary_index_iterator($snapshot) as $entry) {
@@ -247,8 +266,10 @@ function boundary_response(PDO $pdo, ?array $registry, ?array $cadastre, array $
     boundary_check_exclusions($snapshot, $candidates, $pointHasGeometry);
     if ($candidateCount > BOUNDARY_MAX_CANDIDATES) return boundary_reply($snapshot, 'too_dense', 'candidate_limit');
     $allIds = array_fill_keys(array_keys($candidates), true) + $pointIds;
-    $allowed = $allIds === [] ? [] : matching_plot_ids($pdo, $registry, $cadastre, $filter,
-        'p.latitude IS NOT NULL AND p.longitude IS NOT NULL' . $documentWhere . cadastre_area_filter($pdo, $allIds), []);
+    $allowed = $allIds === [] ? [] : (parcel_catalogue_available($snapshot)
+        ? parcel_catalogue_filter_ids($pdo, $registry, $cadastre, $filter, $allIds, $flags)
+        : matching_plot_ids($pdo, $registry, $cadastre, $filter,
+            'p.latitude IS NOT NULL AND p.longitude IS NOT NULL' . $documentWhere . cadastre_area_filter($pdo, $allIds), []));
     $candidates = array_intersect_key($candidates, $allowed);
     $missing = array_diff_key(array_intersect_key($pointIds, $allowed), $pointHasGeometry);
     unset($allIds, $allowed, $pointIds, $pointHasGeometry);
@@ -257,7 +278,9 @@ function boundary_response(PDO $pdo, ?array $registry, ?array $cadastre, array $
     foreach ($candidates as $entry) if (!isset($needed[$entry['shard']])) { $needed[$entry['shard']] = true; $processingBytes += $snapshot['shards'][$entry['shard']]['bytes']; }
     if ($processingBytes > BOUNDARY_MAX_VIEW_SHARD_BYTES) return boundary_reply($snapshot, 'too_dense', 'processing_limit');
     $plots = []; $visibleIds = array_fill_keys(array_keys($candidates), true) + $missing;
-    if ($visibleIds !== []) {
+    if (parcel_catalogue_available($snapshot)) {
+        foreach (parcel_catalogue_iterator($snapshot) as $entry) if (isset($visibleIds[$entry['cadastral_id']])) $plots[$entry['cadastral_id']] = parcel_catalogue_plot($entry, $snapshot, $flags);
+    } elseif ($visibleIds !== []) {
         $query = $pdo->query('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng' . ($registry === null ? ', ' . document_flags_select() : '')
             . ' FROM parcels p ' . ($registry === null ? document_flags_join() : '') . ' WHERE p.latitude IS NOT NULL AND p.longitude IS NOT NULL AND p.cadastral_id IN (' . quoted_ids($pdo, array_keys($visibleIds)) . ')');
         foreach ($query->fetchAll() as $row) $plots[$row['cadastral_id']] = $registry === null ? serialize_plot($row) : registry_plot($row, $registry);

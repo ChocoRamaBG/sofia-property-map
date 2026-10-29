@@ -16,6 +16,8 @@ const CADASTRE_MAX_FACET_VALUES = 1000;
 const CADASTRE_AREA_METHOD = 'published_AREA_BGS2005_LCC';
 const CADASTRE_CATALOGUE_URL = 'https://kais.cadastre.bg/bg/OpenData';
 
+require_once __DIR__ . '/parcel-catalogue.php';
+
 function respond(array $body, int $status = 200): void {
     http_response_code($status);
     echo json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -1507,6 +1509,8 @@ try {
         respond(development_response($pdo, $registry, development_params()));
     }
     $cadastre = load_cadastre_snapshot();
+    require_once __DIR__ . '/boundary-data.php';
+    $parcelCatalogue = load_parcel_catalogue_snapshot();
     if ($filter !== null) validate_cadastre_filter_selection($cadastre, $filter);
     if ($action === 'boundaries') {
         require_once __DIR__ . '/boundary-data.php';
@@ -1523,20 +1527,20 @@ try {
         require_once __DIR__ . '/boundary-data.php';
         $boundaryMeta = boundary_metadata();
         $counts = [
-            'plots' => (int)$pdo->query('SELECT COUNT(*) FROM parcels WHERE latitude IS NOT NULL AND longitude IS NOT NULL')->fetchColumn(),
+            'plots' => $parcelCatalogue === null ? (int)$pdo->query('SELECT COUNT(*) FROM parcels WHERE latitude IS NOT NULL AND longitude IS NOT NULL')->fetchColumn() : $parcelCatalogue['mapped_point_count'],
             'documents' => (int)$pdo->query('SELECT COUNT(*) FROM source_documents')->fetchColumn(),
         ];
         if ($registry !== null) {
             $counts['documents'] = array_sum($registry['document_counts']);
             $counts['documents_by_source'] = $registry['document_counts'];
             $counts['plots_by_source'] = [];
-            foreach ($registry['source_ids'] as $code => $ids) {
-                $counts['plots_by_source'][$code] = coordinate_backed_id_count($pdo, array_keys($ids));
-            }
-            $counts['plots_with_exploitation_certificate'] = coordinate_backed_id_count($pdo, array_keys($registry['certificate_ids']));
+            if ($parcelCatalogue === null) {
+                foreach ($registry['source_ids'] as $code => $ids) $counts['plots_by_source'][$code] = coordinate_backed_id_count($pdo, array_keys($ids));
+                $counts['plots_with_exploitation_certificate'] = coordinate_backed_id_count($pdo, array_keys($registry['certificate_ids']));
+            } else $counts = array_replace($counts, parcel_catalogue_meta_counts($pdo, $parcelCatalogue, $registry));
             $counts['linked_exploitation_certificates'] = $registry['linked_certificates'];
             respond(['counts' => $counts, 'imports' => $registry['imports'], 'registry_generated_at' => $registry['generated_at'],
-                'filter_options' => $registry['filter_options'] + ['parcel_area' => cadastre_filter_options($cadastre), 'cadastre' => cadastre_attribute_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre), 'boundaries' => $boundaryMeta]);
+                'filter_options' => $registry['filter_options'] + ['parcel_area' => cadastre_filter_options($cadastre), 'cadastre' => cadastre_attribute_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre), 'boundaries' => $boundaryMeta, 'parcel_catalogue' => parcel_catalogue_metadata($parcelCatalogue)]);
         }
         $counts['documents_by_source'] = [];
         $counts['plots_by_source'] = [];
@@ -1557,10 +1561,12 @@ try {
             unset($row['source_file'], $row['source_snapshot']);
             return $row;
         }, $imports);
-        respond(['counts' => $counts, 'imports' => $imports, 'filter_options' => filter_options(null) + ['parcel_area' => cadastre_filter_options($cadastre), 'cadastre' => cadastre_attribute_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre), 'boundaries' => $boundaryMeta]);
+        if ($parcelCatalogue !== null) $counts = array_replace($counts, parcel_catalogue_meta_counts($pdo, $parcelCatalogue, null));
+        respond(['counts' => $counts, 'imports' => $imports, 'filter_options' => filter_options(null) + ['parcel_area' => cadastre_filter_options($cadastre), 'cadastre' => cadastre_attribute_options($cadastre)], 'cadastre' => cadastre_metadata($cadastre), 'boundaries' => $boundaryMeta, 'parcel_catalogue' => parcel_catalogue_metadata($parcelCatalogue)]);
     }
 
     if ($action === 'viewport') {
+        if ($parcelCatalogue !== null) respond(parcel_catalogue_viewport($pdo, $parcelCatalogue, $registry, $cadastre, $filter));
         $north = number_param('north', -90, 90);
         $south = number_param('south', -90, 90);
         $east = number_param('east', -180, 180);
@@ -1648,6 +1654,7 @@ try {
     }
 
     if ($action === 'search') {
+        if ($parcelCatalogue !== null) respond(parcel_catalogue_search($pdo, $parcelCatalogue, $registry, $cadastre, $filter));
         if (!$filter['search_active']) respond(keyword_search_response($pdo, $registry, [], $filter));
         $where = '1 = 1' . ($registry !== null ? registry_filter($pdo, $registry, $filter) : record_filter($filter));
         $matchingIds = matching_plot_ids($pdo, $registry, $cadastre, $filter, $where, [], true);
@@ -1663,22 +1670,27 @@ try {
             $stmt = $pdo->prepare('SELECT cadastral_id, latitude AS lat, longitude AS lng FROM parcels WHERE cadastral_id = :id LIMIT 1');
             $stmt->execute(['id' => $id]);
             $plot = $stmt->fetch();
+            $catalogueEntry = $parcelCatalogue === null ? null : parcel_catalogue_entry($parcelCatalogue, $id);
+            if ($catalogueEntry !== null) $plot = $catalogueEntry;
             $cadastreRecord = cadastre_plot($id, $cadastre);
             if (!$plot && !isset($registry['by_id'][$id]) && $cadastreRecord === null) respond(['error' => 'No record was found for this cadastral identifier.'], 404);
             if (!$plot) $plot = ['cadastral_id' => $id, 'lat' => null, 'lng' => null];
-            respond(['plot' => registry_plot($plot, $registry), 'sources' => registry_plot_sources($id, $registry),
+            respond(['plot' => $parcelCatalogue === null ? registry_plot($plot, $registry) : parcel_catalogue_plot($plot, $parcelCatalogue, $registry['flags'], $catalogueEntry !== null), 'sources' => registry_plot_sources($id, $registry),
                 'cadastre' => $cadastreRecord, 'cadastre_status' => cadastre_plot_status($cadastreRecord, $cadastre)]);
         }
         $stmt = $pdo->prepare('SELECT p.cadastral_id, p.latitude AS lat, p.longitude AS lng, ' . document_flags_select() . ' FROM parcels p ' . document_flags_join() . ' WHERE p.cadastral_id = :id LIMIT 1');
         $stmt->execute(['id' => $id]);
         $plot = $stmt->fetch();
+        $catalogueEntry = $parcelCatalogue === null ? null : parcel_catalogue_entry($parcelCatalogue, $id);
+        if ($catalogueEntry !== null) $plot = $catalogueEntry + (parcel_catalogue_database_flags($pdo)[$id] ?? empty_document_flags());
         if (!$plot) {
             $cadastreRecord = cadastre_plot($id, $cadastre);
             if ($cadastreRecord === null) respond(['error' => 'No record was found for this cadastral identifier.'], 404);
-            respond(['plot' => serialize_plot(array_merge(['cadastral_id' => $id, 'lat' => null, 'lng' => null], empty_document_flags())),
+            $missingPlot = ['cadastral_id' => $id, 'lat' => null, 'lng' => null];
+            respond(['plot' => $parcelCatalogue === null ? serialize_plot($missingPlot + empty_document_flags()) : parcel_catalogue_plot($missingPlot, $parcelCatalogue, parcel_catalogue_database_flags($pdo), false),
                 'sources' => [], 'cadastre' => $cadastreRecord, 'cadastre_status' => cadastre_plot_status($cadastreRecord, $cadastre)]);
         }
-        $plot = serialize_plot($plot);
+        $plot = $parcelCatalogue === null ? serialize_plot($plot) : parcel_catalogue_plot($plot, $parcelCatalogue, parcel_catalogue_database_flags($pdo), $catalogueEntry !== null);
 
         $stmt = $pdo->prepare(
             'SELECT ds.code, ds.label_bg, ds.label_en, ds.source_url, ds.snapshot_date, ds.snapshot_file AS source_snapshot,

@@ -42,13 +42,17 @@ const readWorkspace = () => {
 
 function DatasetSummary({ meta }) {
   const { t, lang } = useI18n();
+  const catalogue = meta?.parcel_catalogue;
+  const catalogueAvailable = catalogue?.available === true;
+  const count = (value) => Number.isSafeInteger(value) && value >= 0 ? displayCount(value, lang) : '—';
   const imports = (meta?.imports || []).filter((item, index, rows) => item.source_code !== 'coordinates' && rows.findIndex((row) => row.source_code === item.source_code) === index);
   return (
     <section className="dataset-summary">
       <details className="dataset-summary-disclosure">
         <summary><ShieldCheck size={16} /><span>{t('dataset.sources')}</span><ChevronDown size={14} /></summary>
-        <div className="dataset-stats"><div><strong>{meta ? displayCount(meta.counts.plots, lang) : '—'}</strong><span>{t('dataset.points')}</span></div><div><strong>{meta ? displayCount(meta.counts.documents, lang) : '—'}</strong><span>{t('dataset.records')}</span></div></div>
+        <div className="dataset-stats"><div><strong>{catalogueAvailable ? count(catalogue.catalogue_count) : catalogue ? '—' : meta ? displayCount(meta.counts.plots, lang) : '—'}</strong><span>{catalogueAvailable ? (lang === 'bg' ? 'идентификатора в извлечението' : 'identifiers in the extract') : t('dataset.points')}</span></div><div><strong>{meta ? displayCount(meta.counts.documents, lang) : '—'}</strong><span>{t('dataset.records')}</span></div></div>
         <div className="dataset-source-list">
+          {catalogueAvailable ? <div><a href="https://kais.cadastre.bg/bg/OpenData" target="_blank" rel="noreferrer">{lang === 'bg' ? 'Кадастрален каталог · АГКК / КАИС' : 'Cadastral catalogue · AGCC / KAIS'}<ArrowUpRight size={13} aria-hidden="true" /></a><small>{catalogue.captured_at ? `${lang === 'bg' ? 'Изтеглено:' : 'Downloaded:'} ${displayDate(catalogue.captured_at, lang)}` : (lang === 'bg' ? 'Датата на изтегляне не е посочена' : 'Download date not stated')}</small><small>{lang === 'bg' ? 'С точка на картата:' : 'With a map point:'} {count(catalogue.mapped_point_count)} · {lang === 'bg' ? 'без използваема точка:' : 'without a usable point:'} {count(catalogue.unmapped_point_count)}</small><p>{lang === 'bg' ? 'Картата използва идентификаторите от зареденото официално извлечение. Това не е каталог в реално време. По-старите документи се пазят и за идентификатори, които липсват в него.' : 'The map uses identifiers from the loaded official extract, rather than a real-time catalogue. Older documents remain available for identifiers absent from it.'}</p></div> : catalogue && <p>{lang === 'bg' ? 'Кадастралният каталог временно не е достъпен. Наличието на отделен идентификатор в последното извлечение не е проверено.' : 'The cadastral catalogue is temporarily unavailable. Presence of an individual identifier in the latest extract has not been checked.'}</p>}
           {imports.map((source) => <div key={source.source_code}><a href={source.source_url} target="_blank" rel="noreferrer">{lang === 'bg' ? source.label_bg : source.label_en}<ArrowUpRight size={13} /></a><small>{source.snapshot_date ? t('dataset.snapshot', { date: displayDate(source.snapshot_date, lang) }) : t('dataset.dateUnknown')}</small></div>)}
           {meta?.cadastre && <div><a href={meta.cadastre.source_url} target="_blank" rel="noreferrer">{lang === 'bg' ? meta.cadastre.label_bg : meta.cadastre.label_en}<ArrowUpRight size={13} /></a><small>{t('dataset.cadastreCount', { n: displayCount(meta.cadastre.parcel_count, lang) })}</small>{meta.cadastre.captured_at && <small>{t('dataset.loaded', { date: displayDate(meta.cadastre.captured_at, lang) })}</small>}</div>}
           <p>{t('dataset.snapshotHelp')}</p>

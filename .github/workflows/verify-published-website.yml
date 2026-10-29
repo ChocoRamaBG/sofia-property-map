@@ -2,6 +2,12 @@ name: Verify the published SofiaPermits website
 
 on:
   workflow_dispatch:
+    inputs:
+      require_parcel_catalogue:
+        description: 'Require the complete current official parcel catalogue to be active'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -22,7 +28,13 @@ jobs:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: python scripts/verify_published_site.py --output seed/verification/published-site.json
+          REQUIRE_PARCEL_CATALOGUE: ${{ inputs.require_parcel_catalogue }}
+        run: |
+          if [ "$REQUIRE_PARCEL_CATALOGUE" = "true" ]; then
+            python scripts/verify_published_site.py --require-parcel-catalogue --output seed/verification/published-site.json
+          else
+            python scripts/verify_published_site.py --output seed/verification/published-site.json
+          fi
       - name: Keep verification evidence
         uses: actions/upload-artifact@v4
         with:

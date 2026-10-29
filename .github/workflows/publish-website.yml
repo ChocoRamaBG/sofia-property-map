@@ -44,6 +44,7 @@ jobs:
         run: |
           php -l public/development-data.php
           php -l public/boundary-data.php
+          php -l public/parcel-catalogue.php
           php -l public/business-data.php
           php -l public/market.php
           php -l public/api.php

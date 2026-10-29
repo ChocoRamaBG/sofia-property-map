@@ -1,0 +1,20 @@
+.parcel-catalogue-status { min-width: 0; padding: 0 12px; border: 1px solid #dce6e1; border-radius: 10px; background: #f6faf7; color: #3c6353; overflow-wrap: anywhere; }
+.parcel-catalogue-status > summary, .parcel-catalogue-status details > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; padding-block: 9px; list-style: none; cursor: pointer; font-size: 12px; line-height: 1.6; font-weight: 550; }
+.parcel-catalogue-status summary::-webkit-details-marker { display: none; }
+.parcel-catalogue-status summary > svg { flex: 0 0 auto; }
+.parcel-catalogue-status summary > span { flex: 1; min-width: 0; }
+.parcel-catalogue-status summary > svg:last-child { margin-left: auto; }
+.parcel-catalogue-status summary small { display: block; margin-top: 2px; font-size: 10px; font-weight: 400; color: #71847a; }
+.parcel-catalogue-status[open] > summary > svg:last-child, .parcel-catalogue-status details[open] > summary > svg:last-child { transform: rotate(180deg); }
+.parcel-catalogue-status p { margin: 0 0 9px; font-size: 11px; line-height: 1.75; }
+.parcel-catalogue-status a { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; font-size: 11px; line-height: 1.7; color: #216d56; text-decoration: underline; text-underline-offset: 3px; }
+.parcel-catalogue-status a > svg { flex: 0 0 auto; }
+.parcel-catalogue-status :is(a, summary):focus-visible { outline: 2px solid #237a63; outline-offset: 3px; border-radius: 4px; }
+.parcel-catalogue-status .parcel-catalogue-provenance { padding-top: 8px; border-top: 1px solid #e2e9e4; }
+.parcel-catalogue-status .parcel-catalogue-provenance p:last-child { color: #6c7f74; }
+.parcel-catalogue-status.is-historical { padding-top: 12px; border-color: #e7cfaa; background: #fff8eb; color: #805b2c; }
+.parcel-catalogue-heading { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 7px; }
+.parcel-catalogue-heading > svg { flex: 0 0 auto; margin-top: 2px; }
+.parcel-catalogue-heading h3 { min-width: 0; font-size: 12px; font-weight: 650; line-height: 1.6; }
+.parcel-catalogue-status.is-historical > details { border-top: 1px solid #efdfc7; }
+.parcel-catalogue-status.is-unavailable { color: #6c7773; background: #f7f9f8; }
